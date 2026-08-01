@@ -1,2 +1,436 @@
-# kinojo-meter
-KINOJO Meter Windows installer and release distribution
+﻿# KINOJO Meter Desktop
+
+
+기준일: 2026-08-01  
+Desktop version source: `release/version.json`  
+Latest Meter SQL: `50014`  
+Desktop API Contract: `50013`  
+Edge API: `50013.1`
+
+## 0.2.28 게임 HUD 자동 판독·클래스 색상 지분 게이지
+
+- PASS KEY 로그인 후 중앙 자기 캐릭터명 고정 영역을 Windows 한국어 OCR로 2회 연속 확인하면 사용자가 카드를 고르지 않아도 자동 연결합니다.
+- 선택 이후에도 HUD 판독을 유지해 실제 접속 캐릭터가 바뀌면 Server `selectCharacter`와 오버레이를 다시 연결합니다.
+- 화면 인식 결과는 로그인 계정 소유 캐릭터와 Server 던전 카탈로그에 정확히 일치할 때만 사용하며 임의 이름을 생성하지 않습니다.
+- 파티 구성 창 상단의 던전명은 Server 카탈로그와 대조해 입장 전 표시 후보로 사용합니다. 실제 입장 상태는 검증된 `ZoneEntered`/`DungeonDetected` 패킷이 확인할 때만 전환합니다.
+- 파티원 이름 왼쪽 클래스 아이콘의 고채도 대표색을 읽어 같은 `class_raw`에 연결하고, 보스 데미지 지분 게이지를 게임 클래스 색으로 표시합니다.
+- HUD는 AION2가 전면에 있을 때 1.5초 간격의 두 고정 영역만 읽으며 전체 화면·원본 이미지를 저장하거나 업로드하지 않습니다.
+- Windows 한국어 OCR을 사용할 수 없거나 확신도가 부족하면 기존 패킷 자동 선택과 수동 카드 선택을 안전한 대체 경로로 유지합니다.
+- Damage/DPS 바이너리 디코더와 Server 제출 Gate는 계속 미검증·차단 상태입니다.
+
+## 0.2.27 실시간 파티 상태 UI·캐릭터 변경 재판정
+
+- 이동바 아래에 `파티 구성원 체크 중` 상태와 KINOJO 회전 스피너를 표시합니다.
+- 파티 명단이 바뀌면 이전 probe 명단을 교체하여 현재 구성원만 오버레이에 표시합니다.
+- 로그인 계정 소유 캐릭터 중 다른 캐릭터가 파티 명단에서 유일하게 확인되면 서버 선택 캐릭터와 오버레이를 자동 전환합니다.
+- 던전·전투 상태는 해당 `DungeonDetected`/`ZoneEntered`/전투 이벤트가 실제로 수신된 경우에만 전환합니다.
+- 오버레이 최하단에는 실행 중 Assembly 기준 `KINOJO Meter v0.2.27`을 표시합니다.
+- Damage/DPS 바이너리 디코더와 서버 제출 Gate는 기존과 같이 미검증·차단 상태입니다.
+
+## 0.2.26 파티 자동 인식 보정
+
+- 레벨 45·50처럼 서로 다른 레벨이 섞인 파티도 `0x3641` 파티 명단 후보로 인정합니다.
+- 감지된 파티 명단을 오버레이의 파티 슬롯에 즉시 표시합니다.
+- 명단 표시는 Damage/DPS 디코더와 분리되어 있으며, 검증되지 않은 전투 수치는 생성하거나 서버에 제출하지 않습니다.
+- Decoder: `aion2-late-attach-party-roster-probe-3`
+
+
+이 폴더는 KINOJO Meter Desktop의 소스, 프로젝트, 설치기, 빌드 스크립트, CI, Payload 계약을 모두 보관하는 단일 루트입니다. KINOJO 전체 통합본의 최상위에 Meter 프로젝트 파일을 두지 않습니다.
+
+
+## 폴더 구조
+
+
+```text
+05_METER_DESKTOP/
+├─ README.md
+├─ KINOJO.Meter.sln
+├─ PREPARE_GITHUB_RELEASE.cmd
+├─ VERIFY_GITHUB_RELEASE.cmd
+├─ .github/workflows/windows-build.yml
+├─ assets/
+├─ release/version.json
+├─ build/payload/
+├─ projects/
+├─ scripts/
+├─ setup/
+├─ src/
+└─ KinojoMeter.ServerBridge/
+```
+
+
+- 앱 프로젝트: `projects/KINOJO.Meter.Test/KINOJO.Meter.Test.csproj`
+- 설치기 프로젝트: `projects/KINOJO.Meter.Setup/KINOJO.Meter.Setup.csproj`
+- 앱 소스: `src/*.cs`
+- 설치기 UI·진입점: `setup/SetupProgram.cs`
+- 설치 트랜잭션·복구 엔진: `setup/SetupEngine.cs`
+- 버전 원본: `release/version.json`
+- Windows 빌드: `BUILD_WINDOWS_RELEASE.cmd`, `scripts/build-windows.ps1`
+- GitHub Actions: `.github/workflows/windows-build.yml`
+- Payload 계약: `build/payload/README.txt`, 빌드 시 자동 동기화되는 `build/payload/version.json`
+- WinDivert 원본·검증: `build/payload/WinDivert.dll`, `WinDivert64.sys`, `third-party-checksums.txt`
+
+
+`KinojoMeter.ServerBridge`는 초기 Server 연결 경계를 보존한 라이브러리입니다. 현재 앱 본체는 같은 계약을 `src/KinojoApiClient.cs`와 전투 제출 흐름에 직접 통합합니다.
+
+
+## 버전 관리
+
+
+- 사람이 직접 변경하는 버전 원본은 `release/version.json` 하나입니다.
+- 공식 Windows 빌드는 이 JSON의 `version`, `fileVersion`, `channel`, DB·Edge 계약을 먼저 검증합니다.
+- 빌드 시 앱 EXE, 설치기 EXE, 설치기 파일명, Payload 파일명, 설치 폴더 `version.json`, checksum 파일명을 자동 동기화합니다.
+- 앱 화면·트레이·API 요청은 하드코딩 문자열이 아니라 실행 중인 EXE Assembly 버전을 사용합니다.
+- 실행 시 설치 폴더 `version.json`과 EXE 파일 버전이 일치하는지 진단 로그로 검증합니다.
+- `build/payload/version.json`은 편집 원본이 아니며 빌드 과정에서 `release/version.json`으로 덮어씁니다.
+
+
+## 역할 분담
+
+
+### KINOJO Meter Desktop
+
+
+- Npcap 우선·WinDivert 대체 네트워크 캡처
+- TCP 흐름 추적과 재조립
+- 검증된 AION2 바이너리 Decoder
+- 파티·지역·던전·난이도·보스·피해 이벤트 감지
+- 실시간 DPS·누적 피해·점유율 계산
+- 트레이 백그라운드 실행과 게임 화면 연동 오버레이
+- 전투 제출 Queue와 재시도
+
+
+### Supabase Server Engine
+
+
+- PASS KEY·사용자·캐릭터 소유권 검증
+- Meter 전용 캐릭터 Master·Snapshot
+- PLAYNC 공개 프로필 조회·6시간 캐시
+- 카탈로그 canonical 정규화
+- 전투 관계·중복·비정상 데이터 판정
+- 전투 저장, 통계, 비교, 랭킹
+
+
+### WEB
+
+
+- 공개 통계와 내 전투 분석 표시
+- 공통 로그인과 캐릭터 선택 연동
+- Server가 확정한 결과만 표시
+
+
+## 실행 흐름
+
+
+1. `desktopBootstrap`으로 Server Catalog와 API·DB 계약을 확인합니다.
+2. PASS KEY 로그인 후 패킷 파티 명단과 중앙 자기 이름 HUD를 함께 확인해 현재 캐릭터를 자동 선택합니다. 자동 확인이 불가능한 경우에만 수동 카드를 사용합니다.
+3. 선택 즉시 트레이 백그라운드 실행과 네트워크 캡처를 시작합니다.
+4. Npcap을 우선 사용하고 실패하면 WinDivert로 전환합니다.
+5. TCP 흐름을 재조립해 AION2 바이너리 Decoder에 전달합니다.
+6. 파티·지역·던전·난이도·보스·피해 이벤트를 자동 생성합니다.
+7. 감지 문자열은 `resolveEncounterCatalog`로 보내 Server canonical key를 확정합니다.
+8. 실제 캡처·검증된 Decoder·Server canonical 조건을 모두 충족한 전투만 `submitEncounter`에 전달합니다.
+9. Server가 Meter 캐릭터 Master·Snapshot·중복·비정상·통계 포함 여부를 최종 판정합니다.
+
+
+사용자의 기본 직접 조작은 `6자리 PASS KEY 입력`까지입니다. 프로그램이 현재 캐릭터를 확정하지 못한 경우에만 캐릭터 카드를 수동 대체 경로로 제공합니다. 콘텐츠·던전·난이도·보스를 사용자가 직접 선택하지 않습니다. 캐릭터 확정 후에는 트레이 전환, 캡처 엔진 선택, 캡처 재시도, 전투 감지, 오버레이 표시를 자동 처리합니다.
+
+
+
+
+## 사용자 UX와 관리자 진단
+
+
+- 로그인 화면은 KINOJO WEB PASS KEY 모달과 같은 6칸 입력 구조를 사용합니다.
+- 캐릭터 카드는 HUD·패킷 자동 확인이 실패할 때 사용하는 수동 대체 경로이며 PURPLE 런처형 레이아웃과 본캐 우선 정렬을 유지합니다.
+- 기본 오버레이는 던전·보스명, 경과 시간, 순위, 캐릭터, DPS, 누적 피해, 점유율과 클래스 색상 지분 게이지를 표시합니다.
+- 일반 트레이 메뉴는 오버레이 표시·숨김, 로그아웃, 종료만 제공합니다.
+- Server가 확인한 `meterAdmin`, `roleLevel`, `diagnosticsAllowed`를 우선 사용하며, 과도기 호환을 위해 Master 역할만 관리자 진단 메뉴로 인정합니다.
+- 관리자 트레이 메뉴에서만 캡처 상태, 캡처 재시작, 진단 로그, 업데이트 확인을 제공합니다.
+- 자동 오버레이 표시에서는 `Activate()`를 호출하지 않고 트레이 메뉴가 열린 동안 표시·숨김 타이머를 멈춰 메뉴 포커스가 사라지는 문제를 막습니다.
+- 캡처 실패는 5초, 15초, 30초, 60초 간격으로 자동 재시도하며 일반 화면에는 `게임 연결 준비 중`만 표시합니다.
+- 진단 로그는 `%LOCALAPPDATA%\KINOJO Meter\logs`에 저장하고 PASS KEY·세션 토큰은 기록하지 않습니다.
+
+
+## 설치·업데이트
+
+
+- 버전별 전체 설치기 하나가 신규 설치, 업데이트, 같은 버전 복구 설치를 자동 판정합니다.
+- 기존 설치가 없으면 기본 `C:\Program Files\KINOJO Meter`에 신규 설치하며 설치 화면에서 경로를 변경할 수 있습니다.
+- 기존 설치가 있으면 설치 경로를 유지하고 사용자가 만든 바탕화면·시작 메뉴 바로가기 상태도 유지합니다.
+- 업데이트·복구 시 새 Payload를 임시 폴더에서 먼저 검증하고 기존 설치 폴더를 백업한 뒤 전체 프로그램 파일을 교체합니다.
+- 설치 후 EXE 실행이 5초 이상 유지되는지 확인하며, 실패하면 기존 파일·바로가기·제거 프로그램 정보를 자동 복원합니다.
+- 설치마다 `install-manifest.json`을 생성해 관리 파일의 크기와 SHA-256을 기록하고 복구 설치 검증에 사용합니다.
+- 사용자 설정·오버레이 위치·로그는 `%LOCALAPPDATA%\KINOJO Meter`에 두므로 프로그램 파일 교체와 제거 후에도 유지합니다.
+- 앱과 설치기는 관리자 권한을 자동 요청해 WinDivert 드라이버 권한을 확보합니다.
+- Windows 제거 프로그램에는 제거와 복구 설치 진입점을 등록합니다.
+- 기존 `%LOCALAPPDATA%\Programs\KINOJO Meter Test` 설치와 바로가기·레지스트리는 새 버전 실행 확인 후 정리합니다.
+- 프로그램 시작 시 로그인 전 `desktopUpdate` action을 호출하고, 로그인 후 Catalog bootstrap에서도 같은 릴리스 계약을 다시 확인합니다.
+- 매니페스트 필드: `version`, `fileVersion`, `minimumVersion`, `fileName`, `downloadUrl`, `sha256`, `fileSize`, `mandatory`, `releaseNote`, `publishedAt`, `channel`.
+- Server에 활성 릴리스가 없으면 업데이트 영역을 표시하지 않고 기존 실행 흐름을 유지합니다.
+
+
+## 캐릭터와 공개 프로필
+
+
+- 기존 `character_master`는 Google `list`, 본캐·부캐, 권한, 성역, 레기온 랭킹용으로 유지합니다.
+- Meter에서 실제로 만난 레기온·비레기온 캐릭터는 `meter_character_master`에 누적합니다.
+- 아이온2 전체 캐릭터를 미리 수집하지 않습니다.
+- 파티 구성은 패킷 이벤트로 먼저 확정하고 PLAYNC 공개 프로필은 Server 보완 정보로만 사용합니다.
+- 현재 공개 프로필은 `meter_character_master`, 전투 당시 능력치는 `meter_character_snapshots`, 참가 기록은 `meter_participants`가 담당합니다.
+- 서버 이전·이름 변경은 기존 `char_key`가 정확히 일치할 때만 기존 레기온 캐릭터 행을 갱신합니다.
+- 프로필 조회 실패가 DPS 측정을 중단시키지 않습니다.
+
+
+## 현재 운영 차단
+
+
+`AionBinaryFrameDecoder`는 실제 익명화 fixture 검증 전이므로 `BINARY_UNVALIDATED`입니다.
+
+
+관리자 패킷 진단 수집은 최대 20분·64MiB·100,000조각으로 제한됩니다. 시작 시 최근 최대 2분·8MiB 순환 버퍼를 먼저 기록하고, `frames.tsv`에는 익명 `connection_id`·방향·TCP sequence를, `markers.tsv`에는 관리자가 선택한 던전 진행 시점을 기록합니다. 원본 IP·포트와 PASS KEY·세션 토큰은 기록하지 않으며 자동 업로드하지 않습니다.
+
+
+- Preview·JSON·추정 데이터 운영 제출 금지
+- Desktop `UploadEligible=false`
+- Payload `serverUploadEnabled=false`
+- Server `kinojo_meter_submit_encounter_v4` Gate 활성
+
+
+실제 Decoder 검증이 완료되기 전에는 이 차단을 해제하지 않습니다.
+
+## Desktop 0.2.25 · 실행 중 연결 합류와 캐릭터 자동 선택
+
+- PASS KEY 로그인 직후 캐릭터 선택 화면에서도 진단 캡처를 시작합니다.
+- `0x3610/0x3611` 초기 교환을 놓친 기존 TCP 연결은 `0x3641 + varint` envelope와 4~6명의 연속 파티 레코드가 함께 확인된 경우에만 `LATE_ATTACH`로 승인합니다.
+- 파티 레코드에서 PASS KEY 회원의 소유 캐릭터 이름이 정확히 한 명만 확인되면 해당 캐릭터를 Server `selectCharacter`에 자동 연결합니다.
+- 같은 이름의 소유 캐릭터가 여러 서버에 있거나 소유 캐릭터가 둘 이상 동시에 후보가 되면 자동 선택하지 않고 기존 수동 선택 화면을 유지합니다.
+- 자동 선택 전 탐지 캡처는 선택 확정 시 종료하고, 기존 Overlay 캡처로 안전하게 교체합니다.
+- 구조화 파티 레코드는 자동 캐릭터 확인과 후속 파티 프로필 보강의 입력으로 전달합니다.
+- 기존 fixture 3개 중 마커가 완전한 `fixture-20260723-232023`에서 `LATE_ATTACH`와 `청소기` 포함 4명 파티 구조화 이벤트를 재현했습니다.
+- 피해 이벤트의 opcode·공격자·대상·피해량 필드는 아직 fixture로 확정되지 않았습니다. 추정 DPS를 생성하지 않으며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate를 유지합니다.
+
+
+## Windows 빌드
+
+
+요구 환경:
+
+
+- Windows 10/11 x64
+- Visual Studio 2022 이상 또는 Visual Studio Build Tools
+- .NET Framework 4.8 SDK·Targeting Pack
+- MSBuild
+
+
+KINOJO 통합본 루트에서 `05_METER_DESKTOP/BUILD_WINDOWS_RELEASE.cmd`를 실행하거나 PowerShell에서 다음을 실행합니다.
+
+
+```powershell
+cd 05_METER_DESKTOP
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\build-windows.ps1 -Configuration Release
+```
+
+
+컴파일 전 입력만 확인하려면 다음을 사용합니다.
+
+
+```powershell
+.\scripts\build-windows.ps1 -Configuration Release -PreflightOnly
+```
+
+
+빌드 스크립트는 다음을 자동 검증합니다.
+
+
+- 앱·설치기 표준 매니페스트 `app.manifest`
+- Drive 다운로드로 `app.manifest.xml`만 존재하면 XML 구조와 `requireAdministrator` 설정을 검증한 뒤 표준 이름으로 자동 복구
+- `app.manifest`와 `app.manifest.xml`이 함께 존재할 때 내용이 다르면 안전을 위해 빌드 중단
+- Visual Studio MSBuild와 .NET Framework 4.8 Targeting Pack
+- WinDivert x64 DLL·드라이버의 고정 SHA-256
+- NuGet 복원 후 `SharpPcap.dll`, `PacketDotNet.dll` 생성 여부
+- 최종 Payload ZIP의 필수 항목
+- Payload·설치기 SHA-256 기록
+
+
+생성 결과:
+
+
+```text
+05_METER_DESKTOP\build\KinojoMeterPayload_<version>.zip
+05_METER_DESKTOP\build\KINOJO_Meter_<version>_Setup.exe
+05_METER_DESKTOP\build\checksums_<version>.txt
+```
+
+
+Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, `version.json`, 제3자 바이너리 체크섬이 포함됩니다. Npcap은 Payload에 포함하지 않으며 설치되어 있지 않거나 장치를 열 수 없으면 WinDivert로 전환합니다.
+
+
+`.github`는 이 폴더 안에 보관합니다. GitHub Actions를 실제 사용하려면 `05_METER_DESKTOP` 폴더 자체를 Meter 전용 저장소의 루트로 사용합니다. 전체 통합 저장소의 하위 폴더 상태에서는 GitHub가 이 Workflow를 자동 인식하지 않습니다.
+
+
+## 외부 프로그램 안전 원칙
+
+
+아이온2 운영정책에서 DPS 미터기, 패킷 캡처, 오버레이를 명시적으로 허용한다는 문구는 확인되지 않았습니다. 다음 기능은 구현하지 않습니다.
+
+
+- 프로세스명 위장, 프로세스·창 은폐, 안티치트 탐지 우회
+- DLL 인젝션, 게임 프로세스 핸들 접근, 메모리 읽기·쓰기
+- 게임 파일·클라이언트 수정
+- 자동 입력, 매크로, 자동 전투·자동 이동
+- 캡처 드라이버 은폐
+- 보안 프로그램 종료·방해·우회
+
+
+일반 UX를 위한 `ToolWindow` 표시는 프로세스 은폐나 우회 용도로 사용하지 않습니다. 실제 게임 연동 배포 전에는 공식 허용 범위를 별도로 확인하고, 공식 전투 로그나 공식 API가 제공되면 이를 최우선으로 사용합니다.
+
+
+## 보안·배포 전 확인
+
+
+- Desktop에는 Supabase publishable key만 사용합니다.
+- service role key, DB 비밀번호, PASS KEY를 파일이나 로그에 저장하지 않습니다.
+- 로컬 별칭 목록이나 Server 기준정보 원본을 중복 저장하지 않습니다.
+- Npcap·WinDivert 각각의 실제 Windows 캡처를 검증합니다.
+- 게임 재접속·채널 이동·TCP 흐름 교체 시 재조립 초기화를 검증합니다.
+- 트레이·오버레이·관리자 권한·드라이버 동작을 실제 Windows에서 확인합니다.
+- Payload와 설치기의 SHA-256·크기를 기록합니다.
+- 실제 배포본에는 코드서명과 업데이트 서명 검증을 적용합니다.
+
+
+## 운영 반영 상태
+
+
+- Supabase Meter SQL `50009~50014`: 운영 반영 완료
+- `meter-ingest` Edge Function API `50013.1`: 운영 배포 완료
+- Desktop 최신 소스 `0.2.28`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- Damage/DPS Decoder 미검증으로 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
+- `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
+- AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.
+
+
+과거 단계별 상세 Meter 통합 문서와 이전 외부 프로그램 안전 문서 원본은 `99_LEGACY/KINOJO_LEGACY_SNAPSHOT_260723.zip`에 보존합니다.
+
+
+## Windows PowerShell 5.1 encoding compatibility
+
+
+`build-windows.ps1` is stored as UTF-8 with BOM and CRLF line endings, while all script literals remain ASCII-only. Do not add Korean or other non-ASCII text to this script. Windows PowerShell 5.1 may read a UTF-8 file without BOM as the system ANSI code page, which can corrupt quoted strings and produce a parser error such as `TerminatorExpectedAtEndOfString`.
+
+
+If an older extracted folder prints broken text such as `鍮뚮뱶`, delete that extracted folder completely and extract the latest build-ready ZIP again. Do not overwrite only the ZIP while keeping the old extracted script.
+
+
+
+
+## GitHub Release preparation and verification
+
+
+The Desktop checks for updates before PASS KEY login through the public `desktopUpdate` action. A mandatory update blocks login and meter start until the verified installer is launched.
+
+
+The update client accepts only a fixed GitHub Release URL in this form:
+
+
+```text
+https://github.com/<owner>/<repository>/releases/download/v<version>/KINOJO_Meter_<version>_Setup.exe
+```
+
+
+Before launching an update, the client verifies:
+
+
+- HTTPS and the fixed `github.com` release path
+- allowed GitHub redirect hosts only
+- channel, semantic version, file version, and minimum version
+- exact installer file name
+- maximum size of 512 MB
+- response size and downloaded byte count
+- SHA-256
+- installer Windows file version and product name
+
+
+The installer then validates the embedded Payload `version.json`, application file version, required runtime files, and transactional rollback contract.
+
+
+After a Windows build, prepare the GitHub Release metadata by running:
+
+
+```text
+PREPARE_GITHUB_RELEASE.cmd
+```
+
+
+Upload these two files to the generated `v<version>` GitHub Release:
+
+
+```text
+build\KINOJO_Meter_<version>_Setup.exe
+build\checksums_<version>.txt
+```
+
+
+After upload, run:
+
+
+```text
+VERIFY_GITHUB_RELEASE.cmd
+```
+
+
+A successful remote verification creates:
+
+
+```text
+build\release\KINOJO_Meter_<version>_release-registration.json
+```
+
+
+This registration JSON is the input used to register the release in the Supabase Server Master. Do not activate a release when `remoteVerified` is false.
+
+
+Code signing remains disabled for the internal update test. It must be enabled and verified before public distribution.
+
+
+## Windows Sandbox clean-install validation
+
+
+Use the isolated clean-install test after building a release installer:
+
+
+```text
+TEST_CLEAN_INSTALL_SANDBOX.cmd
+```
+
+
+The test does not modify the production KINOJO Meter installation on the host PC. It maps a temporary build test folder into a fresh Windows Sandbox, runs the same unified Setup EXE as a new installation, and verifies:
+
+
+- release JSON, Setup file size, SHA-256 and file version
+- clean install into `C:\Program Files\KINOJO Meter`
+- required EXE, DLL, WinDivert and manifest files
+- every managed file size and SHA-256 from `install-manifest.json`
+- Windows uninstall registry entry and installed version
+- desktop and Start menu shortcuts
+- successful KINOJO Meter launch
+
+
+Requirements:
+
+
+- Windows 11 Pro, Enterprise or Education
+- Windows Sandbox enabled in Windows Features
+- the release installer already built in `build`
+
+
+The host-side result is written to:
+
+
+```text
+build\sandbox-clean-install-<version>\results\clean-install-result.txt
+```
+
+
+Approve the elevation prompt inside Windows Sandbox if Windows displays one. After the automated report succeeds, visually confirm the PASS KEY screen and close the Sandbox window.

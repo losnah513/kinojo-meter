@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "product": "KINOJO Meter",
+  "version": "0.2.28",
+  "fileVersion": "0.2.28.0",
+  "channel": "stable",
+  "databaseContract": "50013",
+  "edgeApiVersion": "50013.1",
+  "catalogMode": "SERVER_OWNED_AUTO_DETECTED",
+  "canonicalSubmissionRequired": true,
+  "localAliasResolutionAllowed": false,
+  "passKeyStored": false,
+  "packetCaptureEnabled": true,
+  "capturePriority": [
+    "NPCAP",
+    "WINDIVERT"
+  ],
+  "captureAutoRetry": true,
+  "administratorDiagnosticsOnly": true,
+  "serverUpdateManifestReady": true,
+  "serverUploadEnabled": false,
+  "binaryDecoderValidated": false,
+  "captureDependencies": {
+    "SharpPcap": "6.3.1 (NuGet restore)",
+    "PacketDotNet": "1.4.8 (NuGet restore)",
+    "WinDivertDllSha256": "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2",
+    "WinDivertDriverSha256": "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2"
+  },
+  "installerMode": "UNIFIED_NEW_UPDATE_REPAIR",
+  "transactionalInstall": true,
+  "rollbackEnabled": true,
+  "userDataPath": "%LOCALAPPDATA%/KINOJO Meter",
+  "installManifest": "install-manifest.json",
+  "updateSecurity": {
+    "provider": "GITHUB_RELEASES",
+    "fixedVersionUrlRequired": true,
+    "httpsOnly": true,
+    "maximumInstallerBytes": 536870912,
+    "fileNameVersionCheck": true,
+    "fileSizeCheck": true,
+    "sha256Check": true,
+    "installerFileVersionCheck": true,
+    "codeSignatureRequired": false
+  }
+}

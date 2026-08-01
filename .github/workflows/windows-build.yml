@@ -1,0 +1,46 @@
+name: Build KINOJO Meter Windows
+
+'on':
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'setup/**'
+      - 'assets/**'
+      - 'release/**'
+      - 'projects/**'
+      - 'scripts/**'
+      - 'build/payload/**'
+      - 'BUILD_WINDOWS_RELEASE.cmd'
+      - 'README.md'
+      - '.github/workflows/windows-build.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Read release version
+        id: release
+        shell: pwsh
+        run: |
+          $manifest = Get-Content ./release/version.json -Raw | ConvertFrom-Json
+          "version=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Preflight build inputs
+        shell: powershell
+        run: ./scripts/build-windows.ps1 -Configuration Release -PreflightOnly
+      - name: Build application, payload and installer
+        shell: powershell
+        run: ./scripts/build-windows.ps1 -Configuration Release
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: KINOJO-Meter-${{ steps.release.outputs.version }}-Windows
+          if-no-files-found: error
+          path: |
+            build/KinojoMeterPayload_${{ steps.release.outputs.version }}.zip
+            build/KINOJO_Meter_${{ steps.release.outputs.version }}_Setup.exe
+            build/checksums_${{ steps.release.outputs.version }}.txt

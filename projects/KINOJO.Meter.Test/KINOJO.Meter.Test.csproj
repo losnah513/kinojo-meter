@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <KinojoVersion Condition="'$(KinojoVersion)' == ''">0.0.0</KinojoVersion>
+    <KinojoFileVersion Condition="'$(KinojoFileVersion)' == ''">0.0.0.0</KinojoFileVersion>
+    <Version>$(KinojoVersion)</Version>
+    <AssemblyVersion>$(KinojoFileVersion)</AssemblyVersion>
+    <FileVersion>$(KinojoFileVersion)</FileVersion>
+    <InformationalVersion>$(KinojoVersion)</InformationalVersion>
+    <AssemblyTitle>KINOJO Meter</AssemblyTitle>
+    <Product>KINOJO Meter</Product>
+    <Company>KINOJO INFO</Company>
+    <AssemblyName>KINOJO.Meter</AssemblyName>
+    <RootNamespace>KinojoMeterPrototype</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationIcon>..\..\assets\kinojo-updater-icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\Program.cs" Link="Program.cs" />
+    <Compile Include="..\..\src\KinojoVersion.cs" Link="KinojoVersion.cs" />
+    <Compile Include="..\..\src\MainWindow.cs" Link="MainWindow.cs" />
+    <Compile Include="..\..\src\PassKeyInput.cs" Link="PassKeyInput.cs" />
+    <Compile Include="..\..\src\OverlayWindow.cs" Link="OverlayWindow.cs" />
+    <Compile Include="..\..\src\KinojoApiClient.cs" Link="KinojoApiClient.cs" />
+    <Compile Include="..\..\src\GameCapture.cs" Link="GameCapture.cs" />
+    <Compile Include="..\..\src\GameHudProbe.cs" Link="GameHudProbe.cs" />
+    <Compile Include="..\..\src\CombatEngine.cs" Link="CombatEngine.cs" />
+    <Compile Include="..\..\src\Models.cs" Link="Models.cs" />
+    <Compile Include="..\..\src\PreferencesStore.cs" Link="PreferencesStore.cs" />
+    <Compile Include="..\..\src\SystemTrayController.cs" Link="SystemTrayController.cs" />
+    <Compile Include="..\..\src\DiagnosticLog.cs" Link="DiagnosticLog.cs" />
+    <Compile Include="..\..\src\DesktopUpdateService.cs" Link="DesktopUpdateService.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SharpPcap" Version="6.3.1" />
+    <PackageReference Include="PacketDotNet" Version="1.4.8" />
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.26100.1742" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Runtime.Serialization" />
+  </ItemGroup>
+</Project>
