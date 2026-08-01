@@ -75,6 +75,7 @@ namespace KinojoMeterPrototype
         private bool _autoSelectionStarted;
         private GameHudProbe _hudProbe;
         private GameHudObservation _lastHudObservation;
+        private CharacterDiscoveryWindow _discovery;
 
         public MainWindow()
         {
@@ -301,7 +302,7 @@ namespace KinojoMeterPrototype
                 _login = await _api.LoginAsync(passKey);
                 if (_passKeyInput != null) _passKeyInput.Clear(false);
                 DiagnosticLog.Info("AUTH", "Login succeeded for role " + (_login.RoleLabel ?? "Member"));
-                ShowCharacters();
+                ShowCharacterDiscovery();
                 StartAutomaticCharacterDetection();
                 StartGameHudProbe();
             }
@@ -315,6 +316,35 @@ namespace KinojoMeterPrototype
                 DiagnosticLog.Error("AUTH", "Unexpected login failure", ex);
                 ShowError("서버 연결을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             }
+        }
+
+        private void ShowCharacterDiscovery()
+        {
+            var characters = (_login == null ? null : _login.Characters) ?? new List<CharacterProfile>();
+            if (characters.Count == 0) { ShowLogin(); return; }
+            if (_discovery != null) _discovery.Close();
+            _discovery = new CharacterDiscoveryWindow(characters);
+            _discovery.CharacterSelected += delegate(object sender, CharacterProfile profile)
+            {
+                Dispatcher.BeginInvoke(new Action(async delegate { await SelectDetectedCharacterAsync(profile, "직접 선택"); }));
+            };
+            _discovery.Show();
+            Hide();
+        }
+
+        private async Task SelectDetectedCharacterAsync(CharacterProfile profile, string evidence)
+        {
+            if (profile == null || _selectionBusy || _login == null) return;
+            if (_selected != null &&
+                ((!String.IsNullOrWhiteSpace(_selected.CharacterKey) &&
+                  !String.IsNullOrWhiteSpace(profile.CharacterKey) &&
+                  String.Equals(_selected.CharacterKey, profile.CharacterKey, StringComparison.OrdinalIgnoreCase)) ||
+                 (String.Equals(_selected.CharacterName, profile.CharacterName, StringComparison.OrdinalIgnoreCase) &&
+                  String.Equals(_selected.ServerName, profile.ServerName, StringComparison.OrdinalIgnoreCase)))) return;
+            _selectionBusy = true;
+            if (_discovery != null) _discovery.MarkDetected(profile, evidence);
+            try { await SelectCharacterAsync(profile); }
+            finally { _selectionBusy = false; RefreshMeterStartState(); }
         }
 
         private void ShowCharacters()
@@ -734,6 +764,7 @@ namespace KinojoMeterPrototype
                 await _api.SelectCharacterAsync(_login.SessionToken, profile);
                 _catalog = await _api.DesktopBootstrapAsync(_catalog == null ? null : _catalog.CatalogVersion);
                 if (_hudProbe != null) _hudProbe.UpdateDungeons(_catalog == null ? null : _catalog.Dungeons);
+                if (_hudProbe != null) _hudProbe.UpdateDifficulties(_catalog == null ? null : _catalog.Difficulties);
                 _serverUpdateManifest = _catalog.DesktopUpdate ?? _serverUpdateManifest;
                 PresentUpdateIfAvailable(_serverUpdateManifest, false);
                 if (_pendingUpdateMandatory)
@@ -743,16 +774,23 @@ namespace KinojoMeterPrototype
                 }
                 _selected = profile;
                 DiagnosticLog.Info("CHARACTER", "Selected " + profile.CharacterName + " / " + profile.ServerName);
+                var discovery = _discovery;
+                _discovery = null;
+                if (discovery != null) discovery.Close();
                 OpenBackgroundMeter();
             }
             catch (MeterApiException ex)
             {
                 DiagnosticLog.Error("CHARACTER", ex.Code, ex);
+                if (_discovery != null) _discovery.SetStatus("캐릭터 연결에 실패했습니다 · 자동 검색을 다시 시작합니다");
+                if (_selected == null) StartAutomaticCharacterDetection();
                 MessageBox.Show(this, ex.Message, "캐릭터 연결 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             catch (Exception ex)
             {
                 DiagnosticLog.Error("CHARACTER", "Unexpected selection failure", ex);
+                if (_discovery != null) _discovery.SetStatus("캐릭터 연결에 실패했습니다 · 자동 검색을 다시 시작합니다");
+                if (_selected == null) StartAutomaticCharacterDetection();
                 MessageBox.Show(this, "캐릭터를 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.", "캐릭터 연결 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -768,11 +806,22 @@ namespace KinojoMeterPrototype
                 Dispatcher.BeginInvoke(new Action(delegate
                 {
                     if (_message != null && _selected == null) _message.Text = "접속 캐릭터 자동 확인 중 · " + status;
+                    if (_discovery != null) _discovery.SetStatus("캐릭터 자동 검색 중 · " + status);
                 }));
             };
             _characterDetector.DiagnosticStatusChanged += delegate(object sender, string status)
             {
                 DiagnosticLog.Info("AUTO_CHARACTER", status);
+            };
+            _characterDetector.CombatEventReceived += delegate(object sender, CombatEvent value)
+            {
+                if (value == null || value.Kind != CombatEventKind.EntityIdentity || String.IsNullOrWhiteSpace(value.ActorName)) return;
+                Dispatcher.BeginInvoke(new Action(async delegate
+                {
+                    if (!_autoSelectionStarted || _selectionBusy || _selected != null || _login == null) return;
+                    var matches = _login.Characters.Where(character => String.Equals((character.CharacterName ?? "").Trim(), value.ActorName.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (matches.Count == 1) await SelectDetectedCharacterAsync(matches[0], "게임 패킷");
+                }));
             };
             _characterDetector.PartyRosterDetected += delegate(object sender, PartyRosterDetectedEventArgs value)
             {
@@ -795,20 +844,13 @@ namespace KinojoMeterPrototype
                     }
 
                     var detected = matches[0];
-                    _selectionBusy = true;
-                    RefreshMeterStartState();
-                    if (_message != null) _message.Text = detected.CharacterName + " 자동 확인 · 연결 중";
                     DiagnosticLog.Info("AUTO_CHARACTER", "Detected " + detected.CharacterName + " from party roster" + (value.LateAttached ? " by late attach." : "."));
-                    try { await SelectCharacterAsync(detected); }
-                    finally
-                    {
-                        _selectionBusy = false;
-                        RefreshMeterStartState();
-                    }
+                    await SelectDetectedCharacterAsync(detected, "파티 패킷");
                 }));
             };
             _characterDetector.Start();
             if (_message != null) _message.Text = "아이온2 접속 캐릭터 자동 확인 중";
+            if (_discovery != null) _discovery.SetStatus("캐릭터 자동 검색 중 · 아이온2 연결을 확인하고 있습니다");
             DiagnosticLog.Info("AUTO_CHARACTER", "Detection capture started before character selection.");
         }
 
@@ -830,6 +872,7 @@ namespace KinojoMeterPrototype
             _hudProbe = new GameHudProbe();
             _hudProbe.UpdateCharacters(_login.Characters);
             _hudProbe.UpdateDungeons(_catalog == null ? null : _catalog.Dungeons);
+            _hudProbe.UpdateDifficulties(_catalog == null ? null : _catalog.Difficulties);
             _hudProbe.StatusChanged += delegate(object sender, string status)
             {
                 DiagnosticLog.Info("HUD_PROBE", status);
@@ -902,7 +945,7 @@ namespace KinojoMeterPrototype
         private void OpenBackgroundMeter()
         {
             if (_overlay != null) _overlay.Close();
-            _overlay = new OverlayWindow(_selected, _preferences);
+            _overlay = new OverlayWindow(_selected, _preferences, _catalog, _login != null && _login.IsMeterAdmin);
             if (_lastHudObservation != null) _overlay.ApplyHudObservation(_lastHudObservation);
             _overlay.HideRequested += delegate
             {
@@ -919,6 +962,23 @@ namespace KinojoMeterPrototype
             {
                 DiagnosticLog.Info("CAPTURE", status);
                 if (_tray != null) _tray.SetAdminCaptureStatus(status);
+            };
+            _overlay.FixtureCaptureStateChanged += delegate
+            {
+                if (_tray == null || _overlay == null) return;
+                _tray.SetFixtureCaptureActive(_overlay.IsFixtureCaptureActive);
+                _tray.SetStatus(_overlay.IsFixtureCaptureActive ? "관리자 패킷 진단 수집 중 · 최대 20분" : "패킷 진단 수집 완료");
+            };
+            _overlay.CharacterIdentityObserved += delegate(object sender, CombatEvent value)
+            {
+                Dispatcher.BeginInvoke(new Action(async delegate
+                {
+                    if (_selectionBusy || _login == null || _selected == null || value == null) return;
+                    var matches = _login.Characters.Where(character => String.Equals((character.CharacterName ?? "").Trim(), (value.ActorName ?? "").Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (matches.Count != 1 || String.Equals(matches[0].CharacterName, _selected.CharacterName, StringComparison.OrdinalIgnoreCase)) return;
+                    DiagnosticLog.Info("AUTO_CHARACTER", "Character change detected from entity identity: " + _selected.CharacterName + " -> " + matches[0].CharacterName + ".");
+                    await SelectDetectedCharacterAsync(matches[0], "캐릭터 변경 패킷");
+                }));
             };
             _overlay.ParticipantDetected += async delegate(object sender, CombatRow row) { await EnrichParticipantAsync(row); };
             _overlay.EncounterCompleted += async delegate(object sender, CombatSnapshot snapshot) { await UploadEncounterAsync(snapshot); };
@@ -1291,6 +1351,9 @@ namespace KinojoMeterPrototype
         private async Task LogoutAsync(bool exit)
         {
             StopAutomaticCharacterDetection();
+            var discovery = _discovery;
+            _discovery = null;
+            if (discovery != null) discovery.Close();
             _foregroundTimer?.Stop();
             _foregroundTimer = null;
             var overlay = _overlay;

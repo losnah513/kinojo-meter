@@ -12,6 +12,7 @@ namespace KinojoMeterPrototype
         private int _groupSize;
         private DateTime _startedAtUtc;
         private DateTime _lastEventUtc;
+        private DateTime _lastDamageUtc;
         private string _bossId = "";
         private string _bossName = "";
         private long _bossCurrentHp;
@@ -53,6 +54,7 @@ namespace KinojoMeterPrototype
                 _participants.Clear();
                 _startedAtUtc = DateTime.MinValue;
                 _lastEventUtc = DateTime.MinValue;
+                _lastDamageUtc = DateTime.MinValue;
                 _bossId = _bossName = "";
                 _bossCurrentHp = _bossMaxHp = 0;
                 _bossConfirmed = _running = _cleared = false;
@@ -85,6 +87,12 @@ namespace KinojoMeterPrototype
                 {
                     changed = UpsertParticipant(value);
                     _groupSize = Math.Max(_groupSize, NormalizeGroupSize(Math.Max(_participants.Count, value.PartyNumber * 5)));
+                }
+                else if (value.Kind == CombatEventKind.EntityIdentity)
+                {
+                    changed = ApplyEntityIdentity(value);
+                    if (String.Equals(_bossId, value.ActorId, StringComparison.OrdinalIgnoreCase) && !String.IsNullOrWhiteSpace(value.ActorName))
+                        _bossName = value.ActorName;
                 }
                 else if (value.Kind == CombatEventKind.BossSpawn)
                 {
@@ -128,13 +136,20 @@ namespace KinojoMeterPrototype
                 else if (value.Kind == CombatEventKind.Damage)
                 {
                     if (value.Damage <= 0) return;
+                    var separated = _lastDamageUtc != DateTime.MinValue && (timestamp - _lastDamageUtc) >= TimeSpan.FromSeconds(12);
+                    var newConfirmedTarget = value.IsBoss && !String.IsNullOrWhiteSpace(value.TargetId) &&
+                        !String.IsNullOrWhiteSpace(_bossId) && !String.Equals(_bossId, value.TargetId, StringComparison.OrdinalIgnoreCase);
+                    if (separated || newConfirmedTarget) ResetEncounterDamageLocked();
+                    if (!String.IsNullOrWhiteSpace(value.TargetId)) _bossId = value.TargetId;
+                    if (!String.IsNullOrWhiteSpace(value.TargetName)) _bossName = value.TargetName;
+                    if (String.IsNullOrWhiteSpace(_bossName)) _bossName = "전투 대상";
                     if (value.IsBoss && !_bossConfirmed)
                     {
-                        _bossId = value.TargetId ?? "";
-                        _bossName = String.IsNullOrWhiteSpace(value.TargetName) ? "이름 없는 보스" : value.TargetName;
                         _bossConfirmed = true;
                     }
-                    if (_bossConfirmed && !_cleared) StartIfNeeded(timestamp);
+                    _cleared = false;
+                    StartIfNeeded(timestamp);
+                    _lastDamageUtc = timestamp;
                     changed = UpsertParticipant(value);
                     changed.TotalDamage += value.Damage;
                     changed.Dps = CalculateDps(changed, timestamp);
@@ -202,12 +217,20 @@ namespace KinojoMeterPrototype
 
         public void Tick(DateTime utcNow)
         {
+            var completed = false;
             lock (_gate)
             {
                 if (!_running) return;
+                if (_lastDamageUtc != DateTime.MinValue && (utcNow - _lastDamageUtc) >= TimeSpan.FromSeconds(12))
+                {
+                    _running = false;
+                    _cleared = _bossConfirmed;
+                    completed = _bossConfirmed;
+                }
                 RecalculateShares(utcNow);
             }
             RaiseSnapshotChanged();
+            if (completed) RaiseEncounterCompleted();
         }
 
         public CombatSnapshot Snapshot()
@@ -270,6 +293,18 @@ namespace KinojoMeterPrototype
             CombatRow row;
             if (!_participants.TryGetValue(key, out row))
             {
+                if (!String.IsNullOrWhiteSpace(value.ActorName))
+                    row = _participants.Values.FirstOrDefault(candidate => !candidate.IsEmpty && String.Equals(candidate.Name, value.ActorName, StringComparison.OrdinalIgnoreCase));
+                if (row != null)
+                {
+                    var previousKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, row)).Key;
+                    _participants.Remove(previousKey);
+                    row.ParticipantKey = key;
+                    _participants[key] = row;
+                }
+            }
+            if (row == null)
+            {
                 var slot = value.PartyNumber > 0 && value.PartySlot > 0 ? Tuple.Create(value.PartyNumber, value.PartySlot) : FindNextSlot();
                 row = new CombatRow { ParticipantKey = key, PlatformCharacterId = value.PlatformCharacterId, PartyNumber = slot.Item1, PartySlot = slot.Item2, Name = value.ActorName ?? "알 수 없음", ServerId = value.ActorServerId ?? "", ServerName = value.ActorServer ?? "", ClassKey = value.ActorClassKey ?? "", ClassName = value.ActorClass ?? "", ClassRaw = value.ActorClassRaw, ProfileImageUrl = value.ProfileImageUrl ?? "", CombatPower = value.CombatPower, ItemLevel = value.ItemLevel, IsSelf = IsSelf(value), IsEmpty = false };
                 _participants[key] = row;
@@ -286,6 +321,47 @@ namespace KinojoMeterPrototype
             if (value.ItemLevel > 0) row.ItemLevel = value.ItemLevel;
             row.IsSelf = row.IsSelf || IsSelf(value);
             return row;
+        }
+
+        private CombatRow ApplyEntityIdentity(CombatEvent value)
+        {
+            CombatRow row;
+            if (!String.IsNullOrWhiteSpace(value.ActorId) && _participants.TryGetValue(value.ActorId, out row))
+            {
+                if (!String.IsNullOrWhiteSpace(value.ActorName)) row.Name = value.ActorName;
+                row.IsSelf = row.IsSelf || IsSelf(value);
+                return row;
+            }
+            row = _participants.Values.FirstOrDefault(candidate => !candidate.IsEmpty &&
+                !String.IsNullOrWhiteSpace(value.ActorName) && String.Equals(candidate.Name, value.ActorName, StringComparison.OrdinalIgnoreCase));
+            if (row == null && IsSelf(value)) return UpsertParticipant(value);
+            if (row == null) return null;
+            var oldKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, row)).Key;
+            if (!String.IsNullOrWhiteSpace(value.ActorId) && !String.Equals(oldKey, value.ActorId, StringComparison.OrdinalIgnoreCase))
+            {
+                _participants.Remove(oldKey);
+                row.ParticipantKey = value.ActorId;
+                _participants[value.ActorId] = row;
+            }
+            return row;
+        }
+
+        private void ResetEncounterDamageLocked()
+        {
+            foreach (var row in _participants.Values)
+            {
+                row.TotalDamage = 0;
+                row.Dps = 0;
+                row.Share = 0;
+            }
+            _startedAtUtc = DateTime.MinValue;
+            _bossId = "";
+            _bossName = "";
+            _bossCurrentHp = 0;
+            _bossMaxHp = 0;
+            _bossConfirmed = false;
+            _running = false;
+            _cleared = false;
         }
 
         private bool IsSelf(CombatEvent value)

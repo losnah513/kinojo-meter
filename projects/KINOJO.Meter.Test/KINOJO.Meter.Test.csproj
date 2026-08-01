@@ -28,10 +28,14 @@
     <Compile Include="..\..\src\Program.cs" Link="Program.cs" />
     <Compile Include="..\..\src\KinojoVersion.cs" Link="KinojoVersion.cs" />
     <Compile Include="..\..\src\MainWindow.cs" Link="MainWindow.cs" />
+    <Compile Include="..\..\src\CharacterDiscoveryWindow.cs" Link="CharacterDiscoveryWindow.cs" />
+    <Compile Include="..\..\src\KinojoSpinner.cs" Link="KinojoSpinner.cs" />
     <Compile Include="..\..\src\PassKeyInput.cs" Link="PassKeyInput.cs" />
     <Compile Include="..\..\src\OverlayWindow.cs" Link="OverlayWindow.cs" />
     <Compile Include="..\..\src\KinojoApiClient.cs" Link="KinojoApiClient.cs" />
     <Compile Include="..\..\src\GameCapture.cs" Link="GameCapture.cs" />
+    <Compile Include="..\..\src\AionCombatDecoder.cs" Link="AionCombatDecoder.cs" />
+    <Compile Include="..\..\src\DecoderSelfTest.cs" Link="DecoderSelfTest.cs" />
     <Compile Include="..\..\src\GameHudProbe.cs" Link="GameHudProbe.cs" />
     <Compile Include="..\..\src\CombatEngine.cs" Link="CombatEngine.cs" />
     <Compile Include="..\..\src\Models.cs" Link="Models.cs" />

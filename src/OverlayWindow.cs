@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace KinojoMeterPrototype
@@ -32,33 +33,39 @@ namespace KinojoMeterPrototype
 
         private readonly MeterPreferences _preferences;
         private readonly CharacterProfile _selected;
+        private readonly bool _isMeterAdmin;
+        private readonly HashSet<string> _bossNames;
         private readonly Border _surface;
         private readonly StackPanel _rows;
         private readonly TextBlock _bossName;
         private readonly TextBlock _encounterTime;
         private readonly TextBlock _stateLabel;
-        private readonly TextBlock _spinner;
+        private readonly KinojoSpinner _spinner;
         private readonly TextBlock _footerVersion;
         private readonly ProgressBar _bossHp;
         private readonly DispatcherTimer _timer;
-        private readonly DispatcherTimer _activityTimer;
         private readonly CombatSessionEngine _engine;
         private CombatCaptureCoordinator _capture;
         private bool _running;
         private bool _partyObserved;
         private bool _dungeonEntered;
-        private int _spinnerFrame;
         private string _hudDungeonName = "";
+        private string _hudDifficultyName = "";
         private readonly Dictionary<string, Color> _observedClassColors =
             new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, Color> _classRawColors = new Dictionary<int, Color>();
+        private Button _diagnosticStartButton;
+        private Button _diagnosticStopButton;
+        private TextBlock _diagnosticState;
 
         public event EventHandler HideRequested;
         public event EventHandler<CombatSnapshot> EncounterCompleted;
         public event EventHandler<CombatRow> ParticipantDetected;
         public event EventHandler<PartyRosterDetectedEventArgs> PartyRosterObserved;
+        public event EventHandler<CombatEvent> CharacterIdentityObserved;
         public event EventHandler<string> CaptureStatusChanged;
         public event EventHandler<string> CaptureDiagnosticChanged;
+        public event EventHandler FixtureCaptureStateChanged;
 
         [DllImport("user32.dll", SetLastError = true)] private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", SetLastError = true)] private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
@@ -66,9 +73,12 @@ namespace KinojoMeterPrototype
         [DllImport("user32.dll", SetLastError = true)] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
         [DllImport("user32.dll", SetLastError = true)] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-        public OverlayWindow(CharacterProfile selected, MeterPreferences preferences)
+        public OverlayWindow(CharacterProfile selected, MeterPreferences preferences, MeterCatalog catalog, bool isMeterAdmin)
         {
             _selected = selected;
+            _isMeterAdmin = isMeterAdmin;
+            _bossNames = new HashSet<string>((catalog == null ? Enumerable.Empty<CatalogBoss>() : catalog.Bosses ?? new List<CatalogBoss>())
+                .Select(value => (value.BossName ?? "").Trim()).Where(value => value.Length > 0), StringComparer.OrdinalIgnoreCase);
             _preferences = preferences ?? MeterPreferences.Default();
             _engine = new CombatSessionEngine(_selected, _preferences.GroupSize);
             _engine.EncounterCompleted += delegate { EncounterCompleted?.Invoke(this, _engine.Snapshot()); };
@@ -133,15 +143,7 @@ namespace KinojoMeterPrototype
             root.Children.Add(toolbar);
 
             var activity = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(3, 0, 0, 6) };
-            _spinner = new TextBlock
-            {
-                Text = "◐",
-                Foreground = new SolidColorBrush(Accent),
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Width = 18,
-                VerticalAlignment = VerticalAlignment.Center
-            };
+            _spinner = new KinojoSpinner { Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
             _stateLabel = new TextBlock
             {
                 Text = "파티 구성원 체크 중",
@@ -178,6 +180,32 @@ namespace KinojoMeterPrototype
 
             _rows = new StackPanel();
             root.Children.Add(_rows);
+            if (_isMeterAdmin)
+            {
+                var diagnostics = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+                _diagnosticStartButton = ToolButton("패킷 진단 수집 시작", "관리자 패킷 픽스처 수집 시작");
+                _diagnosticStopButton = ToolButton("수집 종료", "관리자 패킷 픽스처 수집 종료");
+                _diagnosticStartButton.Width = 118;
+                _diagnosticStartButton.FontSize = 8;
+                _diagnosticStopButton.Width = 62;
+                _diagnosticStopButton.FontSize = 8;
+                _diagnosticStopButton.Margin = new Thickness(4, 0, 0, 0);
+                _diagnosticStopButton.IsEnabled = false;
+                _diagnosticStartButton.Click += delegate { StartFixtureCapture(); };
+                _diagnosticStopButton.Click += delegate { StopFixtureCapture(); };
+                _diagnosticState = new TextBlock
+                {
+                    Text = "관리자 진단 대기",
+                    Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+                    FontSize = 8,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(7, 0, 0, 0)
+                };
+                diagnostics.Children.Add(_diagnosticStartButton);
+                diagnostics.Children.Add(_diagnosticStopButton);
+                diagnostics.Children.Add(_diagnosticState);
+                root.Children.Add(diagnostics);
+            }
             _footerVersion = new TextBlock
             {
                 Text = "KINOJO Meter v" + KinojoVersion.Current,
@@ -190,13 +218,6 @@ namespace KinojoMeterPrototype
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _timer.Tick += Tick;
-            _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
-            _activityTimer.Tick += delegate
-            {
-                var frames = new[] { "◐", "◓", "◑", "◒" };
-                _spinner.Text = frames[_spinnerFrame++ % frames.Length];
-            };
-            _activityTimer.Start();
             LocationChanged += delegate { SaveGeometry(); };
             SizeChanged += delegate { SaveGeometry(); };
             SourceInitialized += delegate { InitializeWindowHooks(); };
@@ -204,7 +225,6 @@ namespace KinojoMeterPrototype
             Closed += delegate
             {
                 _timer.Stop();
-                _activityTimer.Stop();
                 var handle = new WindowInteropHelper(this).Handle;
                 if (handle != IntPtr.Zero) UnregisterHotKey(handle, HotkeyId);
                 SaveGeometry();
@@ -232,8 +252,32 @@ namespace KinojoMeterPrototype
 
         public string ToggleFixtureCapture()
         {
+            if (!_isMeterAdmin) return "";
             if (_capture == null) StartCapture();
-            return _capture == null ? "" : _capture.ToggleFixtureCapture();
+            var directory = _capture == null ? "" : _capture.ToggleFixtureCapture();
+            UpdateFixtureCaptureControls();
+            FixtureCaptureStateChanged?.Invoke(this, EventArgs.Empty);
+            return directory;
+        }
+
+        private void StartFixtureCapture()
+        {
+            if (!IsFixtureCaptureActive) ToggleFixtureCapture();
+        }
+
+        private void StopFixtureCapture()
+        {
+            if (IsFixtureCaptureActive) ToggleFixtureCapture();
+        }
+
+        private void UpdateFixtureCaptureControls()
+        {
+            if (_diagnosticStartButton == null) return;
+            var active = IsFixtureCaptureActive;
+            _diagnosticStartButton.IsEnabled = !active;
+            _diagnosticStopButton.IsEnabled = active;
+            _diagnosticState.Text = active ? "수집 중 · 최대 20분" : "관리자 진단 대기";
+            _diagnosticState.Foreground = new SolidColorBrush(active ? Color.FromRgb(56, 189, 248) : Color.FromRgb(148, 163, 184));
         }
 
         public bool AddFixtureMarker(string marker)
@@ -297,7 +341,11 @@ namespace KinojoMeterPrototype
             };
             _capture.DiagnosticStatusChanged += delegate(object sender, string text)
             {
-                Dispatcher.BeginInvoke(new Action(delegate { CaptureDiagnosticChanged?.Invoke(this, text); }));
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    UpdateFixtureCaptureControls();
+                    CaptureDiagnosticChanged?.Invoke(this, text);
+                }));
             };
             _capture.Start();
         }
@@ -328,6 +376,8 @@ namespace KinojoMeterPrototype
 
             if (!String.IsNullOrWhiteSpace(observation.DungeonName))
                 _hudDungeonName = observation.DungeonName.Trim();
+            if (!String.IsNullOrWhiteSpace(observation.DifficultyName))
+                _hudDifficultyName = observation.DifficultyName.Trim();
 
             // 파티 구성 창의 콘텐츠명은 입장 전에도 보이므로 표시 후보로만 사용한다.
             // 실제 입장은 검증된 ZoneEntered/DungeonDetected 패킷 이벤트가 확인할 때만 전환한다.
@@ -336,6 +386,19 @@ namespace KinojoMeterPrototype
 
         public void ApplyCombatEvent(CombatEvent value)
         {
+            if (value != null && value.Kind == CombatEventKind.EntityIdentity && !String.IsNullOrWhiteSpace(value.ActorName))
+                CharacterIdentityObserved?.Invoke(this, value);
+            if (value != null && value.Kind == CombatEventKind.Damage)
+            {
+                var catalogBoss = !String.IsNullOrWhiteSpace(value.TargetName) && _bossNames.Contains(value.TargetName.Trim());
+                if (!String.IsNullOrWhiteSpace(_hudDungeonName) && _bossNames.Count > 0 && !catalogBoss)
+                {
+                    SetActivityStatus("던전 상태 확인 · 파티 구성원 실시간 확인 중");
+                    return;
+                }
+                value.IsBoss = value.IsBoss || catalogBoss;
+                if (!String.IsNullOrWhiteSpace(_hudDungeonName)) _dungeonEntered = true;
+            }
             _engine.SetRuntimeInfo(RuntimeInfo);
             _engine.Apply(value);
             if (value != null && (value.Kind == CombatEventKind.ZoneEntered || value.Kind == CombatEventKind.DungeonDetected))
@@ -357,21 +420,31 @@ namespace KinojoMeterPrototype
         private void Tick(object sender, EventArgs args)
         {
             _engine.Tick(DateTime.UtcNow);
-            Render(_engine.Snapshot());
+            var snapshot = _engine.Snapshot();
+            if (!snapshot.IsRunning)
+            {
+                _running = false;
+                _timer.Stop();
+            }
+            Render(snapshot);
         }
 
         private void Render(CombatSnapshot snapshot)
         {
-            _bossName.Text = snapshot.BossConfirmed
+            _bossName.Text = snapshot.IsRunning && !String.IsNullOrWhiteSpace(snapshot.BossName)
+                ? snapshot.BossName
+                : snapshot.BossConfirmed
                 ? snapshot.BossName
                 : (!String.IsNullOrWhiteSpace(snapshot.DungeonName)
                     ? snapshot.DungeonName + " · 전투 대기"
-                    : (!String.IsNullOrWhiteSpace(_hudDungeonName) ? _hudDungeonName + " · 입장 대기" : "전투 대기"));
+                    : (!String.IsNullOrWhiteSpace(_hudDungeonName)
+                        ? _hudDungeonName + (String.IsNullOrWhiteSpace(_hudDifficultyName) ? "" : " [" + _hudDifficultyName + "]") + " · 던전 상태 확인 중"
+                        : "전투 대기"));
             _bossHp.Value = snapshot.BossMaxHp > 0 ? Math.Max(0, Math.Min(100, snapshot.BossCurrentHp * 100.0 / snapshot.BossMaxHp)) : 0;
             _encounterTime.Text = snapshot.StartedAtUtc == DateTime.MinValue ? "00:00" : (snapshot.LastEventUtc - snapshot.StartedAtUtc).ToString(@"mm\:ss");
             if (snapshot.IsCleared) SetActivityStatus("보스 전투 종료 · 결과 정리 중");
             else if (snapshot.IsRunning) SetActivityStatus("보스 전투 중 · DPS 판독 중");
-            else if (_dungeonEntered) SetActivityStatus("던전 입장 확인 · 파티 구성원 확인 중");
+            else if (_dungeonEntered) SetActivityStatus("던전 입장 확인 · 파티 구성원 실시간 확인 중");
             else if (_partyObserved) SetActivityStatus("파티 구성원 확인 중");
             _spinner.Visibility = snapshot.IsRunning || snapshot.IsCleared ? Visibility.Collapsed : Visibility.Visible;
             RenderRows(snapshot.Rows);
@@ -381,13 +454,12 @@ namespace KinojoMeterPrototype
         {
             _rows.Children.Clear();
             var rows = (source ?? Enumerable.Empty<CombatRow>()).OrderBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList();
-            var ranked = rows.Where(row => !row.IsEmpty).OrderByDescending(row => row.Dps).ToList();
-            var rank = ranked.Select((row, index) => new { row, rank = index + 1 }).ToDictionary(value => value.row, value => value.rank);
-            foreach (var row in rows) _rows.Children.Add(BuildRow(row, rank.ContainsKey(row) ? rank[row] : 0));
-            Height = Math.Max(235, Math.Min(655, 180 + rows.Count * 34));
+            foreach (var row in rows) _rows.Children.Add(BuildRow(row));
+            var adminHeight = _isMeterAdmin ? 34 : 0;
+            Height = Math.Max(235 + adminHeight, Math.Min(655, 180 + adminHeight + rows.Count * 34));
         }
 
-        private UIElement BuildRow(CombatRow row, int rank)
+        private UIElement BuildRow(CombatRow row)
         {
             var grid = new Grid
             {
@@ -420,20 +492,51 @@ namespace KinojoMeterPrototype
             Grid.SetColumnSpan(classStripe, 3);
             grid.Children.Add(classStripe);
 
-            grid.Children.Add(new TextBlock
+            var classBadge = new Border
             {
-                Text = row.PartyNumber + "-" + row.PartySlot,
-                Foreground = new SolidColorBrush(Color.FromRgb(186, 230, 253)),
+                Width = 22,
+                Height = 22,
+                CornerRadius = new CornerRadius(11),
+                Background = new SolidColorBrush(Color.FromArgb(105, classColor.R, classColor.G, classColor.B)),
+                BorderBrush = new SolidColorBrush(classColor),
+                BorderThickness = new Thickness(1),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = String.IsNullOrWhiteSpace(row.ClassName) ? "클래스 확인 중" : row.ClassName
+            };
+            var classGlyph = new Grid();
+            classGlyph.Children.Add(new TextBlock
+            {
+                Text = row.IsEmpty ? "·" : (!String.IsNullOrWhiteSpace(row.ClassName) ? row.ClassName.Substring(0, 1) : "◆"),
+                Foreground = Brushes.White,
                 FontSize = 8,
                 FontWeight = FontWeights.Bold,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(5, 0, 0, 0)
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
             });
+            var classIconUri = ResolveClassIconUri(row);
+            if (!String.IsNullOrWhiteSpace(classIconUri))
+            {
+                try
+                {
+                    classGlyph.Children.Add(new Image
+                    {
+                        Source = new BitmapImage(new Uri(classIconUri, UriKind.Absolute)),
+                        Width = 18,
+                        Height = 18,
+                        Stretch = Stretch.Uniform
+                    });
+                }
+                catch { }
+            }
+            classBadge.Child = classGlyph;
+            grid.Children.Add(classBadge);
             var identity = new TextBlock
             {
                 Text = row.IsEmpty ? "빈 자리" :
-                    (rank > 0 ? "#" + rank + "  " : "") + row.Name +
-                    (String.IsNullOrWhiteSpace(row.ClassName) ? "" : " · " + row.ClassName),
+                    row.Name + (String.IsNullOrWhiteSpace(row.ServerName) ? "" : "[" + row.ServerName + "]") +
+                    (String.IsNullOrWhiteSpace(row.ClassName) ? "" : " · " + row.ClassName) +
+                    (row.CombatPower > 0 ? " · 전투력 " + FormatNumber(row.CombatPower) : ""),
                 Foreground = row.IsEmpty ? new SolidColorBrush(Color.FromRgb(100, 116, 139)) : Brushes.White,
                 FontWeight = row.IsSelf ? FontWeights.Bold : FontWeights.SemiBold,
                 FontSize = 9,
@@ -467,6 +570,27 @@ namespace KinojoMeterPrototype
             if (row != null && _observedClassColors.TryGetValue(row.Name ?? "", out color)) return color;
             if (row != null && row.ClassRaw > 0 && _classRawColors.TryGetValue(row.ClassRaw, out color)) return color;
             return Color.FromRgb(71, 85, 105);
+        }
+
+        private static string ResolveClassIconUri(CombatRow row)
+        {
+            if (row == null || row.IsEmpty) return "";
+            var key = (row.ClassKey ?? "").Trim().ToLowerInvariant();
+            var name = (row.ClassName ?? "").Trim();
+            if (String.IsNullOrWhiteSpace(key))
+            {
+                if (name.Contains("검성")) key = "gladiator";
+                else if (name.Contains("수호")) key = "templar";
+                else if (name.Contains("살성")) key = "assassin";
+                else if (name.Contains("궁성")) key = "ranger";
+                else if (name.Contains("마도")) key = "sorcerer";
+                else if (name.Contains("정령")) key = "elementalist";
+                else if (name.Contains("치유")) key = "cleric";
+                else if (name.Contains("호법")) key = "chanter";
+                else if (name.Contains("격수") || name.Contains("권성")) key = "fighter";
+            }
+            var supported = new HashSet<string>(new[] { "assassin", "chanter", "cleric", "elementalist", "fighter", "gladiator", "ranger", "sorcerer", "templar" }, StringComparer.OrdinalIgnoreCase);
+            return supported.Contains(key) ? "https://kinojo.info/assets/images/classes/class_icon_" + key + ".png" : "";
         }
 
         private static bool TryParseColor(string value, out Color color)

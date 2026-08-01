@@ -1,0 +1,5 @@
+artifacts/
+projects/*/obj/
+build/KINOJO_Meter_*_Setup.exe
+build/KinojoMeterPayload_*.zip
+build/checksums_*.txt

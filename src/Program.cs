@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 
@@ -7,8 +8,13 @@ namespace KinojoMeterPrototype
     internal static class Program
     {
         [STAThread]
-        private static void Main()
+        private static void Main(string[] args)
         {
+            if (args != null && args.Any(value => String.Equals(value, "--decoder-self-test", StringComparison.OrdinalIgnoreCase)))
+            {
+                Environment.ExitCode = DecoderSelfTest.Run() ? 0 : 1;
+                return;
+            }
             bool ownsInstance;
             using (var singleInstance = new Mutex(true, @"Local\KINOJO_Meter_SingleInstance", out ownsInstance))
             {

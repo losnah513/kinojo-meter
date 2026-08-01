@@ -34,6 +34,7 @@ namespace KinojoMeterPrototype
 
     internal sealed class DetectedPartyMember
     {
+        public string EntityId { get; set; }
         public int Slot { get; set; }
         public int ServerRaw { get; set; }
         public string CharacterName { get; set; }
@@ -54,6 +55,7 @@ namespace KinojoMeterPrototype
         public DateTime ObservedAtUtc { get; set; }
         public string CharacterName { get; set; }
         public string DungeonName { get; set; }
+        public string DifficultyName { get; set; }
         public string Evidence { get; set; }
         public Dictionary<string, string> PartyClassColors { get; set; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -179,6 +181,7 @@ namespace KinojoMeterPrototype
     {
         LocalPlayer,
         PartyMember,
+        EntityIdentity,
         ZoneEntered,
         DungeonDetected,
         BossSpawn,
@@ -204,6 +207,9 @@ namespace KinojoMeterPrototype
         public string TargetId { get; set; }
         public string TargetName { get; set; }
         public long Damage { get; set; }
+        public long ActionId { get; set; }
+        public long SkillId { get; set; }
+        public long HitSequence { get; set; }
         public long CurrentHp { get; set; }
         public long MaxHp { get; set; }
         public bool IsBoss { get; set; }

@@ -28,6 +28,7 @@ namespace KinojoMeterPrototype
         private readonly Timer _timer;
         private List<string> _characterNames = new List<string>();
         private List<string> _dungeonNames = new List<string>();
+        private List<string> _difficultyNames = new List<string>();
         private List<string> _partyNames = new List<string>();
         private OcrEngine _ocr;
         private int _probing;
@@ -85,6 +86,16 @@ namespace KinojoMeterPrototype
             lock (_gate)
                 _dungeonNames = (dungeons ?? Enumerable.Empty<CatalogDungeon>())
                     .Select(value => (value.DungeonName ?? "").Trim())
+                    .Where(value => value.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+        }
+
+        public void UpdateDifficulties(IEnumerable<CatalogDifficulty> difficulties)
+        {
+            lock (_gate)
+                _difficultyNames = (difficulties ?? Enumerable.Empty<CatalogDifficulty>())
+                    .Select(value => (value.DisplayName ?? "").Trim())
                     .Where(value => value.Length > 0)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -171,11 +182,13 @@ namespace KinojoMeterPrototype
         {
             List<string> characters;
             List<string> dungeons;
+            List<string> difficulties;
             List<string> party;
             lock (_gate)
             {
                 characters = _characterNames.ToList();
                 dungeons = _dungeonNames.ToList();
+                difficulties = _difficultyNames.ToList();
                 party = _partyNames.ToList();
             }
 
@@ -198,8 +211,9 @@ namespace KinojoMeterPrototype
 
             var confirmedCharacter = _pendingCharacterCount >= 2 ? _pendingCharacter : "";
             var dungeon = BestKnownMatch(panel.Text, dungeons);
+            var difficulty = BestKnownMatch(panel.Text, difficulties);
             var colors = ReadPartyIconColors(panel, party);
-            if (String.IsNullOrWhiteSpace(confirmedCharacter) && String.IsNullOrWhiteSpace(dungeon) && colors.Count == 0)
+            if (String.IsNullOrWhiteSpace(confirmedCharacter) && String.IsNullOrWhiteSpace(dungeon) && String.IsNullOrWhiteSpace(difficulty) && colors.Count == 0)
                 return null;
 
             return new GameHudObservation
@@ -207,6 +221,7 @@ namespace KinojoMeterPrototype
                 ObservedAtUtc = DateTime.UtcNow,
                 CharacterName = confirmedCharacter,
                 DungeonName = dungeon,
+                DifficultyName = difficulty,
                 PartyClassColors = colors,
                 Evidence = "WINDOWS_OCR_FIXED_ROI"
             };

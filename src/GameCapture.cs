@@ -409,6 +409,7 @@ namespace KinojoMeterPrototype
             public bool LateAttached;
             public bool ParserEnvelopeSeen;
             public bool PartyRosterSeen;
+            public bool CombatEvidenceSeen;
             public bool ParserEnvelopeCandidateAnnounced;
             public string LastPartyRosterSignature = "";
             public DateTime LastSeenUtc;
@@ -423,10 +424,11 @@ namespace KinojoMeterPrototype
         }
         private readonly object _gate = new object();
         private readonly Dictionary<string, TransportState> _connections = new Dictionary<string, TransportState>(StringComparer.OrdinalIgnoreCase);
+        private readonly AionCombatDecoder _combatDecoder = new AionCombatDecoder();
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
-        public string DecoderType { get { return "BINARY_UNVALIDATED"; } }
-        public string DecoderVersion { get { return "aion2-late-attach-party-roster-probe-3"; } }
+        public string DecoderType { get { return "BINARY_PARTIAL_VALIDATED"; } }
+        public string DecoderVersion { get { return "aion2-damage-varint-lz4-1"; } }
         public bool IsValidated { get { return false; } }
         public event EventHandler<string> AionConnectionIdentified;
         public event EventHandler<string> ParserEnvelopeCandidateObserved;
@@ -449,6 +451,7 @@ namespace KinojoMeterPrototype
                     _connections[frame.ConnectionKey] = state;
                 }
                 state.LastSeenUtc = frame.TimestampUtc;
+                if (_combatDecoder.TryDecode(frame, events)) state.CombatEvidenceSeen = true;
                 List<byte> prefix;
                 if (!state.PrefixByDirection.TryGetValue(frame.Direction, out prefix))
                 {
@@ -497,7 +500,7 @@ namespace KinojoMeterPrototype
                     state.Announced = true;
                     identified = frame.ConnectionKey;
                 }
-                else if (!state.Announced && state.ParserEnvelopeSeen && state.PartyRosterSeen)
+                else if (!state.Announced && (state.CombatEvidenceSeen || (state.ParserEnvelopeSeen && state.PartyRosterSeen)))
                 {
                     state.Announced = true;
                     state.LateAttached = true;
@@ -512,9 +515,9 @@ namespace KinojoMeterPrototype
             if (partyRosterCandidate != null) PartyRosterCandidateObserved?.Invoke(this, partyRosterCandidate);
             if (partyRosterDetected != null) PartyRosterDetected?.Invoke(this, partyRosterDetected);
 
-            // 운영 안전 규칙: 0x3610/0x3611 초기 교환으로 AION2 흐름을 확인하더라도,
-            // 후속 변환 계층과 전투 필드가 검증되기 전에는 CombatEvent를 만들지 않는다.
-            return false;
+            // 피해 레코드는 제어 픽스처로 검증했지만 전체 프로토콜은 부분 검증 상태다.
+            // 따라서 로컬 DPS 이벤트는 반환하되 서버 업로드 자격은 계속 차단한다.
+            return events != null && events.Count > 0;
         }
 
         private static bool TryObservePartyRosterCandidate(
@@ -806,7 +809,7 @@ namespace KinojoMeterPrototype
                 var actualKey = lateAttach ? connectionKey.Substring("LATE_ATTACH|".Length) : connectionKey;
                 RaiseStatus(lateAttach ? "AION2 실행 중 연결 합류 · 정보 확인 중" : "AION2 연결 확인 · Decoder 분석 중");
                 RaiseDiagnostic(lateAttach
-                    ? "AION2 transport identified by late attach evidence (0x3641 envelope + party roster). Connection=" + actualKey + "."
+                    ? "AION2 transport identified by late attach evidence (combat/entity event or 0x3641 envelope + party roster). Connection=" + actualKey + "."
                     : "AION2 transport identified by bidirectional 0x3610/0x3611 handshake. Connection=" + actualKey + ".");
             };
             _decoder.ParserEnvelopeCandidateObserved += delegate(object sender, string detail)
