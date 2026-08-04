@@ -297,6 +297,41 @@ namespace KinojoMeterPrototype
             return result;
         }
 
+        public async Task<MeterConsentStatus> GetConsentStatusAsync(string sessionToken, string documentVersion = null)
+        {
+            if (String.IsNullOrWhiteSpace(sessionToken)) throw new MeterApiException("SESSION_MISSING", "동의 상태 확인을 위한 서버 세션이 없습니다.");
+            await EnsureConfigAsync();
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "consentStatus" },
+                { "sessionToken", sessionToken },
+                { "documentVersion", documentVersion ?? "" }
+            });
+            if (!Bool(result, "ok"))
+                throw new MeterApiException("CONSENT_STATUS_REJECTED", Text(result, "message", "미터기 동의 상태를 확인하지 못했습니다."));
+            return ParseConsentStatus(result);
+        }
+
+        public async Task<MeterConsentStatus> RecordInstallerConsentAsync(string sessionToken, string documentVersion)
+        {
+            if (String.IsNullOrWhiteSpace(sessionToken)) throw new MeterApiException("SESSION_MISSING", "설치 동의를 서버에 연결하기 위한 세션이 없습니다.");
+            if (String.IsNullOrWhiteSpace(documentVersion)) throw new MeterApiException("CONSENT_VERSION_MISSING", "설치 동의 문서 버전이 없습니다.");
+            await EnsureConfigAsync();
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "recordConsent" },
+                { "sessionToken", sessionToken },
+                { "documentVersion", documentVersion },
+                { "serviceRiskAccepted", true },
+                { "statisticsAccepted", true },
+                { "clientSurface", "DESKTOP_INSTALLER_SYNC" },
+                { "clientVersion", ClientVersion }
+            });
+            if (!Bool(result, "ok"))
+                throw new MeterApiException("CONSENT_RECORD_REJECTED", Text(result, "message", "설치 동의를 서버에 연결하지 못했습니다."));
+            return ParseConsentStatus(result);
+        }
+
         public async Task<Dictionary<string, object>> SubmitObservedEncounterAsync(string sessionToken, Dictionary<string, object> payload)
         {
             if (String.IsNullOrWhiteSpace(sessionToken)) throw new MeterApiException("SESSION_MISSING", "관측 전투 저장을 위한 서버 세션이 없습니다.");
@@ -500,6 +535,16 @@ namespace KinojoMeterPrototype
                 Channel = Text(node, "channel", KinojoVersion.Channel)
             };
             return String.IsNullOrWhiteSpace(value.Version) ? null : value;
+        }
+
+        private static MeterConsentStatus ParseConsentStatus(Dictionary<string, object> node)
+        {
+            return new MeterConsentStatus
+            {
+                Accepted = Bool(node, "accepted"),
+                DocumentVersion = Text(node, "documentVersion", Text(node, "document_version", "")),
+                Message = Text(node, "message", "")
+            };
         }
 
         private static int RoleLevelFromLabel(string label)

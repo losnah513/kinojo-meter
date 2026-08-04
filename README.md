@@ -1,7 +1,7 @@
 ﻿# KINOJO Meter Desktop
 
 
-기준일: 2026-08-04
+기준일: 2026-08-05
 Desktop version source: `release/version.json`  
 Latest Meter SQL: `50015`
 Desktop API Contract: `50015`
@@ -13,6 +13,16 @@ Edge API: `50015.2`
 - 이 지점 이후 Meter 원인 분석·구현·픽스처/실게임 검증·릴리스 상태는 WEB·일반 Server 작업과 분리해 기록합니다.
 - 회차 마감은 GitHub / Server / Google Drive / 작업 로그를 각각 독립 상태로 보고합니다.
 - 운영 Server 제출은 실제 게임에서 피해 합계 완전성과 보스·참가자 canonical 판정이 확인될 때까지 차단합니다.
+
+## 0.2.37 동의 연동·컴팩트 전투 카드·트레이 조작 개선
+
+- 설치기와 앱이 하나의 동의 문서 버전·영수증 계약을 사용합니다. 로그인 직후 현재 설치 동의를 Server에 동기화하고 Server의 실제 동의 상태에 따라 전투 기록 메뉴와 대기 outbox 자동 재전송을 처리합니다.
+- 트레이 아이콘은 좌클릭과 우클릭 모두 같은 메뉴를 열며, 평상시 `웹 미터기 · 전투 기록 보기`, Server가 실제 미동의로 응답한 경우에만 `웹 미터기 · 필수 동의 필요`를 표시합니다.
+- 오버레이 상단은 캐릭터명을 제거하고 `KINOJO-METER · v0.2.37`만 표시합니다. 잠금 상태 아이콘·즉시 툴팁과 완전 종료 확인 버튼을 추가하고, 일반 사용자 화면에서는 관리자 진단 영역과 남는 공간을 만들지 않습니다.
+- 기존 350px급 어두운 오버레이 구성을 유지하면서 외곽 바디를 투명하게 하고 상단·보스·참가자 카드 표면만 남깁니다. 클래스 아이콘은 키우고 전투력은 `819.9K`처럼 한 자리 축약 표기합니다.
+- 캐릭터 정보와 피해/DPS/지분을 한 카드에 통합하고 카드 전체를 파티 판독 피해 지분만큼 클래스 색으로 채웁니다. 확인된 보스 피해 순위가 바뀔 때만 450ms 간격으로 부드럽게 재정렬하며 동일 피해 순서는 기존 파티 순서를 유지합니다.
+- 추정 순서 기반 보스명은 화면과 Owner 전용 관측 저장에서 `전투 대상`으로 표시하고 원래 단서는 별도 검토 필드로 보존합니다. `OBSERVED_CURRENT_MAX`는 실제 최대 HP가 아니므로 체력 백분율·완전성 계산에 사용하지 않으며, 검증된 현재/최대 HP 출처에만 붉은 실시간 체력 게이지를 표시합니다.
+- Decoder는 계속 `BINARY_PARTIAL_VALIDATED`, `UploadEligible=false`이며 공개 통계 Gate, Meter SQL `50015`, Edge API `50015.2`는 변경하지 않습니다.
 
 ## 0.2.36 파티 탈퇴 수렴·프로필 자동 재시도·CI 회귀검사
 
@@ -398,7 +408,7 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 
 - Supabase Meter SQL `50009~50015`: 운영 반영 완료
 - `meter-ingest` Edge Function API `50015.2`: 운영 배포 완료
-- Desktop 최신 소스 `0.2.36`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- Desktop 최신 소스 `0.2.37`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
 - AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.

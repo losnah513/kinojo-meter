@@ -30,7 +30,6 @@ namespace KinojoMeterPrototype
         private const uint ModShift = 0x0004;
         private const uint VkF8 = 0x77;
         private static readonly Color Accent = Color.FromRgb(56, 189, 248);
-        private static readonly Color AccentDeep = Color.FromRgb(37, 99, 235);
 
         private readonly MeterPreferences _preferences;
         private readonly CharacterProfile _selected;
@@ -40,13 +39,17 @@ namespace KinojoMeterPrototype
         private readonly List<CatalogDifficulty> _catalogDifficulties;
         private readonly List<CatalogBoss> _catalogBosses;
         private readonly Border _surface;
+        private readonly Border _bossPanel;
         private readonly StackPanel _rows;
         private readonly TextBlock _bossName;
         private readonly TextBlock _encounterTime;
         private readonly TextBlock _stateLabel;
         private readonly KinojoSpinner _spinner;
-        private readonly TextBlock _footerVersion;
-        private readonly ProgressBar _bossHp;
+        private readonly Border _bossHpHost;
+        private readonly Border _bossHpFill;
+        private readonly TextBlock _bossHpPercent;
+        private readonly ScaleTransform _bossHpScale;
+        private readonly Button _lockButton;
         private readonly DispatcherTimer _timer;
         private readonly CombatSessionEngine _engine;
         private CombatCaptureCoordinator _capture;
@@ -67,6 +70,7 @@ namespace KinojoMeterPrototype
         private readonly Dictionary<int, Color> _classRawColors = new Dictionary<int, Color>();
         private readonly Dictionary<int, string> _classRawKeys = new Dictionary<int, string>();
         private readonly Dictionary<int, string> _classRawNames = new Dictionary<int, string>();
+        private readonly Dictionary<string, double> _lastShareByRow = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         private string _encounterProcessingState = "";
         private string _encounterProcessingText = "";
         private string _lastHudRosterSignature = "";
@@ -75,6 +79,7 @@ namespace KinojoMeterPrototype
         private TextBlock _diagnosticState;
 
         public event EventHandler HideRequested;
+        public event EventHandler ExitRequested;
         public event EventHandler<CombatSnapshot> EncounterCompleted;
         public event EventHandler<CombatRow> ParticipantDetected;
         public event EventHandler<PartyRosterDetectedEventArgs> PartyRosterObserved;
@@ -120,55 +125,77 @@ namespace KinojoMeterPrototype
             ResizeMode = ResizeMode.CanResizeWithGrip;
             MinWidth = 350;
             Width = Math.Max(350, Math.Min(500, _preferences.OverlayWidth));
-            Height = 235;
+            Height = 280;
             Left = _preferences.OverlayLeft;
             Top = _preferences.OverlayTop;
 
             _surface = new Border
             {
-                CornerRadius = new CornerRadius(10),
-                BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(185, 71, 85, 105)),
-                Padding = new Thickness(8)
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(2)
             };
             Content = _surface;
             var root = new StackPanel();
             _surface.Child = root;
 
-            var toolbar = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            var toolbar = new Grid { Margin = new Thickness(0, 0, 0, 4) };
             toolbar.ColumnDefinitions.Add(new ColumnDefinition());
             toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var drag = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(72, 30, 41, 59)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(110, 71, 85, 105)),
+                Background = new SolidColorBrush(Color.FromArgb(196, 15, 23, 42)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(150, 71, 85, 105)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(7),
-                Padding = new Thickness(8, 5, 8, 5),
+                Padding = new Thickness(8, 4, 8, 4),
                 Cursor = Cursors.SizeAll
             };
-            drag.Child = new TextBlock { Text = "KINOJO  ·  " + _selected.CharacterName, Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 9 };
+            var brand = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            brand.Children.Add(new TextBlock { Text = "KINOJO-METER", Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 9 });
+            brand.Children.Add(new TextBlock { Text = "  v" + KinojoVersion.Current, Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184)), FontSize = 7, VerticalAlignment = VerticalAlignment.Center });
+            drag.Child = brand;
             drag.MouseLeftButtonDown += delegate { if (!_preferences.Locked) DragMove(); };
             toolbar.Children.Add(drag);
 
             var tools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 0) };
-            var lockButton = ToolButton(_preferences.Locked ? "L" : "U", "위치 잠금");
-            lockButton.Click += delegate
+            _lockButton = ToolButton("", "");
+            UpdateLockButton();
+            _lockButton.Click += delegate
             {
                 _preferences.Locked = !_preferences.Locked;
-                lockButton.Content = _preferences.Locked ? "L" : "U";
+                UpdateLockButton();
                 PreferencesStore.Save(_preferences);
             };
             var hideButton = ToolButton("—", "트레이로 숨기기");
             hideButton.Margin = new Thickness(4, 0, 0, 0);
             hideButton.Click += delegate { HideRequested?.Invoke(this, EventArgs.Empty); };
-            tools.Children.Add(lockButton);
+            var closeButton = ToolButton("×", "프로그램 완전 종료");
+            closeButton.Margin = new Thickness(4, 0, 0, 0);
+            closeButton.Click += delegate
+            {
+                var answer = MessageBox.Show(this, "프로그램을 완전히 종료하시겠습니까?", "KINOJO Meter", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+                if (answer == MessageBoxResult.Yes) ExitRequested?.Invoke(this, EventArgs.Empty);
+            };
+            tools.Children.Add(_lockButton);
             tools.Children.Add(hideButton);
+            tools.Children.Add(closeButton);
             Grid.SetColumn(tools, 1);
             toolbar.Children.Add(tools);
             root.Children.Add(toolbar);
 
-            var activity = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(3, 0, 0, 6) };
+            _bossPanel = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(178, 15, 23, 42)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(125, 71, 85, 105)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(7, 5, 7, 5),
+                Margin = new Thickness(0, 0, 0, 3)
+            };
+            var bossContent = new StackPanel();
+            _bossPanel.Child = bossContent;
+            var activity = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
             _spinner = new KinojoSpinner { Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
             _stateLabel = new TextBlock
             {
@@ -180,7 +207,7 @@ namespace KinojoMeterPrototype
             };
             activity.Children.Add(_spinner);
             activity.Children.Add(_stateLabel);
-            root.Children.Add(activity);
+            bossContent.Children.Add(activity);
 
             var header = new Grid();
             header.ColumnDefinitions.Add(new ColumnDefinition());
@@ -190,19 +217,40 @@ namespace KinojoMeterPrototype
             Grid.SetColumn(_encounterTime, 1);
             header.Children.Add(_bossName);
             header.Children.Add(_encounterTime);
-            root.Children.Add(header);
+            bossContent.Children.Add(header);
 
-            _bossHp = new ProgressBar
+            _bossHpScale = new ScaleTransform(0, 1);
+            _bossHpFill = new Border
             {
-                Minimum = 0,
-                Maximum = 100,
-                Value = 0,
-                Height = 4,
-                Margin = new Thickness(0, 5, 0, 4),
-                Foreground = new SolidColorBrush(AccentDeep),
-                Background = new SolidColorBrush(Color.FromRgb(51, 65, 85))
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = CreateBossHpBrush(),
+                RenderTransformOrigin = new Point(0, 0.5),
+                RenderTransform = _bossHpScale
             };
-            root.Children.Add(_bossHp);
+            _bossHpPercent = new TextBlock
+            {
+                Text = "0.0%",
+                Foreground = Brushes.White,
+                FontSize = 7,
+                FontWeight = FontWeights.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var bossHpGrid = new Grid();
+            bossHpGrid.Children.Add(_bossHpFill);
+            bossHpGrid.Children.Add(_bossHpPercent);
+            _bossHpHost = new Border
+            {
+                Height = 10,
+                Margin = new Thickness(0, 4, 0, 0),
+                Background = new SolidColorBrush(Color.FromArgb(185, 51, 65, 85)),
+                CornerRadius = new CornerRadius(5),
+                ClipToBounds = true,
+                Child = bossHpGrid,
+                Visibility = Visibility.Collapsed
+            };
+            bossContent.Children.Add(_bossHpHost);
+            root.Children.Add(_bossPanel);
 
             _rows = new StackPanel();
             root.Children.Add(_rows);
@@ -232,16 +280,6 @@ namespace KinojoMeterPrototype
                 diagnostics.Children.Add(_diagnosticState);
                 root.Children.Add(diagnostics);
             }
-            _footerVersion = new TextBlock
-            {
-                Text = "KINOJO Meter v" + KinojoVersion.Current,
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 116, 139)),
-                FontSize = 8,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 5, 2, 0)
-            };
-            root.Children.Add(_footerVersion);
-
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _timer.Tick += Tick;
             LocationChanged += delegate { SaveGeometry(); };
@@ -526,7 +564,7 @@ namespace KinojoMeterPrototype
             if (value != null && value.Kind == CombatEventKind.BossHp)
             {
                 ApplyTestBossIdentity(value);
-                if (!String.IsNullOrWhiteSpace(_hudDungeonKey) && !value.IsBoss) return;
+                if (!value.IsBoss) return;
                 if (value.IsBoss)
                 {
                     _dungeonEntered = true;
@@ -541,10 +579,11 @@ namespace KinojoMeterPrototype
                     ApplyKnownBossIdentity(value, bossOrder);
                     _dungeonEntered = true;
                 }
-                else if (!String.IsNullOrWhiteSpace(_hudDungeonKey))
+                else
                 {
                     BufferPendingDamage(value);
-                    SetActivityStatus("보스 전투 신호 확인 중 · 파티 구성원 실시간 확인 중");
+                    if (!String.IsNullOrWhiteSpace(_hudDungeonKey))
+                        SetActivityStatus("보스 전투 신호 확인 중 · 파티 구성원 실시간 확인 중");
                     return;
                 }
                 if (String.IsNullOrWhiteSpace(value.ActorName) && !_engine.Snapshot().Rows.Any(row => !row.IsEmpty && String.Equals(row.ParticipantKey, value.ActorId, StringComparison.OrdinalIgnoreCase)))
@@ -690,16 +729,23 @@ namespace KinojoMeterPrototype
 
         private void Render(CombatSnapshot snapshot)
         {
-            _bossName.Text = snapshot.IsRunning && !String.IsNullOrWhiteSpace(snapshot.BossName)
-                ? snapshot.BossName
-                : snapshot.BossConfirmed
-                ? snapshot.BossName
-                : (!String.IsNullOrWhiteSpace(snapshot.DungeonName)
-                    ? snapshot.DungeonName + " · 전투 대기"
-                    : (!String.IsNullOrWhiteSpace(_hudDungeonName)
-                        ? _hudDungeonName + (String.IsNullOrWhiteSpace(_hudDifficultyName) ? "" : " [" + _hudDifficultyName + "]") + " · 던전 상태 확인 중"
-                        : "전투 대기"));
-            _bossHp.Value = snapshot.BossMaxHp > 0 ? Math.Max(0, Math.Min(100, snapshot.BossCurrentHp * 100.0 / snapshot.BossMaxHp)) : 0;
+            _bossName.Text = snapshot.BossConfirmed
+                ? (IsVerifiedBossName(snapshot) ? snapshot.BossName : "전투 대상")
+                : "전투 대기";
+            var trustedHp = snapshot.BossConfirmed && IsTrustedBossHp(snapshot);
+            _bossHpHost.Visibility = trustedHp ? Visibility.Visible : Visibility.Collapsed;
+            if (trustedHp)
+            {
+                var ratio = Math.Max(0.0, Math.Min(1.0, snapshot.BossCurrentHp / (double)snapshot.BossMaxHp));
+                var hpAnimation = new DoubleAnimation
+                {
+                    To = ratio,
+                    Duration = TimeSpan.FromMilliseconds(320),
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+                _bossHpScale.BeginAnimation(ScaleTransform.ScaleXProperty, hpAnimation, HandoffBehavior.SnapshotAndReplace);
+                _bossHpPercent.Text = (ratio * 100.0).ToString("0.0", CultureInfo.InvariantCulture) + "%";
+            }
             _encounterTime.Text = snapshot.StartedAtUtc == DateTime.MinValue ? "00:00" : (snapshot.LastEventUtc - snapshot.StartedAtUtc).ToString(@"mm\:ss");
             if (!String.IsNullOrWhiteSpace(_encounterProcessingState))
                 SetActivityStatus(String.IsNullOrWhiteSpace(_encounterProcessingText) ? _encounterProcessingState : _encounterProcessingText);
@@ -711,18 +757,39 @@ namespace KinojoMeterPrototype
             else if (_dungeonEntered) SetActivityStatus("던전 입장 확인 · 파티 구성원 실시간 확인 중");
             else if (_partyObserved) SetActivityStatus("파티 구성원 확인 중");
             _spinner.Visibility = snapshot.IsRunning || snapshot.IsCleared ? Visibility.Collapsed : Visibility.Visible;
-            RenderRows(snapshot.Rows, snapshot.IsRunning || snapshot.Rows.Any(row => !row.IsEmpty && row.TotalDamage > 0));
+            RenderRows(snapshot.Rows, snapshot.BossConfirmed && (snapshot.IsRunning || snapshot.Rows.Any(row => !row.IsEmpty && row.TotalDamage > 0)));
+        }
+
+        private static bool IsVerifiedBossName(CombatSnapshot snapshot)
+        {
+            if (snapshot == null || String.IsNullOrWhiteSpace(snapshot.BossName)) return false;
+            return !String.Equals(snapshot.BossIdentityMode, "TEST_ORDER_INFERRED", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsTrustedBossHp(CombatSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.BossMaxHp <= 0 || snapshot.BossCurrentHp < 0) return false;
+            return String.Equals(snapshot.BossHpSource, "PACKET_CURRENT_AND_MAX", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(snapshot.BossHpSource, "PACKET_VERIFIED_MAX", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(snapshot.BossHpSource, "SERVER_CANONICAL_MAX", StringComparison.OrdinalIgnoreCase);
         }
 
         private void RenderRows(IEnumerable<CombatRow> source, bool damageRanking)
         {
             var incoming = (source ?? Enumerable.Empty<CombatRow>()).ToList();
+            var previousOrder = _rankOrder.Select((key, index) => new { key, index })
+                .ToDictionary(value => value.key, value => value.index, StringComparer.OrdinalIgnoreCase);
             var desired = damageRanking
-                ? incoming.OrderBy(row => row.IsEmpty).ThenByDescending(row => row.TotalDamage).ThenByDescending(row => row.Dps).ThenBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList()
+                ? incoming.OrderBy(row => row.IsEmpty)
+                    .ThenByDescending(row => row.TotalDamage)
+                    .ThenBy(row => previousOrder.ContainsKey(RowKey(row)) ? previousOrder[RowKey(row)] : Int32.MaxValue)
+                    .ThenBy(row => row.PartyNumber)
+                    .ThenBy(row => row.PartySlot)
+                    .ToList()
                 : incoming.OrderBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList();
             var desiredKeys = desired.Select(RowKey).ToList();
             var membershipChanged = desiredKeys.Count != _rankOrder.Count || desiredKeys.Any(key => !_rankOrder.Contains(key, StringComparer.OrdinalIgnoreCase));
-            if (!damageRanking || membershipChanged || _rankOrder.Count == 0 || DateTime.UtcNow - _lastRankUpdateUtc >= TimeSpan.FromMilliseconds(350))
+            if (!damageRanking || membershipChanged || _rankOrder.Count == 0 || DateTime.UtcNow - _lastRankUpdateUtc >= TimeSpan.FromMilliseconds(450))
             {
                 _rankOrder = desiredKeys;
                 _lastRankUpdateUtc = DateTime.UtcNow;
@@ -739,28 +806,29 @@ namespace KinojoMeterPrototype
                 var row = rows[index];
                 var key = RowKey(row);
                 newIndexes[key] = index;
-                var element = BuildRow(row) as FrameworkElement;
+                var element = BuildRow(row, index + 1, damageRanking) as FrameworkElement;
                 int oldIndex;
                 if (element != null && damageRanking && _lastRowIndexes.TryGetValue(key, out oldIndex) && oldIndex != index)
                 {
-                    var translate = new TranslateTransform(0, (oldIndex - index) * 42);
+                    var translate = new TranslateTransform(0, (oldIndex - index) * 38);
                     element.RenderTransform = translate;
                     Panel.SetZIndex(element, 10);
                     var animation = new DoubleAnimation
                     {
                         From = translate.Y,
                         To = 0,
-                        Duration = TimeSpan.FromMilliseconds(260),
-                        EasingFunction = new BackEase { Amplitude = 0.22, EasingMode = EasingMode.EaseOut }
+                        Duration = TimeSpan.FromMilliseconds(420),
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
                     };
                     translate.BeginAnimation(TranslateTransform.YProperty, animation, HandoffBehavior.SnapshotAndReplace);
+                    element.BeginAnimation(OpacityProperty, new DoubleAnimation(0.78, 1.0, TimeSpan.FromMilliseconds(300)), HandoffBehavior.SnapshotAndReplace);
                 }
-                _rows.Children.Add(element ?? BuildRow(row));
+                _rows.Children.Add(element ?? BuildRow(row, index + 1, damageRanking));
             }
             _lastRowIndexes.Clear();
             foreach (var pair in newIndexes) _lastRowIndexes[pair.Key] = pair.Value;
             var adminHeight = _isMeterAdmin ? 34 : 0;
-            Height = Math.Max(235 + adminHeight, Math.Min(700, 180 + adminHeight + rows.Count * 42));
+            Height = Math.Max(150 + adminHeight, Math.Min(700, 92 + adminHeight + rows.Count * 38));
         }
 
         private static string RowKey(CombatRow row)
@@ -770,44 +838,68 @@ namespace KinojoMeterPrototype
             return (row.IsEmpty ? "empty:" : "name:") + row.PartyNumber + ":" + row.PartySlot + ":" + (row.Name ?? "");
         }
 
-        private UIElement BuildRow(CombatRow row)
+        private UIElement BuildRow(CombatRow row, int rank, bool damageRanking)
         {
+            var classColor = ResolveClassColor(row);
+            var card = new Border
+            {
+                Height = 36,
+                Margin = new Thickness(0, 1, 0, 1),
+                Background = new SolidColorBrush(row.IsSelf ? Color.FromArgb(170, 11, 54, 84) : Color.FromArgb(150, 15, 23, 42)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(row.IsSelf ? (byte)205 : (byte)125, classColor.R, classColor.G, classColor.B)),
+                BorderThickness = new Thickness(row.IsSelf ? 1.25 : 1),
+                CornerRadius = new CornerRadius(6),
+                ClipToBounds = true
+            };
             var grid = new Grid
             {
-                Height = 40,
-                Margin = new Thickness(0, 1, 0, 1),
-                Background = new SolidColorBrush(row.IsSelf ? Color.FromArgb(92, 14, 116, 144) : Color.FromArgb(78, 30, 41, 59))
+                Height = 34,
+                Background = Brushes.Transparent
             };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
             grid.ColumnDefinitions.Add(new ColumnDefinition());
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
 
-            var classColor = ResolveClassColor(row);
             var share = Math.Max(0.0, Math.Min(100.0, row.Share));
-            var gauge = new Grid { IsHitTestVisible = false };
-            gauge.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0.001, share), GridUnitType.Star) });
-            gauge.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0.001, 100.0 - share), GridUnitType.Star) });
-            gauge.Children.Add(new Border
+            var rowKey = RowKey(row);
+            double previousShare;
+            if (!_lastShareByRow.TryGetValue(rowKey, out previousShare)) previousShare = share;
+            _lastShareByRow[rowKey] = share;
+            var gaugeScale = new ScaleTransform(Math.Max(0.0, Math.Min(1.0, previousShare / 100.0)), 1.0);
+            var gauge = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(92, classColor.R, classColor.G, classColor.B)),
-                CornerRadius = new CornerRadius(3)
-            });
+                IsHitTestVisible = false,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = CreateShareBrush(classColor),
+                RenderTransformOrigin = new Point(0, 0.5),
+                RenderTransform = gaugeScale
+            };
+            gauge.Loaded += delegate
+            {
+                gaugeScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation
+                {
+                    To = share / 100.0,
+                    Duration = TimeSpan.FromMilliseconds(360),
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                }, HandoffBehavior.SnapshotAndReplace);
+            };
             Grid.SetColumnSpan(gauge, 3);
             grid.Children.Add(gauge);
             var classStripe = new Border
             {
-                Width = 3,
+                Width = row.IsSelf ? 4 : 3,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Background = new SolidColorBrush(classColor)
             };
             Grid.SetColumnSpan(classStripe, 3);
             grid.Children.Add(classStripe);
 
+            var iconHost = new Grid();
             var classBadge = new Border
             {
-                Width = 22,
-                Height = 22,
-                CornerRadius = new CornerRadius(11),
+                Width = 27,
+                Height = 27,
+                CornerRadius = new CornerRadius(14),
                 Background = new SolidColorBrush(Color.FromArgb(105, classColor.R, classColor.G, classColor.B)),
                 BorderBrush = new SolidColorBrush(classColor),
                 BorderThickness = new Thickness(1),
@@ -833,25 +925,41 @@ namespace KinojoMeterPrototype
                     classGlyph.Children.Add(new Image
                     {
                         Source = new BitmapImage(new Uri(classIconUri, UriKind.Absolute)),
-                        Width = 18,
-                        Height = 18,
+                        Width = 23,
+                        Height = 23,
                         Stretch = Stretch.Uniform
                     });
                 }
                 catch { }
             }
             classBadge.Child = classGlyph;
-            grid.Children.Add(classBadge);
+            iconHost.Children.Add(classBadge);
+            if (damageRanking && !row.IsEmpty)
+            {
+                iconHost.Children.Add(new TextBlock
+                {
+                    Text = rank.ToString(CultureInfo.InvariantCulture),
+                    Foreground = Brushes.White,
+                    Background = new SolidColorBrush(Color.FromArgb(215, 15, 23, 42)),
+                    FontSize = 7,
+                    FontWeight = FontWeights.Bold,
+                    Padding = new Thickness(2, 0, 2, 0),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(1, 1, 0, 0)
+                });
+            }
+            grid.Children.Add(iconHost);
             var identity = new TextBlock
             {
                 Text = row.IsEmpty ? "빈 자리" :
                     row.Name + (String.IsNullOrWhiteSpace(row.ServerName) ? "" : "[" + row.ServerName + "]") + "\n" +
                     (String.IsNullOrWhiteSpace(row.ClassName) ? "클래스 확인 중" : row.ClassName) +
-                    (row.CombatPower > 0 ? " · 전투력 " + FormatNumber(row.CombatPower) : " · 전투력 확인 중"),
+                    (row.CombatPower > 0 ? " · 전투력 " + FormatCombatPower(row.CombatPower) : " · 전투력 확인 중"),
                 Foreground = row.IsEmpty ? new SolidColorBrush(Color.FromRgb(100, 116, 139)) : Brushes.White,
                 FontWeight = row.IsSelf ? FontWeights.Bold : FontWeights.SemiBold,
-                FontSize = 9,
-                LineHeight = 13,
+                FontSize = 8.5,
+                LineHeight = 11.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
@@ -859,19 +967,19 @@ namespace KinojoMeterPrototype
             grid.Children.Add(identity);
             if (!row.IsEmpty)
             {
-                var metrics = new Grid { Margin = new Thickness(2, 2, 5, 2) };
-                metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(66) });
+                var metrics = new Grid { Margin = new Thickness(2, 1, 5, 1) };
+                metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
                 metrics.ColumnDefinitions.Add(new ColumnDefinition());
                 var dps = new TextBlock
                 {
                     Text = "DPS\n" + FormatNumber(row.Dps),
                     Foreground = new SolidColorBrush(Color.FromRgb(226, 232, 240)),
                     FontWeight = FontWeights.SemiBold,
-                    FontSize = 8,
+                    FontSize = 7.5,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,
                     TextAlignment = TextAlignment.Center,
-                    LineHeight = 12
+                    LineHeight = 10.5
                 };
                 metrics.Children.Add(dps);
                 var total = new TextBlock
@@ -879,18 +987,19 @@ namespace KinojoMeterPrototype
                     Text = FormatNumber(row.TotalDamage) + "\n" + row.Share.ToString("0.0") + "%",
                     Foreground = Brushes.White,
                     FontWeight = FontWeights.ExtraBold,
-                    FontSize = 11,
+                    FontSize = 10,
                     HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Center,
                     TextAlignment = TextAlignment.Right,
-                    LineHeight = 14
+                    LineHeight = 12
                 };
                 Grid.SetColumn(total, 1);
                 metrics.Children.Add(total);
                 Grid.SetColumn(metrics, 2);
                 grid.Children.Add(metrics);
             }
-            return grid;
+            card.Child = grid;
+            return card;
         }
 
         private Color ResolveClassColor(CombatRow row)
@@ -983,8 +1092,45 @@ namespace KinojoMeterPrototype
 
         private void ApplyPreferences()
         {
-            _surface.Background = new SolidColorBrush(Color.FromArgb((byte)(255 * Math.Max(0.35, Math.Min(0.98, _preferences.BackgroundOpacity))), 15, 23, 42));
+            // The overlay body intentionally stays transparent. Only the toolbar,
+            // encounter panel and participant cards should cover the game view.
+            _surface.Background = Brushes.Transparent;
             _surface.LayoutTransform = new ScaleTransform(Math.Max(0.8, Math.Min(1.25, _preferences.UiScale)), Math.Max(0.8, Math.Min(1.25, _preferences.UiScale)));
+        }
+
+        private void UpdateLockButton()
+        {
+            if (_lockButton == null) return;
+            _lockButton.Content = _preferences.Locked ? "🔒" : "🔓";
+            _lockButton.ToolTip = _preferences.Locked ? "위치 잠금 해제" : "위치 잠금";
+            ToolTipService.SetInitialShowDelay(_lockButton, 0);
+            ToolTipService.SetBetweenShowDelay(_lockButton, 0);
+        }
+
+        private static string FormatCombatPower(long value)
+        {
+            if (value >= 1000000000) return (value / 1000000000.0).ToString("0.0", CultureInfo.InvariantCulture) + "B";
+            if (value >= 1000000) return (value / 1000000.0).ToString("0.0", CultureInfo.InvariantCulture) + "M";
+            if (value >= 1000) return (value / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + "K";
+            return value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static Brush CreateShareBrush(Color color)
+        {
+            return new LinearGradientBrush(
+                Color.FromArgb(118, color.R, color.G, color.B),
+                Color.FromArgb(40, color.R, color.G, color.B),
+                new Point(0, 0.5),
+                new Point(1, 0.5));
+        }
+
+        private static Brush CreateBossHpBrush()
+        {
+            return new LinearGradientBrush(
+                Color.FromRgb(239, 68, 68),
+                Color.FromRgb(153, 27, 27),
+                new Point(0, 0.5),
+                new Point(1, 0.5));
         }
 
         private void InitializeWindowHooks()
@@ -1013,6 +1159,7 @@ namespace KinojoMeterPrototype
             {
                 SetClickThrough(false);
                 _preferences.Locked = false;
+                UpdateLockButton();
                 SetStatus("오버레이 조작 가능");
                 handled = true;
             }
@@ -1039,7 +1186,7 @@ namespace KinojoMeterPrototype
 
         private static Button ToolButton(string text, string tooltip)
         {
-            return new Button
+            var button = new Button
             {
                 Content = text,
                 ToolTip = tooltip,
@@ -1052,6 +1199,9 @@ namespace KinojoMeterPrototype
                 Cursor = Cursors.Hand,
                 FontSize = 10
             };
+            ToolTipService.SetInitialShowDelay(button, 0);
+            ToolTipService.SetBetweenShowDelay(button, 0);
+            return button;
         }
     }
 }

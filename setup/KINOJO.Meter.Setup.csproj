@@ -27,6 +27,7 @@
   <ItemGroup>
     <Compile Include="SetupProgram.cs" />
     <Compile Include="SetupEngine.cs" />
+    <Compile Include="..\src\MeterConsentContract.cs" Link="MeterConsentContract.cs" />
     <EmbeddedResource Include="$(PayloadZipPath)" LogicalName="KinojoMeterPayload" />
   </ItemGroup>
   <ItemGroup>
