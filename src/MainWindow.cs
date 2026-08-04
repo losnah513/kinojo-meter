@@ -1260,12 +1260,16 @@ namespace KinojoMeterPrototype
         private async Task UploadEncounterAsync(CombatSnapshot snapshot)
         {
             if (_login == null || _selected == null || snapshot == null || !snapshot.IsCleared) return;
+            _overlay?.SetEncounterProcessingState("FINALIZING", "보스 전투 종료 · 결과 고정 및 가상 서버 처리 중");
             var localResultPath = DiagnosticLog.SaveEncounterSnapshot(snapshot);
             if (!String.IsNullOrWhiteSpace(localResultPath))
                 DiagnosticLog.Info("LOCAL_RESULT", "Encounter snapshot saved · " + localResultPath);
+            var outboxPath = DiagnosticLog.SaveEncounterOutbox(snapshot, _selected, snapshot.UploadEligible ? "SUBMISSION_READY" : "SIMULATED");
+            if (!String.IsNullOrWhiteSpace(outboxPath))
+                DiagnosticLog.Info("OUTBOX", "Encounter staged · " + outboxPath);
             if (!snapshot.UploadEligible)
             {
-                _overlay?.SetStatus("전투 종료 · 로컬 측정 완료");
+                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "가상 서버 처리 완료 · 다음 보스 전투 데이터 수집 대기");
                 DiagnosticLog.Info("UPLOAD", "Upload blocked by decoder validation gate");
                 return;
             }
@@ -1275,7 +1279,7 @@ namespace KinojoMeterPrototype
 
             try
             {
-                _overlay?.SetStatus("전투 종료 · 결과 저장 중");
+                _overlay?.SetEncounterProcessingState("UPLOADING", "보스 전투 종료 · 서버 결과 저장 중");
                 var context = new EncounterCatalogContext
                 {
                     CatalogVersion = _catalog == null ? "" : _catalog.CatalogVersion,
@@ -1340,12 +1344,12 @@ namespace KinojoMeterPrototype
                     { "participants", participants }
                 };
                 await _api.SubmitEncounterAsync(_login.SessionToken, payload);
-                _overlay?.SetStatus("전투 종료 · 결과 저장 완료");
+                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "서버 저장 완료 · 다음 보스 전투 데이터 수집 대기");
             }
             catch (Exception ex)
             {
                 DiagnosticLog.Error("UPLOAD", "Encounter submission failed", ex);
-                _overlay?.SetStatus("전투 종료 · 로컬 측정 완료");
+                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "서버 저장 실패 · 로컬 보관 완료 · 다음 보스 대기");
             }
         }
 

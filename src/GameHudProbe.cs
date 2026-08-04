@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Globalization;
@@ -163,15 +164,23 @@ namespace KinojoMeterPrototype
                 using (var graphics = Graphics.FromImage(full))
                     graphics.CopyFromScreen(origin.X, origin.Y, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
 
-                var centerRect = RelativeRect(width, height, 0.40, 0.32, 0.60, 0.64);
+                // The controlled character may stand below the geometric center and its
+                // nameplate is small at ultrawide resolutions. Read both a tight ROI that
+                // preserves glyph size and a wider/lower ROI that tolerates camera poses.
+                var centerRect = RelativeRect(width, height, 0.25, 0.20, 0.75, 0.80);
+                var centerTightRect = RelativeRect(width, height, 0.37, 0.30, 0.63, 0.68);
                 var panelRect = RelativeRect(width, height, 0.68, 0.03, 0.94, 0.50);
                 using (var center = full.Clone(centerRect, PixelFormat.Format32bppArgb))
+                using (var centerTight = full.Clone(centerTightRect, PixelFormat.Format32bppArgb))
                 using (var panel = full.Clone(panelRect, PixelFormat.Format32bppArgb))
                 {
                     var centerOcr = await RecognizeAsync(center);
+                    var centerTightOcr = await RecognizeAsync(centerTight);
                     var panelOcr = await RecognizeAsync(panel);
-                    var observation = BuildObservation(centerOcr, panelOcr);
+                    var combinedCenter = new OcrCapture { Text = (centerTightOcr.Text ?? "") + Environment.NewLine + (centerOcr.Text ?? "") };
+                    var observation = BuildObservation(combinedCenter, panelOcr);
                     centerOcr.Bitmap.Dispose();
+                    centerTightOcr.Bitmap.Dispose();
                     panelOcr.Bitmap.Dispose();
                     if (observation != null) ObservationReady?.Invoke(this, observation);
                 }
@@ -193,6 +202,13 @@ namespace KinojoMeterPrototype
             }
 
             var observedCharacter = BestKnownMatch(center.Text, characters);
+            if (String.IsNullOrWhiteSpace(observedCharacter))
+            {
+                // The party panel has no reliable "self" crown: that icon means party
+                // leader. It is still useful when exactly one owned character name is
+                // visible anywhere in the panel, so use uniqueness rather than position.
+                observedCharacter = UniqueKnownMatch(panel.Text, characters);
+            }
             if (!String.IsNullOrWhiteSpace(observedCharacter))
             {
                 if (String.Equals(_pendingCharacter, observedCharacter, StringComparison.OrdinalIgnoreCase))
@@ -213,7 +229,8 @@ namespace KinojoMeterPrototype
             var dungeon = BestKnownMatch(panel.Text, dungeons);
             var difficulty = BestKnownMatch(panel.Text, difficulties);
             var colors = ReadPartyIconColors(panel, party);
-            if (String.IsNullOrWhiteSpace(confirmedCharacter) && String.IsNullOrWhiteSpace(dungeon) && String.IsNullOrWhiteSpace(difficulty) && colors.Count == 0)
+            var servers = ReadPartyServers(panel.Text, party);
+            if (String.IsNullOrWhiteSpace(confirmedCharacter) && String.IsNullOrWhiteSpace(dungeon) && String.IsNullOrWhiteSpace(difficulty) && colors.Count == 0 && servers.Count == 0)
                 return null;
 
             return new GameHudObservation
@@ -223,8 +240,23 @@ namespace KinojoMeterPrototype
                 DungeonName = dungeon,
                 DifficultyName = difficulty,
                 PartyClassColors = colors,
+                PartyServers = servers,
                 Evidence = "WINDOWS_OCR_FIXED_ROI"
             };
+        }
+
+        private static Dictionary<string, string> ReadPartyServers(string panelText, IEnumerable<string> knownNames)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var source = panelText ?? "";
+            if (source.Length == 0) return result;
+            foreach (var name in knownNames ?? Enumerable.Empty<string>())
+            {
+                if (String.IsNullOrWhiteSpace(name)) continue;
+                var match = Regex.Match(source, Regex.Escape(name.Trim()) + @"\s*[\[\(]\s*([가-힣A-Za-z0-9]{1,12})\s*[\]\)]", RegexOptions.IgnoreCase);
+                if (match.Success) result[name.Trim()] = match.Groups[1].Value.Trim();
+            }
+            return result;
         }
 
         private Dictionary<string, string> ReadPartyIconColors(OcrCapture panel, IEnumerable<string> knownNames)
@@ -338,6 +370,18 @@ namespace KinojoMeterPrototype
                     return candidate;
             }
             return "";
+        }
+
+        private static string UniqueKnownMatch(string source, IEnumerable<string> candidates)
+        {
+            var normalizedSource = Normalize(source);
+            if (normalizedSource.Length == 0) return "";
+            var matches = (candidates ?? Enumerable.Empty<string>())
+                .Where(candidate => Normalize(candidate).Length >= 2 &&
+                    normalizedSource.IndexOf(Normalize(candidate), StringComparison.OrdinalIgnoreCase) >= 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return matches.Count == 1 ? matches[0] : "";
         }
 
         private static string Normalize(string value)

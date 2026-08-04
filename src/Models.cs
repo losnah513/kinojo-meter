@@ -59,6 +59,8 @@ namespace KinojoMeterPrototype
         public string Evidence { get; set; }
         public Dictionary<string, string> PartyClassColors { get; set; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> PartyServers { get; set; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     internal sealed class MeterCatalog

@@ -13,6 +13,7 @@ namespace KinojoMeterPrototype
         private DateTime _startedAtUtc;
         private DateTime _lastEventUtc;
         private DateTime _lastDamageUtc;
+        private DateTime _endedAtUtc;
         private string _bossId = "";
         private long _bossRuntimeId;
         private string _bossName = "";
@@ -63,6 +64,7 @@ namespace KinojoMeterPrototype
                 _startedAtUtc = DateTime.MinValue;
                 _lastEventUtc = DateTime.MinValue;
                 _lastDamageUtc = DateTime.MinValue;
+                _endedAtUtc = DateTime.MinValue;
                 _bossId = _bossName = "";
                 _bossRuntimeId = 0;
                 _bossCurrentHp = _bossMaxHp = 0;
@@ -85,7 +87,10 @@ namespace KinojoMeterPrototype
             lock (_gate)
             {
                 var timestamp = value.TimestampUtc == DateTime.MinValue ? DateTime.UtcNow : value.TimestampUtc;
-                _lastEventUtc = timestamp;
+                var combatClockEvent = value.Kind == CombatEventKind.Damage ||
+                    value.Kind == CombatEventKind.BossHp || value.Kind == CombatEventKind.BossSpawn ||
+                    value.Kind == CombatEventKind.BossReset || value.Kind == CombatEventKind.EncounterEnd;
+                if (!_cleared || combatClockEvent) _lastEventUtc = timestamp;
                 if (value.Kind == CombatEventKind.ZoneEntered || value.Kind == CombatEventKind.DungeonDetected)
                 {
                     if (!String.IsNullOrWhiteSpace(value.ZoneId)) _zoneId = value.ZoneId;
@@ -134,7 +139,12 @@ namespace KinojoMeterPrototype
                     var newTarget = !String.IsNullOrWhiteSpace(value.TargetId) &&
                         !String.IsNullOrWhiteSpace(_bossId) &&
                         !String.Equals(_bossId, value.TargetId, StringComparison.OrdinalIgnoreCase);
-                    if (newTarget && (_cleared || !_running)) ResetEncounterDamageLocked();
+                    var sameBossOrderPhase = newTarget && !_cleared && value.BossOrder > 0 && value.BossOrder == _bossOrder;
+                    if (newTarget && !sameBossOrderPhase && (_cleared || !_running))
+                    {
+                        ResetEncounterDamageLocked();
+                        _lastEventUtc = timestamp;
+                    }
                     if (!String.IsNullOrWhiteSpace(value.TargetId)) _bossId = value.TargetId;
                     if (value.TargetRuntimeId > 0) _bossRuntimeId = value.TargetRuntimeId;
                     if (!String.IsNullOrWhiteSpace(value.TargetName)) _bossName = value.TargetName;
@@ -150,6 +160,7 @@ namespace KinojoMeterPrototype
                         _running = false;
                         _cleared = true;
                         _completionMode = "HP_ZERO";
+                        _endedAtUtc = timestamp;
                         completed = true;
                     }
                 }
@@ -170,10 +181,16 @@ namespace KinojoMeterPrototype
                     var sameConfirmedTarget = _bossConfirmed && _bossCurrentHp > 0 &&
                         !String.IsNullOrWhiteSpace(value.TargetId) &&
                         String.Equals(_bossId, value.TargetId, StringComparison.OrdinalIgnoreCase);
+                    var sameBossOrderPhase = !_cleared && value.BossOrder > 0 && value.BossOrder == _bossOrder;
                     var newConfirmedTarget = value.IsBoss && !String.IsNullOrWhiteSpace(value.TargetId) &&
-                        !String.IsNullOrWhiteSpace(_bossId) && !String.Equals(_bossId, value.TargetId, StringComparison.OrdinalIgnoreCase);
+                        !String.IsNullOrWhiteSpace(_bossId) && !String.Equals(_bossId, value.TargetId, StringComparison.OrdinalIgnoreCase) &&
+                        !sameBossOrderPhase;
                     var newTargetAfterClear = _cleared;
-                    if ((separated && !sameConfirmedTarget) || newConfirmedTarget || newTargetAfterClear) ResetEncounterDamageLocked();
+                    if ((separated && !sameConfirmedTarget && !sameBossOrderPhase) || newConfirmedTarget || newTargetAfterClear)
+                    {
+                        ResetEncounterDamageLocked();
+                        _lastEventUtc = timestamp;
+                    }
                     if (!String.IsNullOrWhiteSpace(value.TargetId)) _bossId = value.TargetId;
                     if (value.TargetRuntimeId > 0) _bossRuntimeId = value.TargetRuntimeId;
                     if (!String.IsNullOrWhiteSpace(value.TargetName)) _bossName = value.TargetName;
@@ -196,10 +213,14 @@ namespace KinojoMeterPrototype
                 {
                     _running = false;
                     _cleared = value.IsBoss || (_bossConfirmed && _bossMaxHp > 0 && _bossCurrentHp == 0);
-                    if (_cleared) _completionMode = "EXPLICIT_EVENT";
+                    if (_cleared)
+                    {
+                        _completionMode = "EXPLICIT_EVENT";
+                        _endedAtUtc = timestamp;
+                    }
                     completed = _cleared;
                 }
-                RecalculateShares(timestamp);
+                RecalculateShares(_cleared && _endedAtUtc != DateTime.MinValue ? _endedAtUtc : timestamp);
             }
             if (changed != null) RaiseParticipantChanged(Clone(changed));
             RaiseSnapshotChanged();
@@ -264,12 +285,16 @@ namespace KinojoMeterPrototype
                 foreach (var member in incoming)
                     changed.Add(Clone(UpsertParticipant(member)));
 
-                if (!partial || _partialRosterConfirmations >= 3)
+                // A bus party can legitimately have four zero-damage passengers waiting at
+                // the final boss. A truncated roster must never evict them merely because
+                // they have not dealt damage. A complete same-size replacement can still
+                // replace members by name; partial observations only refresh what was seen.
+                if (!partial)
                 {
                     foreach (var missingName in _rosterNames.Except(incomingNames).ToList())
                     {
                         var missing = _participants.Values.FirstOrDefault(row => !row.IsEmpty && String.Equals(row.Name, missingName, StringComparison.OrdinalIgnoreCase));
-                        if (missing != null && !missing.IsSelf && missing.TotalDamage <= 0)
+                        if (missing != null && !missing.IsSelf)
                         {
                             var missingKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, missing)).Key;
                             _participants.Remove(missingKey);
@@ -282,7 +307,7 @@ namespace KinojoMeterPrototype
                 {
                     foreach (var name in incomingNames) _rosterNames.Add(name);
                 }
-                RecalculateShares(DateTime.UtcNow);
+                RecalculateShares(_cleared && _endedAtUtc != DateTime.MinValue ? _endedAtUtc : DateTime.UtcNow);
             }
             foreach (var row in changed) RaiseParticipantChanged(row);
             RaiseSnapshotChanged();
@@ -290,21 +315,55 @@ namespace KinojoMeterPrototype
 
         public void Tick(DateTime utcNow)
         {
-            var completed = false;
             lock (_gate)
             {
                 if (!_running) return;
                 if (_lastDamageUtc != DateTime.MinValue && (utcNow - _lastDamageUtc) >= TimeSpan.FromSeconds(12))
                 {
                     _running = false;
-                    _cleared = _bossConfirmed;
-                    if (_cleared) _completionMode = "DAMAGE_IDLE_12S";
-                    completed = _bossConfirmed;
+                    _cleared = false;
+                    if (_bossConfirmed) _completionMode = "PHASE_IDLE_12S";
                 }
                 RecalculateShares(utcNow);
             }
             RaiseSnapshotChanged();
+        }
+
+        public void ApplyClassMapping(int classRaw, string classKey, string className)
+        {
+            if (classRaw <= 0 || (String.IsNullOrWhiteSpace(classKey) && String.IsNullOrWhiteSpace(className))) return;
+            var changed = new List<CombatRow>();
+            lock (_gate)
+            {
+                foreach (var row in _participants.Values.Where(value => value.ClassRaw == classRaw))
+                {
+                    if (!String.IsNullOrWhiteSpace(classKey)) row.ClassKey = classKey;
+                    if (!String.IsNullOrWhiteSpace(className)) row.ClassName = className;
+                    changed.Add(Clone(row));
+                }
+            }
+            foreach (var row in changed) RaiseParticipantChanged(row);
+            if (changed.Count > 0) RaiseSnapshotChanged();
+        }
+
+        public bool FinalizeCurrentEncounter(string completionMode, DateTime timestampUtc)
+        {
+            var completed = false;
+            lock (_gate)
+            {
+                if (!_bossConfirmed || _cleared || _startedAtUtc == DateTime.MinValue) return false;
+                _running = false;
+                _cleared = true;
+                _completionMode = String.IsNullOrWhiteSpace(completionMode) ? "INFERRED_NEXT_BOSS" : completionMode;
+                _endedAtUtc = _lastDamageUtc != DateTime.MinValue ? _lastDamageUtc :
+                    (timestampUtc == DateTime.MinValue ? DateTime.UtcNow : timestampUtc);
+                _lastEventUtc = _endedAtUtc;
+                RecalculateShares(_endedAtUtc);
+                completed = true;
+            }
+            RaiseSnapshotChanged();
             if (completed) RaiseEncounterCompleted();
+            return completed;
         }
 
         public CombatSnapshot Snapshot()
@@ -325,7 +384,7 @@ namespace KinojoMeterPrototype
                 return new CombatSnapshot
                 {
                     StartedAtUtc = _startedAtUtc,
-                    LastEventUtc = _lastEventUtc,
+                    LastEventUtc = _cleared && _endedAtUtc != DateTime.MinValue ? _endedAtUtc : _lastEventUtc,
                     BossName = _bossName,
                     BossId = _bossId,
                     BossRuntimeId = _bossRuntimeId,
@@ -445,6 +504,9 @@ namespace KinojoMeterPrototype
                 row.Share = 0;
             }
             _startedAtUtc = DateTime.MinValue;
+            _lastEventUtc = DateTime.MinValue;
+            _lastDamageUtc = DateTime.MinValue;
+            _endedAtUtc = DateTime.MinValue;
             _bossId = "";
             _bossRuntimeId = 0;
             _bossName = "";

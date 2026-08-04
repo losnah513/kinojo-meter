@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "product": "KINOJO Meter",
-  "version": "0.2.30",
-  "fileVersion": "0.2.30.0",
+  "version": "0.2.31",
+  "fileVersion": "0.2.31.0",
   "channel": "stable",
   "databaseContract": "50013",
   "edgeApiVersion": "50013.1",

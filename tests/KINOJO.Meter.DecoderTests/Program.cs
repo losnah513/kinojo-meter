@@ -42,20 +42,39 @@ namespace KinojoMeterPrototype
             if (engine.Snapshot().Rows.Count(row => !row.IsEmpty) != 5) return EngineFailure("partial roster was removed before confirmation");
             engine.ReplaceObservedParty(partial);
             engine.ReplaceObservedParty(partial);
-            if (engine.Snapshot().Rows.Count(row => !row.IsEmpty) != 4) return EngineFailure("partial roster was not removed after three confirmations");
+            engine.ReplaceObservedParty(partial);
+            if (engine.Snapshot().Rows.Count(row => !row.IsEmpty) != 5) return EngineFailure("bus passenger was removed by repeated partial rosters");
 
             engine = new CombatSessionEngine(self, 5);
-            engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow, ActorId = "a", ActorName = "청소기", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", Damage = 100, IsBoss = true });
-            engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow.AddSeconds(1), ActorId = "b", ActorName = "권트", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", Damage = 300, IsBoss = true });
+            engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow, ActorId = "a", ActorName = "청소기", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", BossOrder = 1, Damage = 100, IsBoss = true });
+            engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow.AddSeconds(1), ActorId = "b", ActorName = "권트", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", BossOrder = 1, Damage = 300, IsBoss = true });
             var rows = engine.Snapshot().Rows.Where(row => !row.IsEmpty && row.TotalDamage > 0).ToList();
             var selfRow = rows.Single(row => row.Name == "청소기");
             var otherRow = rows.Single(row => row.Name == "권트");
             if (Math.Abs(selfRow.Share - 25.0) >= 0.001 || Math.Abs(otherRow.Share - 75.0) >= 0.001) return EngineFailure("damage shares are not party-total based");
             engine.Tick(DateTime.UtcNow.AddSeconds(20));
+            var phaseIdle = engine.Snapshot();
+            if (phaseIdle.IsCleared || phaseIdle.IsRunning || phaseIdle.CompletionMode != "PHASE_IDLE_12S") return EngineFailure("idle gap was incorrectly finalized as a clear");
+
+            var phaseTime = phaseIdle.LastEventUtc.AddSeconds(1);
+            engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = phaseTime, ActorId = "a", ActorName = "청소기", TargetId = "boss-phase-2", TargetRuntimeId = 2, TargetName = "1보스", BossOrder = 1, Damage = 50, IsBoss = true });
+            var resumed = engine.Snapshot();
+            if (resumed.Rows.Where(row => !row.IsEmpty).Sum(row => row.TotalDamage) != 450) return EngineFailure("same boss order phase did not preserve accumulated damage");
+
+            var completionRaised = false;
+            engine.EncounterCompleted += delegate { completionRaised = true; };
+            if (!engine.FinalizeCurrentEncounter("NEXT_BOSS_SIGNAL", phaseTime.AddSeconds(13))) return EngineFailure("explicit inferred completion was rejected");
             var completed = engine.Snapshot();
-            if (!completed.IsCleared || completed.CompletionMode != "DAMAGE_IDLE_12S") return EngineFailure("idle completion was not inferred");
-            engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow.AddSeconds(21), ActorId = "a", ActorName = "청소기", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", Damage = 50, IsBoss = true });
-            return engine.Snapshot().Rows.Where(row => !row.IsEmpty).Sum(row => row.TotalDamage) == 50 || EngineFailure("same runtime boss did not reset after inferred completion");
+            if (!completionRaised || !completed.IsCleared || completed.CompletionMode != "NEXT_BOSS_SIGNAL") return EngineFailure("explicit inferred completion did not freeze the encounter");
+            var frozenDps = completed.Rows.Where(row => !row.IsEmpty).Sum(row => row.Dps);
+            var frozenEnd = completed.LastEventUtc;
+            engine.ReplaceObservedParty(partial);
+            engine.Apply(new CombatEvent { Kind = CombatEventKind.DungeonDetected, TimestampUtc = phaseTime.AddMinutes(5), DungeonKey = "hall", DungeonName = "환영의 회랑", DifficultyKey = "conquest", DifficultyName = "정복" });
+            var enriched = engine.Snapshot();
+            if (enriched.LastEventUtc != frozenEnd || enriched.Rows.Where(row => !row.IsEmpty).Sum(row => row.Dps) != frozenDps)
+                return EngineFailure("completed snapshot timing changed during roster or metadata enrichment");
+            if (enriched.DungeonName != "환영의 회랑" || enriched.DifficultyName != "정복") return EngineFailure("HUD metadata was not retained by the combat engine");
+            return true;
         }
 
         private static bool EngineFailure(string message)

@@ -110,6 +110,79 @@ namespace KinojoMeterPrototype
             }
         }
 
+        public static string SaveEncounterOutbox(CombatSnapshot snapshot, CharacterProfile selected, string processingMode)
+        {
+            if (snapshot == null || !snapshot.IsCleared) return "";
+            try
+            {
+                var participants = snapshot.Rows
+                    .Where(row => row != null && !row.IsEmpty)
+                    .Select(row => (object)new Dictionary<string, object>
+                    {
+                        { "participantKey", row.ParticipantKey ?? "" },
+                        { "characterName", row.Name ?? "" },
+                        { "serverId", row.ServerId ?? "" },
+                        { "serverName", row.ServerName ?? "" },
+                        { "classKey", row.ClassKey ?? "" },
+                        { "className", row.ClassName ?? "" },
+                        { "classRaw", row.ClassRaw },
+                        { "pveCombatPower", row.CombatPower },
+                        { "partyNumber", row.PartyNumber },
+                        { "partySlot", row.PartySlot },
+                        { "totalDamage", row.TotalDamage },
+                        { "dps", row.Dps },
+                        { "damageShare", row.Share },
+                        { "isSelf", row.IsSelf }
+                    }).ToList();
+                var document = new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 },
+                    { "processingMode", String.IsNullOrWhiteSpace(processingMode) ? "SIMULATED" : processingMode.Trim().ToUpperInvariant() },
+                    { "processingStatus", "LOCAL_STAGED" },
+                    { "serverSubmissionBlocked", !snapshot.UploadEligible },
+                    { "damageCompleteness", snapshot.DecoderValidated ? "DECODER_VALIDATED" : "PARTIAL_OPCODE_COVERAGE" },
+                    { "stagedAt", DateTime.UtcNow.ToString("o") },
+                    { "selectedCharacterKey", selected == null ? "" : selected.CharacterKey ?? "" },
+                    { "selectedCharacterName", selected == null ? "" : selected.CharacterName ?? "" },
+                    { "dungeonKey", snapshot.DungeonKey ?? "" },
+                    { "dungeonName", snapshot.DungeonName ?? "" },
+                    { "difficultyKey", snapshot.DifficultyKey ?? "" },
+                    { "difficultyName", snapshot.DifficultyName ?? "" },
+                    { "bossOrder", snapshot.BossOrder },
+                    { "bossScopedId", snapshot.BossId ?? "" },
+                    { "bossRuntimeId", snapshot.BossRuntimeId },
+                    { "bossName", snapshot.BossName ?? "" },
+                    { "bossIdentityMode", snapshot.BossIdentityMode ?? "" },
+                    { "completionMode", snapshot.CompletionMode ?? "" },
+                    { "bossObservedMaxHp", snapshot.BossMaxHp },
+                    { "bossCurrentHp", snapshot.BossCurrentHp },
+                    { "startedAt", snapshot.StartedAtUtc == DateTime.MinValue ? "" : snapshot.StartedAtUtc.ToUniversalTime().ToString("o") },
+                    { "endedAt", snapshot.LastEventUtc == DateTime.MinValue ? "" : snapshot.LastEventUtc.ToUniversalTime().ToString("o") },
+                    { "captureEngine", snapshot.CaptureEngine ?? "" },
+                    { "decoderType", snapshot.DecoderType ?? "" },
+                    { "decoderVersion", snapshot.DecoderVersion ?? "" },
+                    { "decoderValidated", snapshot.DecoderValidated },
+                    { "participants", participants }
+                };
+                var outboxDirectory = Path.Combine(DirectoryPath, "outbox");
+                var runtime = snapshot.BossRuntimeId > 0 ? snapshot.BossRuntimeId.ToString() : "unknown";
+                var path = Path.Combine(outboxDirectory, "encounter-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff") +
+                    "-boss" + Math.Max(0, snapshot.BossOrder) + "-" + runtime + ".json");
+                var json = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue }.Serialize(document);
+                lock (Gate)
+                {
+                    Directory.CreateDirectory(outboxDirectory);
+                    File.WriteAllText(path, json, new UTF8Encoding(false));
+                }
+                return path;
+            }
+            catch (Exception ex)
+            {
+                Error("OUTBOX", "Encounter outbox persistence failed", ex);
+                return "";
+            }
+        }
+
         private static void Write(string level, string category, string message, Exception exception)
         {
             try

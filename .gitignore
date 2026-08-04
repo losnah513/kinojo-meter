@@ -1,5 +1,6 @@
 artifacts/
 projects/*/obj/
+projects/*/bin/
 tests/**/bin/
 tests/**/obj/
 build/KINOJO_Meter_*_Setup.exe

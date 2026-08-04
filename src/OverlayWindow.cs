@@ -37,6 +37,7 @@ namespace KinojoMeterPrototype
         private readonly bool _isMeterAdmin;
         private readonly HashSet<string> _bossNames;
         private readonly List<CatalogDungeon> _catalogDungeons;
+        private readonly List<CatalogDifficulty> _catalogDifficulties;
         private readonly List<CatalogBoss> _catalogBosses;
         private readonly Border _surface;
         private readonly StackPanel _rows;
@@ -64,6 +65,10 @@ namespace KinojoMeterPrototype
         private readonly Dictionary<string, Color> _observedClassColors =
             new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, Color> _classRawColors = new Dictionary<int, Color>();
+        private readonly Dictionary<int, string> _classRawKeys = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _classRawNames = new Dictionary<int, string>();
+        private string _encounterProcessingState = "";
+        private string _encounterProcessingText = "";
         private Button _diagnosticStartButton;
         private Button _diagnosticStopButton;
         private TextBlock _diagnosticState;
@@ -88,12 +93,20 @@ namespace KinojoMeterPrototype
             _selected = selected;
             _isMeterAdmin = isMeterAdmin;
             _catalogDungeons = (catalog == null ? new List<CatalogDungeon>() : catalog.Dungeons ?? new List<CatalogDungeon>()).ToList();
+            _catalogDifficulties = (catalog == null ? new List<CatalogDifficulty>() : catalog.Difficulties ?? new List<CatalogDifficulty>()).ToList();
             _catalogBosses = (catalog == null ? new List<CatalogBoss>() : catalog.Bosses ?? new List<CatalogBoss>()).ToList();
             _bossNames = new HashSet<string>((catalog == null ? Enumerable.Empty<CatalogBoss>() : catalog.Bosses ?? new List<CatalogBoss>())
                 .Select(value => (value.BossName ?? "").Trim()).Where(value => value.Length > 0), StringComparer.OrdinalIgnoreCase);
             _preferences = preferences ?? MeterPreferences.Default();
             _engine = new CombatSessionEngine(_selected, _preferences.GroupSize);
-            _engine.EncounterCompleted += delegate { EncounterCompleted?.Invoke(this, _engine.Snapshot()); };
+            _engine.EncounterCompleted += delegate
+            {
+                var completed = _engine.Snapshot();
+                _encounterProcessingState = "FINALIZING";
+                _encounterProcessingText = "보스 전투 종료 · 결과 고정 및 가상 처리 중";
+                Render(completed);
+                EncounterCompleted?.Invoke(this, completed);
+            };
             _engine.ParticipantChanged += delegate(object sender, CombatRow row) { ParticipantDetected?.Invoke(this, row); };
 
             Title = "KINOJO Meter Overlay " + KinojoVersion.Current;
@@ -335,6 +348,13 @@ namespace KinojoMeterPrototype
                         Color observed;
                         if (member.ClassRaw > 0 && _observedClassColors.TryGetValue(member.CharacterName ?? "", out observed))
                             _classRawColors[member.ClassRaw] = observed;
+                        if (member.ClassRaw > 0 && _selected != null &&
+                            String.Equals(member.CharacterName, _selected.CharacterName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!String.IsNullOrWhiteSpace(_selected.ClassKey)) _classRawKeys[member.ClassRaw] = _selected.ClassKey;
+                            if (!String.IsNullOrWhiteSpace(_selected.ClassName)) _classRawNames[member.ClassRaw] = _selected.ClassName;
+                            _engine.ApplyClassMapping(member.ClassRaw, _selected.ClassKey, _selected.ClassName);
+                        }
                     }
                     _partyObserved = roster.Count > 0;
                     var rosterSnapshot = _engine.Snapshot();
@@ -366,7 +386,24 @@ namespace KinojoMeterPrototype
 
         public void ApplyProfile(PartyProfileResult profile)
         {
+            var before = _engine.Snapshot().Rows.FirstOrDefault(row => !row.IsEmpty &&
+                ((!String.IsNullOrWhiteSpace(profile == null ? "" : profile.ParticipantKey) && String.Equals(row.ParticipantKey, profile.ParticipantKey, StringComparison.OrdinalIgnoreCase)) ||
+                 (!String.IsNullOrWhiteSpace(profile == null ? "" : profile.CharacterName) && String.Equals(row.Name, profile.CharacterName, StringComparison.OrdinalIgnoreCase))));
             _engine.ApplyProfile(profile);
+            if (before != null && before.ClassRaw > 0 && profile != null &&
+                (!String.IsNullOrWhiteSpace(profile.ClassKey) || !String.IsNullOrWhiteSpace(profile.ClassName)))
+            {
+                if (!String.IsNullOrWhiteSpace(profile.ClassKey)) _classRawKeys[before.ClassRaw] = profile.ClassKey;
+                if (!String.IsNullOrWhiteSpace(profile.ClassName)) _classRawNames[before.ClassRaw] = profile.ClassName;
+                _engine.ApplyClassMapping(before.ClassRaw, profile.ClassKey, profile.ClassName);
+            }
+            Render(_engine.Snapshot());
+        }
+
+        public void SetEncounterProcessingState(string state, string text)
+        {
+            _encounterProcessingState = (state ?? "").Trim().ToUpperInvariant();
+            _encounterProcessingText = (text ?? "").Trim();
             Render(_engine.Snapshot());
         }
 
@@ -401,8 +438,34 @@ namespace KinojoMeterPrototype
                 var dungeon = _catalogDungeons.FirstOrDefault(value => String.Equals((value.DungeonName ?? "").Trim(), observedDungeon, StringComparison.OrdinalIgnoreCase));
                 _hudDungeonKey = dungeon == null ? "" : dungeon.DungeonKey ?? "";
             }
+
+            foreach (var pair in observation.PartyServers ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+            {
+                if (String.IsNullOrWhiteSpace(pair.Key) || String.IsNullOrWhiteSpace(pair.Value)) continue;
+                _engine.ApplyProfile(new PartyProfileResult
+                {
+                    Ok = true,
+                    CharacterName = pair.Key.Trim(),
+                    ServerName = pair.Value.Trim()
+                });
+            }
             if (!String.IsNullOrWhiteSpace(observation.DifficultyName))
                 _hudDifficultyName = observation.DifficultyName.Trim();
+
+            if (!String.IsNullOrWhiteSpace(_hudDungeonName))
+            {
+                var difficulty = _catalogDifficulties.FirstOrDefault(value =>
+                    String.Equals((value.DisplayName ?? "").Trim(), _hudDifficultyName, StringComparison.OrdinalIgnoreCase));
+                _engine.Apply(new CombatEvent
+                {
+                    Kind = CombatEventKind.DungeonDetected,
+                    TimestampUtc = observation.ObservedAtUtc == DateTime.MinValue ? DateTime.UtcNow : observation.ObservedAtUtc,
+                    DungeonKey = _hudDungeonKey,
+                    DungeonName = _hudDungeonName,
+                    DifficultyKey = difficulty == null ? "" : difficulty.DifficultyKey ?? "",
+                    DifficultyName = _hudDifficultyName
+                });
+            }
 
             // 파티 구성 창의 콘텐츠명은 입장 전에도 보이므로 표시 후보로만 사용한다.
             // 실제 입장은 검증된 ZoneEntered/DungeonDetected 패킷 이벤트가 확인할 때만 전환한다.
@@ -447,6 +510,8 @@ namespace KinojoMeterPrototype
             var snapshot = _engine.Snapshot();
             if (snapshot.IsRunning && !_running)
             {
+                _encounterProcessingState = "";
+                _encounterProcessingText = "";
                 _running = true;
                 _timer.Start();
             }
@@ -502,13 +567,35 @@ namespace KinojoMeterPrototype
             if (!_bossOrderByTarget.TryGetValue(targetKey, out order))
             {
                 var snapshot = _engine.Snapshot();
+                var available = Math.Max(1, _catalogBosses.Count(boss => String.Equals(boss.DungeonKey, _hudDungeonKey, StringComparison.OrdinalIgnoreCase)));
                 if (!String.IsNullOrWhiteSpace(_currentBossTarget) &&
                     !String.Equals(_currentBossTarget, value.TargetId, StringComparison.OrdinalIgnoreCase) &&
                     snapshot.IsRunning && !snapshot.IsCleared)
                     return;
-                order = _bossOrderByTarget.Count + 1;
-                var available = _catalogBosses.Count(boss => String.Equals(boss.DungeonKey, _hudDungeonKey, StringComparison.OrdinalIgnoreCase));
-                if (order < 1 || order > Math.Max(3, available)) return;
+
+                if (snapshot.IsCleared && snapshot.BossOrder >= available)
+                {
+                    _bossOrderByTarget.Clear();
+                    _pendingDamageByTarget.Clear();
+                    _currentBossTarget = "";
+                    _engine.Reset();
+                    _encounterProcessingState = "";
+                    _encounterProcessingText = "";
+                    order = 1;
+                    DiagnosticLog.Info("BOSS_ID_TEST", _hudDungeonName + " · same-dungeon new run detected · runtimeTarget=" + value.TargetRuntimeId);
+                }
+                else if (String.Equals(snapshot.CompletionMode, "PHASE_IDLE_12S", StringComparison.OrdinalIgnoreCase) && snapshot.BossOrder >= available)
+                {
+                    order = snapshot.BossOrder;
+                    DiagnosticLog.Info("BOSS_PHASE_TEST", _hudDungeonName + " · boss order=" + order + " phase target=" + value.TargetRuntimeId);
+                }
+                else
+                {
+                    if (String.Equals(snapshot.CompletionMode, "PHASE_IDLE_12S", StringComparison.OrdinalIgnoreCase) && snapshot.BossOrder > 0)
+                        _engine.FinalizeCurrentEncounter("NEXT_BOSS_SIGNAL", value.TimestampUtc);
+                    order = _bossOrderByTarget.Count == 0 ? 1 : _bossOrderByTarget.Values.Max() + 1;
+                }
+                if (order < 1 || order > available) return;
                 _bossOrderByTarget[targetKey] = order;
                 newlyMapped = true;
                 DiagnosticLog.Info("BOSS_ID_TEST", _hudDungeonName + " · order=" + order + " · runtimeTarget=" + value.TargetRuntimeId + " · scopedTarget=" + value.TargetId + " · firstHp=" + value.CurrentHp);
@@ -567,8 +654,13 @@ namespace KinojoMeterPrototype
                         : "전투 대기"));
             _bossHp.Value = snapshot.BossMaxHp > 0 ? Math.Max(0, Math.Min(100, snapshot.BossCurrentHp * 100.0 / snapshot.BossMaxHp)) : 0;
             _encounterTime.Text = snapshot.StartedAtUtc == DateTime.MinValue ? "00:00" : (snapshot.LastEventUtc - snapshot.StartedAtUtc).ToString(@"mm\:ss");
-            if (snapshot.IsCleared) SetActivityStatus("보스 전투 종료 · 결과 정리 중");
-            else if (snapshot.IsRunning) SetActivityStatus("보스 전투 중 · DPS 판독 중");
+            if (!String.IsNullOrWhiteSpace(_encounterProcessingState))
+                SetActivityStatus(String.IsNullOrWhiteSpace(_encounterProcessingText) ? _encounterProcessingState : _encounterProcessingText);
+            else if (snapshot.IsCleared) SetActivityStatus("보스 전투 종료 · 결과 정리 중");
+            else if (snapshot.IsRunning) SetActivityStatus(snapshot.DecoderValidated
+                ? "보스 전투 중 · DPS 판독 중"
+                : "보스 전투 중 · 부분 피해/DPS 판독 중");
+            else if (String.Equals(snapshot.CompletionMode, "PHASE_IDLE_12S", StringComparison.OrdinalIgnoreCase)) SetActivityStatus("보스 페이즈 전환 대기 · 전투 데이터 유지 중");
             else if (_dungeonEntered) SetActivityStatus("던전 입장 확인 · 파티 구성원 실시간 확인 중");
             else if (_partyObserved) SetActivityStatus("파티 구성원 확인 중");
             _spinner.Visibility = snapshot.IsRunning || snapshot.IsCleared ? Visibility.Collapsed : Visibility.Visible;
@@ -721,7 +813,8 @@ namespace KinojoMeterPrototype
             {
                 var number = new TextBlock
                 {
-                    Text = FormatNumber(row.Dps) + " DPS · " + FormatNumber(row.TotalDamage) + "\n" + row.Share.ToString("0.0") + "%",
+                    Text = FormatNumber(row.Dps) + " DPS · " + FormatNumber(row.TotalDamage) + "\n" +
+                        row.Share.ToString("0.0") + (RuntimeInfo.DecoderValidated ? "%" : "% 판독"),
                     Foreground = Brushes.White,
                     FontWeight = FontWeights.Bold,
                     FontSize = 8,
