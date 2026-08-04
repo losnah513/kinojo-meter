@@ -32,9 +32,8 @@ namespace KinojoMeterPrototype
         private readonly Border _contentHost = new Border();
         private readonly KinojoApiClient _api = new KinojoApiClient();
         private readonly MeterPreferences _preferences = PreferencesStore.Load();
-        private readonly Dictionary<string, DateTime> _profileRequestedAt = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private readonly PartyProfileRetryQueue _profileRetryQueue = new PartyProfileRetryQueue(TimeSpan.FromSeconds(25));
         private readonly Dictionary<Button, CharacterProfile> _characterCards = new Dictionary<Button, CharacterProfile>();
-        private readonly object _profileRequestGate = new object();
         private readonly Border _updateHost = new Border();
 
         private LoginResult _login;
@@ -44,6 +43,7 @@ namespace KinojoMeterPrototype
         private OverlayWindow _overlay;
         private SystemTrayController _tray;
         private DispatcherTimer _foregroundTimer;
+        private DispatcherTimer _profileRetryTimer;
         private TextBlock _message;
         private PassKeyInput _passKeyInput;
         private Button _loginButton;
@@ -78,6 +78,7 @@ namespace KinojoMeterPrototype
         private CharacterDiscoveryWindow _discovery;
         private DispatcherTimer _characterDiscoveryTimeoutTimer;
         private bool _outboxRetryBusy;
+        private bool _profileRetryBusy;
 
         public MainWindow()
         {
@@ -974,6 +975,8 @@ namespace KinojoMeterPrototype
 
         private void OpenBackgroundMeter()
         {
+            StopProfileRetryTimer();
+            _profileRetryQueue.Clear();
             if (_overlay != null) _overlay.Close();
             _overlay = new OverlayWindow(_selected, _preferences, _catalog, _login != null && _login.IsMeterAdmin);
             if (_lastHudObservation != null) _overlay.ApplyHudObservation(_lastHudObservation);
@@ -1110,6 +1113,7 @@ namespace KinojoMeterPrototype
                 UpdateOverlayVisibility();
             };
             _foregroundTimer.Start();
+            StartProfileRetryTimer();
             UpdateOverlayVisibility();
             Dispatcher.BeginInvoke(new Action(async delegate { await RetryPendingSubmissionsAsync(); }));
             Hide();
@@ -1261,25 +1265,22 @@ namespace KinojoMeterPrototype
         private async Task EnrichParticipantAsync(CombatRow row)
         {
             if (_login == null || row == null || row.IsEmpty) return;
-            var key = !String.IsNullOrWhiteSpace(row.PlatformCharacterId) ? row.PlatformCharacterId :
-                (row.ServerId + ":" + row.ServerRaw + ":" + row.Name);
-            if (String.IsNullOrWhiteSpace(key)) return;
-            lock (_profileRequestGate)
-            {
-                DateTime lastAttempt;
-                if (_profileRequestedAt.TryGetValue(key, out lastAttempt) && DateTime.UtcNow - lastAttempt < TimeSpan.FromSeconds(25)) return;
-                _profileRequestedAt[key] = DateTime.UtcNow;
-            }
+            string key;
+            if (!_profileRetryQueue.TryBegin(row, DateTime.UtcNow, out key)) return;
+            var requestLogin = _login;
+            var requestOverlay = _overlay;
+            var resolvedAny = false;
             try
             {
-                var profiles = await _api.GetPartyProfilesAsync(_login.SessionToken, new[] { row });
+                var profiles = await _api.GetPartyProfilesAsync(requestLogin.SessionToken, new[] { row }) ?? new List<PartyProfileResult>();
                 foreach (var profile in profiles)
                 {
                     var resolved = profile.Ok && (profile.MeterCharacterId > 0 || !String.IsNullOrWhiteSpace(profile.PlatformCharacterId)) &&
                         (!String.IsNullOrWhiteSpace(profile.ServerName) || !String.IsNullOrWhiteSpace(profile.ClassName) || profile.PveCombatPower > 0);
                     if (resolved)
                     {
-                        _overlay?.ApplyProfile(profile);
+                        resolvedAny = true;
+                        if (ReferenceEquals(_login, requestLogin) && ReferenceEquals(_overlay, requestOverlay)) requestOverlay?.ApplyProfile(profile);
                         DiagnosticLog.Info("PROFILE", "Party profile resolved · name=" + (profile.CharacterName ?? row.Name ?? "") +
                             " · server=" + (profile.ServerName ?? "") + " · class=" + (profile.ClassName ?? "") +
                             " · power=" + profile.PveCombatPower + " · source=" + (profile.ProfileRefreshStatus ?? ""));
@@ -1289,18 +1290,39 @@ namespace KinojoMeterPrototype
                         DiagnosticLog.Info("PROFILE", "Party profile unresolved · name=" + (row.Name ?? "") + " · reason=" + (profile.ReasonCode ?? "") + " · " + (profile.Message ?? ""));
                     }
                 }
-                if (profiles.Count == 0 || profiles.Any(profile => !profile.Ok ||
-                    String.Equals(profile.ProfileRefreshStatus, "QUEUED", StringComparison.OrdinalIgnoreCase) ||
-                    String.Equals(profile.ProfileRefreshStatus, "UNRESOLVED", StringComparison.OrdinalIgnoreCase)))
-                {
-                    lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromSeconds(10);
-                }
             }
             catch (Exception ex)
             {
                 DiagnosticLog.Error("PROFILE", "Party profile enrichment failed", ex);
-                lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromSeconds(10);
             }
+            finally { _profileRetryQueue.Complete(key, row, resolvedAny, DateTime.UtcNow); }
+        }
+
+        private void StartProfileRetryTimer()
+        {
+            StopProfileRetryTimer();
+            _profileRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _profileRetryTimer.Tick += async delegate { await RetryPendingPartyProfilesAsync(); };
+            _profileRetryTimer.Start();
+        }
+
+        private void StopProfileRetryTimer()
+        {
+            _profileRetryTimer?.Stop();
+            _profileRetryTimer = null;
+            _profileRetryBusy = false;
+        }
+
+        private async Task RetryPendingPartyProfilesAsync()
+        {
+            if (_profileRetryBusy || _login == null || _overlay == null) return;
+            _profileRetryBusy = true;
+            try
+            {
+                var due = _profileRetryQueue.TakeDue(DateTime.UtcNow, _overlay.GetParticipantSnapshot());
+                foreach (var row in due) await EnrichParticipantAsync(row);
+            }
+            finally { _profileRetryBusy = false; }
         }
 
         private async Task UploadEncounterAsync(CombatSnapshot snapshot)
@@ -1509,6 +1531,7 @@ namespace KinojoMeterPrototype
             if (discovery != null) discovery.Close();
             _foregroundTimer?.Stop();
             _foregroundTimer = null;
+            StopProfileRetryTimer();
             var overlay = _overlay;
             _overlay = null;
             if (overlay != null) overlay.Close();
@@ -1523,7 +1546,7 @@ namespace KinojoMeterPrototype
             _login = null;
             _catalog = null;
             _selected = null;
-            lock (_profileRequestGate) _profileRequestedAt.Clear();
+            _profileRetryQueue.Clear();
             _manualOverlayVisible = false;
             if (exit)
             {

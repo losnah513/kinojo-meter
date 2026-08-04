@@ -435,6 +435,7 @@ namespace KinojoMeterPrototype
         private sealed class PartyMemberProbe
         {
             public int Offset;
+            public int EndOffset;
             public int ServerRaw;
             public string Name;
             public int ClassRaw;
@@ -447,7 +448,7 @@ namespace KinojoMeterPrototype
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
         public string DecoderType { get { return "BINARY_PARTIAL_VALIDATED"; } }
-        public string DecoderVersion { get { return "aion2-variable-damage-records-4"; } }
+        public string DecoderVersion { get { return "aion2-variable-damage-records-5"; } }
         public bool IsValidated { get { return false; } }
         public event EventHandler<string> AionConnectionIdentified;
         public event EventHandler<string> ParserEnvelopeCandidateObserved;
@@ -535,11 +536,13 @@ namespace KinojoMeterPrototype
                             state.PendingSmallRosterSignature = rosterSignature;
                             state.PendingSmallRosterConfirmations = 1;
                         }
-                        rosterAccepted = state.PendingSmallRosterConfirmations >= 2;
-                        rosterEvidence = "PACKET_SMALL_ROSTER_CONFIRMED";
+                        var requiredConfirmations = rosterMembers.Count == 1 ? 3 : 2;
+                        rosterAccepted = state.PendingSmallRosterConfirmations >= requiredConfirmations;
+                        rosterEvidence = rosterMembers.Count == 1 ? "PACKET_SOLO_ROSTER_CONFIRMED" : "PACKET_SMALL_ROSTER_CONFIRMED";
                         if (!rosterAccepted)
                             partyRosterCandidate = frame.ConnectionKey + "|" + frame.Direction + "|" + rosterDetail +
-                                ";state=confirming;confirmation=1/2";
+                                ";state=confirming;confirmation=" + state.PendingSmallRosterConfirmations.ToString(CultureInfo.InvariantCulture) +
+                                "/" + requiredConfirmations.ToString(CultureInfo.InvariantCulture);
                     }
                 }
                 else if (rosterCandidateObserved)
@@ -603,8 +606,15 @@ namespace KinojoMeterPrototype
             if (tail.Length > 0) Buffer.BlockCopy(tail, 0, combined, 0, tail.Length);
             Buffer.BlockCopy(bytes, 0, combined, tail.Length, bytes.Length);
 
+            var observationStart = 0;
+            for (var index = 0; index + 1 < combined.Length; index++)
+            {
+                if (combined[index] == 0x41 && combined[index + 1] == 0x36 && index + 1 >= tail.Length)
+                    observationStart = index;
+            }
+
             var records = new List<PartyMemberProbe>();
-            for (var offset = 0; offset < combined.Length; offset++)
+            for (var offset = observationStart; offset < combined.Length; offset++)
             {
                 PartyMemberProbe record;
                 if (TryReadPartyMemberProbe(combined, offset, out record)) records.Add(record);
@@ -624,11 +634,13 @@ namespace KinojoMeterPrototype
                     if (current.Offset - first.Offset > 320) break;
                     if (current.Offset - previousOffset > 96) break;
                     previousOffset = current.Offset;
-                    if (!unique.ContainsKey(current.Name)) unique[current.Name] = current;
+                    var identity = current.ServerRaw.ToString(CultureInfo.InvariantCulture) + ":" + current.Name;
+                    if (!unique.ContainsKey(identity)) unique[identity] = current;
                     if (unique.Count >= 6) break;
                 }
-                if (unique.Count < 2) continue;
+                if (unique.Count < 1) continue;
                 var members = unique.Values.OrderBy(member => member.Offset).ToList();
+                if (!members.Any(member => member.EndOffset > tail.Length)) continue;
                 var span = members[members.Count - 1].Offset - members[0].Offset;
                 var levelIsCurrentCap = members.Any(member => member.Level == 50);
                 if (best == null ||
@@ -710,6 +722,7 @@ namespace KinojoMeterPrototype
             record = new PartyMemberProbe
             {
                 Offset = offset,
+                EndOffset = fieldsOffset + 12,
                 ServerRaw = serverRaw,
                 Name = name,
                 ClassRaw = (int)classRaw,

@@ -10,6 +10,7 @@ name: Build KINOJO Meter Windows
       - 'assets/**'
       - 'release/**'
       - 'projects/**'
+      - 'tests/**'
       - 'scripts/**'
       - 'build/payload/**'
       - 'BUILD_WINDOWS_RELEASE.cmd'
@@ -33,6 +34,13 @@ jobs:
       - name: Preflight build inputs
         shell: powershell
         run: ./scripts/build-windows.ps1 -Configuration Release -PreflightOnly
+      - name: Build and run decoder regression tests
+        shell: pwsh
+        run: |
+          msbuild ./tests/KINOJO.Meter.DecoderTests/KINOJO.Meter.DecoderTests.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/KINOJO.Meter.DecoderTests/bin/x64/Release/net48/KINOJO.Meter.DecoderTests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build application, payload and installer
         shell: powershell
         run: ./scripts/build-windows.ps1 -Configuration Release
