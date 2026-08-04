@@ -176,6 +176,13 @@ function Assert-ProjectCompileInputs {
     foreach ($node in @($projectXml.SelectNodes('//Compile[@Include]'))) {
         $include = [string]$node.Include
         if ([String]::IsNullOrWhiteSpace($include) -or $include.Contains('$(')) { continue }
+        if ($include.IndexOfAny([char[]]'*?') -ge 0) {
+            $matches = @(Get-ChildItem -Path (Join-Path $projectDirectory $include) -File -ErrorAction SilentlyContinue)
+            if ($matches.Count -eq 0) {
+                throw "Project compile wildcard matched no files: $ProjectPath -> $include"
+            }
+            continue
+        }
         $sourcePath = [IO.Path]::GetFullPath((Join-Path $projectDirectory $include))
         Assert-RequiredFile -Path $sourcePath
     }
