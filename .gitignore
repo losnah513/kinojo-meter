@@ -1,8 +1,12 @@
 artifacts/
-projects/*/obj/
-projects/*/bin/
+src/obj/
+src/bin/
+setup/obj/
+setup/bin/
 tests/**/bin/
 tests/**/obj/
 build/KINOJO_Meter_*_Setup.exe
 build/KinojoMeterPayload_*.zip
 build/checksums_*.txt
+build/release/
+build/sandbox-clean-install-*/

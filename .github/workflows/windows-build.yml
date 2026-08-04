@@ -9,11 +9,10 @@ name: Build KINOJO Meter Windows
       - 'setup/**'
       - 'assets/**'
       - 'release/**'
-      - 'projects/**'
       - 'tests/**'
       - 'scripts/**'
-      - 'build/payload/**'
       - 'BUILD_WINDOWS_RELEASE.cmd'
+      - 'KINOJO.Meter.sln'
       - 'README.md'
       - '.github/workflows/windows-build.yml'
 
