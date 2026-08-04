@@ -76,6 +76,7 @@ namespace KinojoMeterPrototype
         private GameHudProbe _hudProbe;
         private GameHudObservation _lastHudObservation;
         private CharacterDiscoveryWindow _discovery;
+        private DispatcherTimer _characterDiscoveryTimeoutTimer;
 
         public MainWindow()
         {
@@ -330,6 +331,7 @@ namespace KinojoMeterPrototype
             };
             _discovery.Show();
             Hide();
+            StartCharacterDiscoveryTimeout();
         }
 
         private async Task SelectDetectedCharacterAsync(CharacterProfile profile, string evidence)
@@ -776,6 +778,7 @@ namespace KinojoMeterPrototype
                 DiagnosticLog.Info("CHARACTER", "Selected " + profile.CharacterName + " / " + profile.ServerName);
                 var discovery = _discovery;
                 _discovery = null;
+                StopCharacterDiscoveryTimeout();
                 if (discovery != null) discovery.Close();
                 OpenBackgroundMeter();
             }
@@ -854,6 +857,27 @@ namespace KinojoMeterPrototype
             DiagnosticLog.Info("AUTO_CHARACTER", "Detection capture started before character selection.");
         }
 
+        private void StartCharacterDiscoveryTimeout()
+        {
+            StopCharacterDiscoveryTimeout();
+            _characterDiscoveryTimeoutTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _characterDiscoveryTimeoutTimer.Tick += delegate
+            {
+                StopCharacterDiscoveryTimeout();
+                if (_selected != null || _discovery == null) return;
+                _discovery.ShowManualCards("자동 검색이 지연되고 있습니다 · 검색은 계속되며 직접 선택도 가능합니다");
+                DiagnosticLog.Info("AUTO_CHARACTER", "Automatic selection exceeded 5 seconds; manual character cards were expanded while detection continues.");
+            };
+            _characterDiscoveryTimeoutTimer.Start();
+        }
+
+        private void StopCharacterDiscoveryTimeout()
+        {
+            var timer = _characterDiscoveryTimeoutTimer;
+            _characterDiscoveryTimeoutTimer = null;
+            if (timer != null) timer.Stop();
+        }
+
         private void StopAutomaticCharacterDetection()
         {
             _autoSelectionStarted = false;
@@ -879,6 +903,7 @@ namespace KinojoMeterPrototype
                 Dispatcher.BeginInvoke(new Action(delegate
                 {
                     if (_message != null && _selected == null) _message.Text = status;
+                    if (_discovery != null && _selected == null) _discovery.SetStatus(status);
                 }));
             };
             _hudProbe.ObservationReady += delegate(object sender, GameHudObservation observation)
@@ -920,9 +945,12 @@ namespace KinojoMeterPrototype
 
             _selectionBusy = true;
             RefreshMeterStartState();
-            if (_message != null) _message.Text = detected.CharacterName + " 화면 확인 · 자동 연결 중";
+            var fromWindowTitle = String.Equals(observation.Evidence, "AION2_WINDOW_TITLE", StringComparison.OrdinalIgnoreCase);
+            var evidenceLabel = fromWindowTitle ? "게임 창 제목" : "화면 OCR";
+            if (_message != null) _message.Text = detected.CharacterName + " " + evidenceLabel + " 확인 · 자동 연결 중";
+            if (_discovery != null) _discovery.MarkDetected(detected, evidenceLabel);
             DiagnosticLog.Info("HUD_PROBE", (_selected == null ? "Character detected" : "Character change detected") +
-                " by centered self-name OCR: " + detected.CharacterName + ".");
+                (fromWindowTitle ? " by AION2 window title: " : " by centered self-name OCR: ") + detected.CharacterName + ".");
             try { await SelectCharacterAsync(detected); }
             finally
             {
@@ -1362,6 +1390,7 @@ namespace KinojoMeterPrototype
         private async Task LogoutAsync(bool exit)
         {
             StopAutomaticCharacterDetection();
+            StopCharacterDiscoveryTimeout();
             var discovery = _discovery;
             _discovery = null;
             if (discovery != null) discovery.Close();

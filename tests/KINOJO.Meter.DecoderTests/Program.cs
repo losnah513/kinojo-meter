@@ -12,9 +12,25 @@ namespace KinojoMeterPrototype
         {
             if (args != null && args.Length == 2 && String.Equals(args[0], "--fixture", StringComparison.OrdinalIgnoreCase))
                 return ReplayFixture(args[1]);
-            var passed = DecoderSelfTest.Run() && RunCombatEngineTests();
+            var passed = DecoderSelfTest.Run() && RunWindowTitleCharacterTests() && RunCombatEngineTests();
             Console.WriteLine(passed ? "KINOJO decoder and combat-engine regression tests passed." : "KINOJO regression tests failed.");
             return passed ? 0 : 1;
+        }
+
+        private static bool RunWindowTitleCharacterTests()
+        {
+            var owned = new[] { "청소기", "꾸헹", "꾸힉" };
+            if (AionWindowCharacterDetector.MatchOwnedCharacter("AION2 l 꾸힉", owned) != "꾸힉")
+                return EngineFailure("AION2 window title did not identify the owned character");
+            if (AionWindowCharacterDetector.MatchOwnedCharacter("AION2 | 꾸헹", owned) != "꾸헹")
+                return EngineFailure("alternate AION2 title delimiter was not accepted");
+            if (AionWindowCharacterDetector.MatchOwnedCharacter("PURPLE | 꾸힉", owned).Length != 0)
+                return EngineFailure("non-AION window title was accepted");
+            if (AionWindowCharacterDetector.MatchOwnedCharacter("AION2 l 다른사람", owned).Length != 0)
+                return EngineFailure("unowned character was accepted");
+            if (AionWindowCharacterDetector.MatchOwnedCharacter("AION2 l 꾸힉 꾸헹", owned).Length != 0)
+                return EngineFailure("ambiguous owned-character title was accepted");
+            return true;
         }
 
         private static bool RunCombatEngineTests()

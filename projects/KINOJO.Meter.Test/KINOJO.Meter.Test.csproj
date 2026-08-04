@@ -36,6 +36,7 @@
     <Compile Include="..\..\src\GameCapture.cs" Link="GameCapture.cs" />
     <Compile Include="..\..\src\AionCombatDecoder.cs" Link="AionCombatDecoder.cs" />
     <Compile Include="..\..\src\DecoderSelfTest.cs" Link="DecoderSelfTest.cs" />
+    <Compile Include="..\..\src\AionWindowCharacterDetector.cs" Link="AionWindowCharacterDetector.cs" />
     <Compile Include="..\..\src\GameHudProbe.cs" Link="GameHudProbe.cs" />
     <Compile Include="..\..\src\CombatEngine.cs" Link="CombatEngine.cs" />
     <Compile Include="..\..\src\Models.cs" Link="Models.cs" />

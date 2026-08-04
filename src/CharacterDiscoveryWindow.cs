@@ -62,15 +62,7 @@ namespace KinojoMeterPrototype
             Grid.SetColumn(_status, 1);
             activity.Children.Add(_status);
             var manual = new Button { Content = "직접 선택", FontSize = 8, Padding = new Thickness(8, 3, 8, 3), Margin = new Thickness(8, 0, 0, 0), Cursor = Cursors.Hand };
-            manual.Click += delegate
-            {
-                var show = _cardGrid.Visibility != Visibility.Visible;
-                _cardGrid.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-                Width = show ? 520 : 390;
-                Height = show ? Math.Min(520, 118 + _cardRows * 82) : 94;
-                Left = Math.Max(working.Left + 8, Math.Min(working.Right - Width - 8, Left));
-                Top = Math.Max(working.Top + 8, Math.Min(working.Bottom - Height - 8, Top));
-            };
+            manual.Click += delegate { SetCardsVisible(_cardGrid.Visibility != Visibility.Visible); };
             Grid.SetColumn(manual, 2);
             activity.Children.Add(manual);
             root.Children.Add(activity);
@@ -79,6 +71,12 @@ namespace KinojoMeterPrototype
         }
 
         public void SetStatus(string value) { if (!String.IsNullOrWhiteSpace(value)) _status.Text = value; }
+
+        public void ShowManualCards(string status)
+        {
+            SetStatus(status);
+            SetCardsVisible(true);
+        }
 
         public void MarkDetected(CharacterProfile profile, string evidence)
         {
@@ -102,6 +100,16 @@ namespace KinojoMeterPrototype
             card.Child = stack;
             card.MouseLeftButtonUp += delegate { CharacterSelected?.Invoke(this, profile); };
             return card;
+        }
+
+        private void SetCardsVisible(bool visible)
+        {
+            _cardGrid.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            Width = visible ? 520 : 390;
+            Height = visible ? Math.Min(520, 118 + _cardRows * 82) : 94;
+            var working = SystemParameters.WorkArea;
+            Left = Math.Max(working.Left + 8, Math.Min(working.Right - Width - 8, Left));
+            Top = Math.Max(working.Top + 8, Math.Min(working.Bottom - Height - 8, Top));
         }
     }
 }

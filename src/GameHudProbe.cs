@@ -37,6 +37,13 @@ namespace KinojoMeterPrototype
         private bool _disposed;
         private string _pendingCharacter = "";
         private int _pendingCharacterCount;
+        private string _pendingTitleCharacter = "";
+        private int _pendingTitleCharacterCount;
+        private string _lastEmittedTitleCharacter = "";
+        private DateTime _lastTitleEmissionUtc = DateTime.MinValue;
+        private DateTime _lastOcrProbeUtc = DateTime.MinValue;
+        private DateTime _startedAtUtc = DateTime.MinValue;
+        private string _lastStatusKey = "";
         private bool _ocrUnavailableReported;
 
         public event EventHandler<GameHudObservation> ObservationReady;
@@ -116,8 +123,10 @@ namespace KinojoMeterPrototype
         {
             if (_disposed) return;
             _running = true;
-            _timer.Change(TimeSpan.Zero, TimeSpan.FromMilliseconds(1500));
-            RaiseStatus(_ocr == null ? "게임 HUD 판독 대기 · Windows OCR 확인 필요" : "게임 HUD 자동 판독 시작");
+            _startedAtUtc = DateTime.UtcNow;
+            _lastOcrProbeUtc = DateTime.MinValue;
+            _timer.Change(TimeSpan.Zero, TimeSpan.FromMilliseconds(500));
+            RaiseStatusOnce("START", "게임 창 제목에서 접속 캐릭터 확인 중");
         }
 
         public void Stop()
@@ -131,25 +140,79 @@ namespace KinojoMeterPrototype
             if (!_running || _disposed || Interlocked.Exchange(ref _probing, 1) != 0) return;
             ProbeAsync().ContinueWith(delegate(Task task)
             {
-                if (task.Exception != null) RaiseStatus("게임 HUD 판독 재시도 중");
+                if (task.Exception != null) RaiseStatusOnce("PROBE_RETRY", "게임 HUD 판독 재시도 중");
                 Interlocked.Exchange(ref _probing, 0);
             }, TaskScheduler.Default);
         }
 
         private async Task ProbeAsync()
         {
+            var observedAtUtc = DateTime.UtcNow;
+            var gameWindow = FindAionWindow();
+            if (gameWindow == IntPtr.Zero)
+            {
+                ResetPendingTitleCharacter();
+                RaiseStatusOnce("WINDOW_WAIT", "AION2 실행 창을 찾는 중 · 자동 검색 계속");
+                return;
+            }
+
+            var windowTitle = ReadWindowTitle(gameWindow);
+            var titleCharacter = MatchWindowTitleCharacter(windowTitle);
+            if (!String.IsNullOrWhiteSpace(titleCharacter))
+            {
+                if (String.Equals(_pendingTitleCharacter, titleCharacter, StringComparison.OrdinalIgnoreCase))
+                    _pendingTitleCharacterCount++;
+                else
+                {
+                    _pendingTitleCharacter = titleCharacter;
+                    _pendingTitleCharacterCount = 1;
+                }
+
+                if (_pendingTitleCharacterCount >= 2)
+                {
+                    RaiseStatusOnce("TITLE_MATCH:" + titleCharacter, titleCharacter + " 확인 · 자동 연결 중");
+                    if (!String.Equals(_lastEmittedTitleCharacter, titleCharacter, StringComparison.OrdinalIgnoreCase) ||
+                        observedAtUtc - _lastTitleEmissionUtc >= TimeSpan.FromSeconds(5))
+                    {
+                        _lastEmittedTitleCharacter = titleCharacter;
+                        _lastTitleEmissionUtc = observedAtUtc;
+                        ObservationReady?.Invoke(this, new GameHudObservation
+                        {
+                            ObservedAtUtc = observedAtUtc,
+                            CharacterName = titleCharacter,
+                            Evidence = "AION2_WINDOW_TITLE"
+                        });
+                    }
+                }
+                else
+                {
+                    RaiseStatusOnce("TITLE_CONFIRM:" + titleCharacter, "게임 창에서 " + titleCharacter + " 재확인 중");
+                }
+            }
+            else
+            {
+                ResetPendingTitleCharacter();
+                if (observedAtUtc - _startedAtUtc >= TimeSpan.FromSeconds(5))
+                    RaiseStatusOnce("TITLE_NO_MATCH", "AION2는 확인됨 · 계정 캐릭터명 일치 대기 중");
+                else
+                    RaiseStatusOnce("TITLE_SCAN", "AION2 게임 창 확인 · 접속 캐릭터명 읽는 중");
+            }
+
             if (_ocr == null)
             {
                 if (!_ocrUnavailableReported)
                 {
                     _ocrUnavailableReported = true;
-                    RaiseStatus("Windows 한국어 OCR을 사용할 수 없어 패킷 자동 판독을 유지합니다");
+                    RaiseStatusOnce("OCR_UNAVAILABLE", "창 제목 판독 유지 · Windows OCR은 사용할 수 없음");
                 }
                 return;
             }
 
-            var gameWindow = FindForegroundAionWindow();
-            if (gameWindow == IntPtr.Zero) return;
+            var foreground = GetForegroundWindow();
+            if (foreground == IntPtr.Zero || !IsAionWindow(foreground) || IsIconic(foreground)) return;
+            if (_lastOcrProbeUtc != DateTime.MinValue && observedAtUtc - _lastOcrProbeUtc < TimeSpan.FromMilliseconds(1500)) return;
+            _lastOcrProbeUtc = observedAtUtc;
+            gameWindow = foreground;
 
             NativeRect rect;
             if (!GetClientRect(gameWindow, out rect)) return;
@@ -397,6 +460,42 @@ namespace KinojoMeterPrototype
             return IntPtr.Zero;
         }
 
+        private static IntPtr FindAionWindow()
+        {
+            var foreground = FindForegroundAionWindow();
+            if (foreground != IntPtr.Zero) return foreground;
+
+            var found = IntPtr.Zero;
+            EnumWindows(delegate(IntPtr handle, IntPtr state)
+            {
+                if (!IsWindowVisible(handle) || !IsAionWindow(handle)) return true;
+                found = handle;
+                return false;
+            }, IntPtr.Zero);
+            return found;
+        }
+
+        private string MatchWindowTitleCharacter(string windowTitle)
+        {
+            List<string> characters;
+            lock (_gate) characters = _characterNames.ToList();
+            return AionWindowCharacterDetector.MatchOwnedCharacter(windowTitle, characters);
+        }
+
+        private static string ReadWindowTitle(IntPtr handle)
+        {
+            if (handle == IntPtr.Zero) return "";
+            var title = new System.Text.StringBuilder(512);
+            GetWindowText(handle, title, title.Capacity);
+            return title.ToString().Trim();
+        }
+
+        private void ResetPendingTitleCharacter()
+        {
+            _pendingTitleCharacter = "";
+            _pendingTitleCharacterCount = 0;
+        }
+
         private static bool IsAionWindow(IntPtr handle)
         {
             try
@@ -416,7 +515,12 @@ namespace KinojoMeterPrototype
             catch { return false; }
         }
 
-        private void RaiseStatus(string text) { StatusChanged?.Invoke(this, text); }
+        private void RaiseStatusOnce(string key, string text)
+        {
+            if (String.Equals(_lastStatusKey, key ?? "", StringComparison.Ordinal)) return;
+            _lastStatusKey = key ?? "";
+            StatusChanged?.Invoke(this, text);
+        }
 
         public void Dispose()
         {

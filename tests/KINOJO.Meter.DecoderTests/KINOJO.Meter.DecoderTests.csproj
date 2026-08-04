@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="..\..\src\Models.cs" Link="Models.cs" />
+    <Compile Include="..\..\src\AionWindowCharacterDetector.cs" Link="AionWindowCharacterDetector.cs" />
     <Compile Include="..\..\src\GameCapture.cs" Link="GameCapture.cs" />
     <Compile Include="..\..\src\AionCombatDecoder.cs" Link="AionCombatDecoder.cs" />
     <Compile Include="..\..\src\DecoderSelfTest.cs" Link="DecoderSelfTest.cs" />
