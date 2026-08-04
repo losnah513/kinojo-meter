@@ -23,6 +23,7 @@ namespace KinojoMeterPrototype
         public event EventHandler ToggleFixtureCaptureRequested;
         public event Action<string> DiagnosticMarkerRequested;
         public event EventHandler CheckUpdateRequested;
+        public event EventHandler OpenConsentRequested;
         public event EventHandler LogoutRequested;
         public event EventHandler ExitRequested;
 
@@ -41,6 +42,7 @@ namespace KinojoMeterPrototype
             _hideOverlay = new ToolStripMenuItem("오버레이 숨기기", null, delegate { HideOverlayRequested?.Invoke(this, EventArgs.Empty); });
             _menu.Items.Add(_showOverlay);
             _menu.Items.Add(_hideOverlay);
+            _menu.Items.Add("웹 미터기 · 필수 동의/기록 보기", null, delegate { OpenConsentRequested?.Invoke(this, EventArgs.Empty); });
 
             if (administrator)
             {

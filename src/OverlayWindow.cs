@@ -696,7 +696,7 @@ namespace KinojoMeterPrototype
                 int oldIndex;
                 if (element != null && damageRanking && _lastRowIndexes.TryGetValue(key, out oldIndex) && oldIndex != index)
                 {
-                    var translate = new TranslateTransform(0, (oldIndex - index) * 34);
+                    var translate = new TranslateTransform(0, (oldIndex - index) * 42);
                     element.RenderTransform = translate;
                     Panel.SetZIndex(element, 10);
                     var animation = new DoubleAnimation
@@ -713,7 +713,7 @@ namespace KinojoMeterPrototype
             _lastRowIndexes.Clear();
             foreach (var pair in newIndexes) _lastRowIndexes[pair.Key] = pair.Value;
             var adminHeight = _isMeterAdmin ? 34 : 0;
-            Height = Math.Max(235 + adminHeight, Math.Min(655, 180 + adminHeight + rows.Count * 34));
+            Height = Math.Max(235 + adminHeight, Math.Min(700, 180 + adminHeight + rows.Count * 42));
         }
 
         private static string RowKey(CombatRow row)
@@ -727,13 +727,13 @@ namespace KinojoMeterPrototype
         {
             var grid = new Grid
             {
-                Height = 32,
+                Height = 40,
                 Margin = new Thickness(0, 1, 0, 1),
                 Background = new SolidColorBrush(row.IsSelf ? Color.FromArgb(92, 14, 116, 144) : Color.FromArgb(78, 30, 41, 59))
             };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
             grid.ColumnDefinitions.Add(new ColumnDefinition());
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) });
 
             var classColor = ResolveClassColor(row);
             var share = Math.Max(0.0, Math.Min(100.0, row.Share));
@@ -798,12 +798,13 @@ namespace KinojoMeterPrototype
             var identity = new TextBlock
             {
                 Text = row.IsEmpty ? "빈 자리" :
-                    row.Name + (String.IsNullOrWhiteSpace(row.ServerName) ? "" : "[" + row.ServerName + "]") +
-                    (String.IsNullOrWhiteSpace(row.ClassName) ? "" : " · " + row.ClassName) +
-                    (row.CombatPower > 0 ? " · 전투력 " + FormatNumber(row.CombatPower) : ""),
+                    row.Name + (String.IsNullOrWhiteSpace(row.ServerName) ? "" : "[" + row.ServerName + "]") + "\n" +
+                    (String.IsNullOrWhiteSpace(row.ClassName) ? "클래스 확인 중" : row.ClassName) +
+                    (row.CombatPower > 0 ? " · 전투력 " + FormatNumber(row.CombatPower) : " · 전투력 확인 중"),
                 Foreground = row.IsEmpty ? new SolidColorBrush(Color.FromRgb(100, 116, 139)) : Brushes.White,
                 FontWeight = row.IsSelf ? FontWeights.Bold : FontWeights.SemiBold,
                 FontSize = 9,
+                LineHeight = 13,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
@@ -811,20 +812,36 @@ namespace KinojoMeterPrototype
             grid.Children.Add(identity);
             if (!row.IsEmpty)
             {
-                var number = new TextBlock
+                var metrics = new Grid { Margin = new Thickness(2, 2, 5, 2) };
+                metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(66) });
+                metrics.ColumnDefinitions.Add(new ColumnDefinition());
+                var dps = new TextBlock
                 {
-                    Text = FormatNumber(row.Dps) + " DPS · " + FormatNumber(row.TotalDamage) + "\n" +
-                        row.Share.ToString("0.0") + (RuntimeInfo.DecoderValidated ? "%" : "% 판독"),
-                    Foreground = Brushes.White,
-                    FontWeight = FontWeights.Bold,
+                    Text = "DPS\n" + FormatNumber(row.Dps),
+                    Foreground = new SolidColorBrush(Color.FromRgb(226, 232, 240)),
+                    FontWeight = FontWeights.SemiBold,
                     FontSize = 8,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextAlignment = TextAlignment.Center,
+                    LineHeight = 12
+                };
+                metrics.Children.Add(dps);
+                var total = new TextBlock
+                {
+                    Text = FormatNumber(row.TotalDamage) + "\n" + row.Share.ToString("0.0") + "%",
+                    Foreground = Brushes.White,
+                    FontWeight = FontWeights.ExtraBold,
+                    FontSize = 11,
                     HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Center,
                     TextAlignment = TextAlignment.Right,
-                    Margin = new Thickness(0, 0, 6, 0)
+                    LineHeight = 14
                 };
-                Grid.SetColumn(number, 2);
-                grid.Children.Add(number);
+                Grid.SetColumn(total, 1);
+                metrics.Children.Add(total);
+                Grid.SetColumn(metrics, 2);
+                grid.Children.Add(metrics);
             }
             return grid;
         }
@@ -834,15 +851,34 @@ namespace KinojoMeterPrototype
             Color color;
             if (row != null && _observedClassColors.TryGetValue(row.Name ?? "", out color)) return color;
             if (row != null && row.ClassRaw > 0 && _classRawColors.TryGetValue(row.ClassRaw, out color)) return color;
+            var key = NormalizeClassAssetKey(row);
+            var classColors = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "gladiator", Color.FromRgb(194, 65, 58) }, { "templar", Color.FromRgb(78, 117, 184) },
+                { "assassin", Color.FromRgb(147, 51, 234) }, { "ranger", Color.FromRgb(101, 163, 13) },
+                { "sorcerer", Color.FromRgb(124, 58, 237) }, { "elementalist", Color.FromRgb(14, 165, 233) },
+                { "cleric", Color.FromRgb(20, 184, 166) }, { "chanter", Color.FromRgb(212, 167, 44) },
+                { "fighter", Color.FromRgb(226, 74, 59) }
+            };
+            if (classColors.TryGetValue(key, out color)) return color;
             return Color.FromRgb(71, 85, 105);
         }
 
         private static string ResolveClassIconUri(CombatRow row)
         {
             if (row == null || row.IsEmpty) return "";
+            var key = NormalizeClassAssetKey(row);
+            var supported = new HashSet<string>(new[] { "assassin", "chanter", "cleric", "elementalist", "fighter", "gladiator", "ranger", "sorcerer", "templar" }, StringComparer.OrdinalIgnoreCase);
+            return supported.Contains(key) ? "https://kinojo.info/assets/images/classes/class_icon_" + key + ".png" : "";
+        }
+
+        private static string NormalizeClassAssetKey(CombatRow row)
+        {
+            if (row == null) return "";
             var key = (row.ClassKey ?? "").Trim().ToLowerInvariant();
             var name = (row.ClassName ?? "").Trim();
-            if (String.IsNullOrWhiteSpace(key))
+            if (key == "brawler") key = "fighter";
+            if (String.IsNullOrWhiteSpace(key) || key == "unknown")
             {
                 if (name.Contains("검성")) key = "gladiator";
                 else if (name.Contains("수호")) key = "templar";
@@ -854,8 +890,7 @@ namespace KinojoMeterPrototype
                 else if (name.Contains("호법")) key = "chanter";
                 else if (name.Contains("격수") || name.Contains("권성")) key = "fighter";
             }
-            var supported = new HashSet<string>(new[] { "assassin", "chanter", "cleric", "elementalist", "fighter", "gladiator", "ranger", "sorcerer", "templar" }, StringComparer.OrdinalIgnoreCase);
-            return supported.Contains(key) ? "https://kinojo.info/assets/images/classes/class_icon_" + key + ".png" : "";
+            return key;
         }
 
         private static bool TryParseColor(string value, out Color color)

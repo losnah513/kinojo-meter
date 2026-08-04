@@ -23,7 +23,24 @@ namespace KinojoMeterPrototype
                 Require(damage[0].ActorName == "청소기" && damage[0].TargetName == "훈련용허수아비", "entity names");
                 Require(!events.Any(value => value.Kind == CombatEventKind.BossHp), "single target is not promoted to boss");
                 decoder.TryDecode(new GameFrameEventArgs(namedSingle, now.AddSeconds(1), "flow", "connection", "B_TO_A"), events);
-                Require(events.Count(value => value.Kind == CombatEventKind.Damage) == 1, "tail duplicate suppression");
+                Require(events.Count(value => value.Kind == CombatEventKind.Damage) == 2, "equal damage values remain valid hits");
+
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                var reassembly = new TcpReassemblyService();
+                reassembly.StreamData += delegate(object sender, GameFrameEventArgs frame) { decoder.TryDecode(frame, events); };
+                var retransmission = new CapturedTcpPayloadEventArgs(namedSingle, now, "B", "A", 1000);
+                reassembly.Push(retransmission);
+                reassembly.Push(new CapturedTcpPayloadEventArgs(namedSingle, now.AddMilliseconds(10), "B", "A", 1000));
+                Require(events.Count(value => value.Kind == CombatEventKind.Damage) == 1, "tcp retransmission exact-once");
+
+                var recoveredBytes = new List<byte>();
+                var gapRecovery = new TcpReassemblyService();
+                gapRecovery.StreamData += delegate(object sender, GameFrameEventArgs frame) { recoveredBytes.AddRange(frame.Frame); };
+                gapRecovery.Push(new CapturedTcpPayloadEventArgs(new byte[] { 1, 2, 3 }, now, "B2", "A2", 100));
+                gapRecovery.Push(new CapturedTcpPayloadEventArgs(new byte[] { 7, 8, 9 }, now.AddMilliseconds(10), "B2", "A2", 110));
+                gapRecovery.Push(new CapturedTcpPayloadEventArgs(new byte[] { 10, 11 }, now.AddMilliseconds(600), "B2", "A2", 113));
+                Require(recoveredBytes.SequenceEqual(new byte[] { 1, 2, 3, 7, 8, 9, 10, 11 }), "tcp gap recovery");
 
                 decoder = new AionCombatDecoder();
                 events.Clear();
@@ -42,6 +59,15 @@ namespace KinojoMeterPrototype
                 Require(damage.All(value => value.SkillId == 19712), "multi hit skill");
                 Require(damage.Select(value => value.HitSequence).Distinct().Count() == 2, "multi hit sequence");
 
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                var variableRecord = VariableDamageRecord(multi.Take(35).ToArray(), 0x36, 0x04, 8);
+                decoder.TryDecode(new GameFrameEventArgs(variableRecord, now, "flow", "variable-record", "B_TO_A"), events);
+                Require(events.Count(value => value.Kind == CombatEventKind.Damage && value.Damage == 133825) == 1, "variable damage record length and flags");
+                var statusRecord = VariableDamageRecord(multi.Take(35).ToArray(), 0x00, 0x01, 0);
+                decoder.TryDecode(new GameFrameEventArgs(statusRecord, now.AddMilliseconds(1), "flow", "variable-record", "B_TO_A"), events);
+                Require(events.Count(value => value.Kind == CombatEventKind.Damage) == 1, "non-damage status record excluded");
+
                 byte[] decoded;
                 Require(AionCombatDecoder.TryDecompressLz4(new byte[] { 0x50, 1, 2, 3, 4, 5 }, 0, 6, 5, out decoded), "lz4 literal");
                 Require(decoded.SequenceEqual(new byte[] { 1, 2, 3, 4, 5 }), "lz4 literal result");
@@ -57,6 +83,9 @@ namespace KinojoMeterPrototype
                 decoder.TryDecode(new GameFrameEventArgs(alternateIdentities, now, "flow", "identity-variants", "B_TO_A"), events);
                 Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 11640 && value.ActorName == "청소기"), "0x3633 self identity");
                 Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 14250 && value.ActorName == "쉰빵"), "0x3645 party identity");
+                events.Clear();
+                decoder.TryDecode(new GameFrameEventArgs(Identity33(22001, "V3"), now.AddMilliseconds(1), "flow", "identity-variants", "B_TO_A"), events);
+                Require(!events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorName == "V3"), "protocol fragment is not an identity");
 
                 decoder = new AionCombatDecoder();
                 events.Clear();
@@ -156,6 +185,33 @@ namespace KinojoMeterPrototype
                 result.AddRange(copy);
             }
             return result.ToArray();
+        }
+
+        private static byte[] VariableDamageRecord(byte[] record, byte firstFlag, byte secondFlag, int trailingBytes)
+        {
+            if (record == null || record.Length < 10) throw new InvalidOperationException("Damage record fixture is incomplete.");
+            var result = record.Concat(Enumerable.Repeat((byte)0, trailingBytes)).ToArray();
+            result[0] = checked((byte)(result.Length + 3));
+            var cursor = 3;
+            long ignored;
+            TryReadFixtureVarUInt(result, ref cursor, out ignored);
+            result[cursor] = firstFlag;
+            result[cursor + 1] = secondFlag;
+            return result;
+        }
+
+        private static bool TryReadFixtureVarUInt(byte[] data, ref int cursor, out long value)
+        {
+            value = 0;
+            var shift = 0;
+            while (cursor < data.Length && shift <= 63)
+            {
+                var current = data[cursor++];
+                value |= ((long)(current & 0x7F)) << shift;
+                if ((current & 0x80) == 0) return true;
+                shift += 7;
+            }
+            return false;
         }
 
         private static IEnumerable<byte> VarUInt(long value)

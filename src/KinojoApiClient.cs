@@ -221,6 +221,7 @@ namespace KinojoMeterPrototype
                     { "platformCharacterId", row.PlatformCharacterId ?? "" },
                     { "serverId", row.ServerId ?? "" },
                     { "serverName", row.ServerName ?? "" },
+                    { "serverRaw", row.ServerRaw },
                     { "characterName", row.Name ?? "" },
                     { "classKey", row.ClassKey ?? "" },
                     { "className", row.ClassName ?? "" },
@@ -385,7 +386,9 @@ namespace KinojoMeterPrototype
                 var message = Text(result, "message", Text(result, "error", "서버 HTTP " + (int)response.StatusCode));
                 if ((int)response.StatusCode == 401)
                     message = "Edge Function 외부 호출 인증이 거부되었습니다. meter-ingest의 verify_jwt=false 설정을 확인해 주세요.";
-                throw new MeterApiException(String.IsNullOrWhiteSpace(edgeCode) ? "EDGE_HTTP_" + (int)response.StatusCode : edgeCode, message);
+                var responseCode = Text(result, "code", "");
+                throw new MeterApiException(!String.IsNullOrWhiteSpace(responseCode) ? responseCode :
+                    (String.IsNullOrWhiteSpace(edgeCode) ? "EDGE_HTTP_" + (int)response.StatusCode : edgeCode), message);
             }
             return result;
         }

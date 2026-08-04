@@ -320,6 +320,7 @@ namespace KinojoMeterPrototype
             public DateTime LastSeenUtc;
             public string ConnectionKey;
             public string Direction;
+            public DateTime GapStartedUtc;
         }
         private readonly object _gate = new object();
         private readonly Dictionary<string, FlowState> _flows = new Dictionary<string, FlowState>(StringComparer.OrdinalIgnoreCase);
@@ -361,8 +362,10 @@ namespace KinojoMeterPrototype
                 else if (!state.Pending.ContainsKey(segment.SequenceNumber))
                 {
                     state.Pending[segment.SequenceNumber] = segment.Payload;
+                    if (state.GapStartedUtc == default(DateTime)) state.GapStartedUtc = segment.TimestampUtc;
                     if (state.Pending.Count > 256) state.Pending.Remove(state.Pending.Keys.First());
                 }
+                RecoverGap(state, segment.TimestampUtc, segment.FlowKey);
                 Cleanup(segment.TimestampUtc);
             }
         }
@@ -374,6 +377,18 @@ namespace KinojoMeterPrototype
                 var payload = state.Pending[state.Expected]; state.Pending.Remove(state.Expected);
                 state.Expected = unchecked(state.Expected + (uint)payload.Length); Emit(payload, timestampUtc, flowKey, state);
             }
+            if (state.Pending.Count == 0) state.GapStartedUtc = default(DateTime);
+        }
+        private void RecoverGap(FlowState state, DateTime timestampUtc, string flowKey)
+        {
+            if (state == null || state.Pending.Count == 0 || state.GapStartedUtc == default(DateTime)) return;
+            if (state.Pending.Count < 16 && timestampUtc - state.GapStartedUtc < TimeSpan.FromMilliseconds(500)) return;
+            var next = state.Pending.First();
+            state.Pending.Remove(next.Key);
+            state.Expected = unchecked(next.Key + (uint)next.Value.Length);
+            Emit(next.Value, timestampUtc, flowKey, state);
+            FlushPending(state, timestampUtc, flowKey);
+            if (state.Pending.Count > 0) state.GapStartedUtc = timestampUtc;
         }
         private void Emit(byte[] bytes, DateTime timestampUtc, string flowKey, FlowState state)
         {
@@ -428,7 +443,7 @@ namespace KinojoMeterPrototype
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
         public string DecoderType { get { return "BINARY_PARTIAL_VALIDATED"; } }
-        public string DecoderVersion { get { return "aion2-runtime-hp-order-probe-2"; } }
+        public string DecoderVersion { get { return "aion2-variable-damage-records-3"; } }
         public bool IsValidated { get { return false; } }
         public event EventHandler<string> AionConnectionIdentified;
         public event EventHandler<string> ParserEnvelopeCandidateObserved;

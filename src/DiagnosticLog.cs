@@ -189,6 +189,91 @@ namespace KinojoMeterPrototype
             }
         }
 
+        public static string SaveSubmissionOutbox(Dictionary<string, object> payload, CharacterProfile selected, bool canonical)
+        {
+            if (payload == null) return "";
+            try
+            {
+                object rawSourceEventId;
+                payload.TryGetValue("sourceEventId", out rawSourceEventId);
+                var sourceEventId = Convert.ToString(rawSourceEventId) ?? "";
+                var safeId = new string(sourceEventId.Where(character => Char.IsLetterOrDigit(character) || character == '_' || character == '-').ToArray());
+                if (String.IsNullOrWhiteSpace(safeId)) safeId = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+                var document = new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 },
+                    { "processingStatus", "PENDING" },
+                    { "submissionAction", canonical ? "submitEncounter" : "submitObservedEncounter" },
+                    { "selectedCharacterKey", selected == null ? "" : selected.CharacterKey ?? "" },
+                    { "selectedCharacterName", selected == null ? "" : selected.CharacterName ?? "" },
+                    { "attempts", 0 },
+                    { "lastErrorCode", "" },
+                    { "lastErrorMessage", "" },
+                    { "stagedAt", DateTime.UtcNow.ToString("o") },
+                    { "payload", payload }
+                };
+                var outboxDirectory = Path.Combine(DirectoryPath, "outbox");
+                var path = Path.Combine(outboxDirectory, "submission-" + safeId + ".json");
+                lock (Gate)
+                {
+                    Directory.CreateDirectory(outboxDirectory);
+                    if (!File.Exists(path)) File.WriteAllText(path, new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue }.Serialize(document), new UTF8Encoding(false));
+                }
+                return path;
+            }
+            catch (Exception ex)
+            {
+                Error("OUTBOX", "Submission outbox persistence failed", ex);
+                return "";
+            }
+        }
+
+        public static List<string> PendingSubmissionOutboxPaths()
+        {
+            try
+            {
+                var directory = Path.Combine(DirectoryPath, "outbox");
+                if (!Directory.Exists(directory)) return new List<string>();
+                return Directory.GetFiles(directory, "submission-*.json").OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch { return new List<string>(); }
+        }
+
+        public static Dictionary<string, object> ReadSubmissionOutbox(string path)
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+                lock (Gate) return new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue }.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+            }
+            catch (Exception ex) { Error("OUTBOX", "Submission outbox read failed", ex); return null; }
+        }
+
+        public static void UpdateSubmissionOutbox(string path, string status, string errorCode, string errorMessage)
+        {
+            try
+            {
+                lock (Gate)
+                {
+                    if (String.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+                    var serializer = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue };
+                    var document = serializer.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+                    if (document == null) return;
+                    object attempts;
+                    int parsedAttempts;
+                    document.TryGetValue("attempts", out attempts);
+                    Int32.TryParse(Convert.ToString(attempts), out parsedAttempts);
+                    document["attempts"] = parsedAttempts + 1;
+                    document["processingStatus"] = String.IsNullOrWhiteSpace(status) ? "PENDING" : status.Trim().ToUpperInvariant();
+                    document["lastAttemptAt"] = DateTime.UtcNow.ToString("o");
+                    document["lastErrorCode"] = errorCode ?? "";
+                    document["lastErrorMessage"] = errorMessage ?? "";
+                    File.WriteAllText(path, serializer.Serialize(document), new UTF8Encoding(false));
+                }
+            }
+            catch (Exception ex) { Error("OUTBOX", "Submission outbox status update failed", ex); }
+        }
+
         private static void Write(string level, string category, string message, Exception exception)
         {
             try

@@ -373,7 +373,7 @@ namespace KinojoMeterPrototype
                 var rows = _participants.Values.Select(Clone).OrderBy(r => r.PartyNumber).ThenBy(r => r.PartySlot).ToList();
                 if (_self != null && !rows.Any(r => r.IsSelf))
                 {
-                    rows.Insert(0, new CombatRow { ParticipantKey = _self.CharKey ?? _self.CharacterKey, PlatformCharacterId = _self.CharKey, PartyNumber = 1, PartySlot = 1, Name = _self.CharacterName, ServerId = _self.ServerId, ServerName = _self.ServerName, ClassKey = _self.ClassKey, ClassName = _self.ClassName, ClassRaw = 0, ProfileImageUrl = _self.ProfileImageUrl, CombatPower = _self.PveCombatPower, IsSelf = true });
+                    rows.Insert(0, new CombatRow { ParticipantKey = _self.CharKey ?? _self.CharacterKey, PlatformCharacterId = _self.CharKey, PartyNumber = 1, PartySlot = 1, Name = _self.CharacterName, ServerId = _self.ServerId, ServerName = _self.ServerName, ServerRaw = 0, ClassKey = _self.ClassKey, ClassName = _self.ClassName, ClassRaw = 0, ProfileImageUrl = _self.ProfileImageUrl, CombatPower = _self.PveCombatPower, IsSelf = true });
                 }
                 var occupied = new HashSet<string>(rows.Select(r => r.PartyNumber + ":" + r.PartySlot));
                 for (var i = 0; i < _groupSize; i++)
@@ -444,13 +444,14 @@ namespace KinojoMeterPrototype
             if (row == null)
             {
                 var slot = value.PartyNumber > 0 && value.PartySlot > 0 ? Tuple.Create(value.PartyNumber, value.PartySlot) : FindNextSlot();
-                row = new CombatRow { ParticipantKey = key, PlatformCharacterId = value.PlatformCharacterId, PartyNumber = slot.Item1, PartySlot = slot.Item2, Name = value.ActorName ?? "알 수 없음", ServerId = value.ActorServerId ?? "", ServerName = value.ActorServer ?? "", ClassKey = value.ActorClassKey ?? "", ClassName = value.ActorClass ?? "", ClassRaw = value.ActorClassRaw, ProfileImageUrl = value.ProfileImageUrl ?? "", CombatPower = value.CombatPower, ItemLevel = value.ItemLevel, IsSelf = IsSelf(value), IsEmpty = false };
+                row = new CombatRow { ParticipantKey = key, PlatformCharacterId = value.PlatformCharacterId, PartyNumber = slot.Item1, PartySlot = slot.Item2, Name = value.ActorName ?? "알 수 없음", ServerId = value.ActorServerId ?? "", ServerName = value.ActorServer ?? "", ServerRaw = value.ActorServerRaw, ClassKey = value.ActorClassKey ?? "", ClassName = value.ActorClass ?? "", ClassRaw = value.ActorClassRaw, ProfileImageUrl = value.ProfileImageUrl ?? "", CombatPower = value.CombatPower, ItemLevel = value.ItemLevel, IsSelf = IsSelf(value), IsEmpty = false };
                 _participants[key] = row;
             }
             if (!String.IsNullOrWhiteSpace(value.PlatformCharacterId)) row.PlatformCharacterId = value.PlatformCharacterId;
             if (!String.IsNullOrWhiteSpace(value.ActorName)) row.Name = value.ActorName;
             if (!String.IsNullOrWhiteSpace(value.ActorServerId)) row.ServerId = value.ActorServerId;
             if (!String.IsNullOrWhiteSpace(value.ActorServer)) row.ServerName = value.ActorServer;
+            if (value.ActorServerRaw > 0) row.ServerRaw = value.ActorServerRaw;
             if (!String.IsNullOrWhiteSpace(value.ActorClassKey)) row.ClassKey = value.ActorClassKey;
             if (!String.IsNullOrWhiteSpace(value.ActorClass)) row.ClassName = value.ActorClass;
             if (value.ActorClassRaw > 0) row.ClassRaw = value.ActorClassRaw;
@@ -564,7 +565,7 @@ namespace KinojoMeterPrototype
 
         private static CombatRow Clone(CombatRow row)
         {
-            return new CombatRow { ParticipantKey = row.ParticipantKey, PlatformCharacterId = row.PlatformCharacterId, PartyNumber = row.PartyNumber, PartySlot = row.PartySlot, Name = row.Name, ServerId = row.ServerId, ServerName = row.ServerName, ClassKey = row.ClassKey, ClassName = row.ClassName, ClassRaw = row.ClassRaw, ProfileImageUrl = row.ProfileImageUrl, CombatPower = row.CombatPower, ItemLevel = row.ItemLevel, TotalDamage = row.TotalDamage, Dps = row.Dps, Share = row.Share, IsSelf = row.IsSelf, IsEmpty = row.IsEmpty };
+            return new CombatRow { ParticipantKey = row.ParticipantKey, PlatformCharacterId = row.PlatformCharacterId, PartyNumber = row.PartyNumber, PartySlot = row.PartySlot, Name = row.Name, ServerId = row.ServerId, ServerName = row.ServerName, ServerRaw = row.ServerRaw, ClassKey = row.ClassKey, ClassName = row.ClassName, ClassRaw = row.ClassRaw, ProfileImageUrl = row.ProfileImageUrl, CombatPower = row.CombatPower, ItemLevel = row.ItemLevel, TotalDamage = row.TotalDamage, Dps = row.Dps, Share = row.Share, IsSelf = row.IsSelf, IsEmpty = row.IsEmpty };
         }
 
         private void RaiseSnapshotChanged() { SnapshotChanged?.Invoke(this, EventArgs.Empty); }

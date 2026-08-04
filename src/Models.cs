@@ -148,6 +148,7 @@ namespace KinojoMeterPrototype
         public string Name { get; set; }
         public string ServerId { get; set; }
         public string ServerName { get; set; }
+        public int ServerRaw { get; set; }
         public string ClassKey { get; set; }
         public string ClassName { get; set; }
         public int ClassRaw { get; set; }

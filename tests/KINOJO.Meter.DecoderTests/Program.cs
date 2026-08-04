@@ -105,12 +105,19 @@ namespace KinojoMeterPrototype
             var indexPath = Path.Combine(folder ?? "", "frames.tsv");
             if (!File.Exists(framesPath) || !File.Exists(indexPath)) return 2;
             var decoder = new AionBinaryFrameDecoder();
+            var reassembly = new TcpReassemblyService();
             var allEvents = new List<CombatEvent>();
             var rosterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             decoder.PartyRosterDetected += delegate(object sender, PartyRosterDetectedEventArgs value)
             {
                 foreach (var member in value.Members ?? new List<DetectedPartyMember>())
                     if (!String.IsNullOrWhiteSpace(member.CharacterName)) rosterNames.Add(member.CharacterName);
+            };
+            reassembly.StreamData += delegate(object sender, GameFrameEventArgs frame)
+            {
+                var events = new List<CombatEvent>();
+                decoder.TryDecode(frame, events);
+                allEvents.AddRange(events);
             };
             var payload = File.ReadAllBytes(framesPath);
             foreach (var line in File.ReadLines(indexPath).Skip(1))
@@ -125,14 +132,17 @@ namespace KinojoMeterPrototype
                     offset < 0 || offset + length > payload.LongLength) continue;
                 var bytes = new byte[length];
                 Buffer.BlockCopy(payload, (int)offset, bytes, 0, length);
-                var events = new List<CombatEvent>();
-                decoder.TryDecode(new GameFrameEventArgs(
+                uint sequence;
+                if (!UInt32.TryParse(cells[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out sequence)) continue;
+                var connection = cells[2];
+                var source = String.Equals(cells[3], "A_TO_B", StringComparison.OrdinalIgnoreCase) ? "A|" + connection : "B|" + connection;
+                var destination = String.Equals(cells[3], "A_TO_B", StringComparison.OrdinalIgnoreCase) ? "B|" + connection : "A|" + connection;
+                reassembly.Push(new CapturedTcpPayloadEventArgs(
                     bytes,
                     DateTime.Parse(cells[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-                    cells[2] + "|" + cells[3],
-                    cells[2],
-                    cells[3]), events);
-                allEvents.AddRange(events);
+                    source,
+                    destination,
+                    sequence));
             }
             var identities = allEvents.Where(value => value.Kind == CombatEventKind.EntityIdentity)
                 .Where(value => !String.IsNullOrWhiteSpace(value.ActorName))

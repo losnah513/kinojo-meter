@@ -5,7 +5,7 @@
 Desktop version source: `release/version.json`  
 Latest Meter SQL: `50015`
 Desktop API Contract: `50015`
-Edge API: `50015.1`
+Edge API: `50015.2`
 
 ## KINOJO Meter 개발 분기
 
@@ -13,6 +13,15 @@ Edge API: `50015.1`
 - 이 지점 이후 Meter 원인 분석·구현·픽스처/실게임 검증·릴리스 상태는 WEB·일반 Server 작업과 분리해 기록합니다.
 - 회차 마감은 GitHub / Server / Google Drive / 작업 로그를 각각 독립 상태로 보고합니다.
 - 운영 Server 제출은 실제 게임에서 피해 합계 완전성과 보스·참가자 canonical 판정이 확인될 때까지 차단합니다.
+
+## 0.2.34 가변 피해 레코드·정확 1회 처리·프로필 서버 단서·저장 재시도
+
+- 피해 레코드 첫 바이트를 고정 opcode로 보던 오류를 제거하고 레코드 길이로 해석합니다. 확인된 피해 효과 플래그 `06/16/26/36 + 00/04`를 읽되 피해량 값 자체는 제한 목록과 비교하지 않습니다. `739,455`, `133,825`, `127,368`은 회귀검사 기대값일 뿐 런타임 허용값이 아닙니다.
+- 이전 4KB 재검색을 보정하던 30초 필드 중복 제거를 폐기했습니다. 같은 수치·스킬의 정상 연타는 모두 누적하고, TCP sequence 재전송과 raw/LZ4 이중 표현만 정확히 한 번 처리합니다.
+- 최신 `fixture-20260804-143033` 재생에서 5명 명단을 유지하고, 1보스 피해는 기존 약 1,115만에서 약 1억 931만으로 복구했습니다. 2·3보스도 5명 공격자를 분리하지만 전체 피해 완전성은 아직 검증 중이므로 공개 통계 Gate는 닫아 둡니다.
+- `serverRaw`를 파티 행과 프로필 요청 끝까지 보존합니다. Server Edge는 관측된 `raw + 1024`를 PLAYNC 서버 조회 힌트로만 사용하고, 공식 동일 이름·동일 서버 확인 뒤에만 프로필을 저장합니다.
+- 전투 제출 payload를 로컬 outbox에 먼저 고정하고 성공 상태까지 기록합니다. 동의 미완료·네트워크 실패 시 다음 로그인에서 동일 `sourceEventId`로 자동 재시도하며, 트레이에서 웹 미터기 동의/기록 페이지를 바로 열 수 있습니다.
+- 피해 행은 클래스 색 지분 게이지, 가장 큰 누적 피해량, 바로 옆 지분율, 바 중앙 DPS, `이름[서버]`·클래스·전투력의 2줄 구조로 재배치했습니다. `BRAWLER`는 기존 `fighter` 클래스 아이콘 자산에 연결합니다.
 
 ## 0.2.33 실제 관측 저장·파티원 공식 프로필 보강·WEB 최근 수집 기록
 
@@ -367,8 +376,8 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 
 
 - Supabase Meter SQL `50009~50015`: 운영 반영 완료
-- `meter-ingest` Edge Function API `50015.1`: 운영 배포 완료
-- Desktop 최신 소스 `0.2.33`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- `meter-ingest` Edge Function API `50015.2`: 운영 배포 완료
+- Desktop 최신 소스 `0.2.34`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
 - AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.

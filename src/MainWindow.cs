@@ -77,6 +77,7 @@ namespace KinojoMeterPrototype
         private GameHudObservation _lastHudObservation;
         private CharacterDiscoveryWindow _discovery;
         private DispatcherTimer _characterDiscoveryTimeoutTimer;
+        private bool _outboxRetryBusy;
 
         public MainWindow()
         {
@@ -1082,6 +1083,7 @@ namespace KinojoMeterPrototype
                 _tray.SetStatus(added ? "진단 마커 기록 · " + marker : "진단 마커 기록 실패");
             };
             _tray.OpenDiagnosticsRequested += delegate { DiagnosticLog.OpenFolder(); };
+            _tray.OpenConsentRequested += delegate { OpenMeterConsentPage(); };
             _tray.CheckUpdateRequested += async delegate { await CheckForUpdatesFromTrayAsync(); };
             _tray.LogoutRequested += async delegate
             {
@@ -1108,6 +1110,7 @@ namespace KinojoMeterPrototype
             };
             _foregroundTimer.Start();
             UpdateOverlayVisibility();
+            Dispatcher.BeginInvoke(new Action(async delegate { await RetryPendingSubmissionsAsync(); }));
             Hide();
         }
 
@@ -1257,7 +1260,8 @@ namespace KinojoMeterPrototype
         private async Task EnrichParticipantAsync(CombatRow row)
         {
             if (_login == null || row == null || row.IsEmpty) return;
-            var key = !String.IsNullOrWhiteSpace(row.PlatformCharacterId) ? row.PlatformCharacterId : (row.ServerId + ":" + row.Name);
+            var key = !String.IsNullOrWhiteSpace(row.PlatformCharacterId) ? row.PlatformCharacterId :
+                (row.ServerId + ":" + row.ServerRaw + ":" + row.Name);
             if (String.IsNullOrWhiteSpace(key)) return;
             lock (_profileRequestGate)
             {
@@ -1320,6 +1324,7 @@ namespace KinojoMeterPrototype
                 return;
             }
 
+            var submissionOutboxPath = "";
             try
             {
                 _overlay?.SetEncounterProcessingState("UPLOADING", "보스 전투 종료 · 서버 결과 저장 중");
@@ -1351,6 +1356,7 @@ namespace KinojoMeterPrototype
                     { "platformCharacterId", row.PlatformCharacterId ?? "" },
                     { "serverId", row.ServerId ?? "" },
                     { "serverName", row.ServerName ?? "" },
+                    { "serverRaw", row.ServerRaw },
                     { "characterName", row.Name ?? "" },
                     { "classKey", row.ClassKey ?? "" },
                     { "className", row.ClassName ?? "" },
@@ -1406,17 +1412,20 @@ namespace KinojoMeterPrototype
                     { "catalogResolutionMode", canonical == null ? "CAPTURED_HINT" : "SERVER_CANONICAL" },
                     { "participants", participants }
                 };
+                submissionOutboxPath = DiagnosticLog.SaveSubmissionOutbox(payload, _selected, snapshot.UploadEligible);
                 if (snapshot.UploadEligible)
                 {
                     if (self == null || self.TotalDamage <= 0)
                         throw new MeterApiException("SELF_DAMAGE_REQUIRED", "공개 통계 제출에는 선택 캐릭터 피해량이 필요합니다.");
                     await _api.SubmitEncounterAsync(_login.SessionToken, payload);
+                    DiagnosticLog.UpdateSubmissionOutbox(submissionOutboxPath, "STORED", "", "");
                     _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "공개 전투 통계 저장 완료 · 다음 보스 전투 데이터 수집 대기");
                     DiagnosticLog.Info("UPLOAD", "Canonical encounter stored · boss=" + (snapshot.BossName ?? "") + " · damage=" + partyTotalDamage);
                 }
                 else
                 {
                     await _api.SubmitObservedEncounterAsync(_login.SessionToken, payload);
+                    DiagnosticLog.UpdateSubmissionOutbox(submissionOutboxPath, "STORED", "", "");
                     _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "검증 전 수집 기록 서버 저장 완료 · 다음 보스 전투 데이터 수집 대기");
                     DiagnosticLog.Info("UPLOAD", "Observed encounter stored · publicStats=false · boss=" + (snapshot.BossName ?? "") + " · damage=" + partyTotalDamage);
                 }
@@ -1424,8 +1433,64 @@ namespace KinojoMeterPrototype
             catch (Exception ex)
             {
                 DiagnosticLog.Error("UPLOAD", "Encounter submission failed", ex);
-                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "서버 저장 실패 · 로컬 보관 완료 · 다음 보스 대기");
+                var meterError = ex as MeterApiException;
+                DiagnosticLog.UpdateSubmissionOutbox(submissionOutboxPath, "PENDING", meterError == null ? ex.GetType().Name : meterError.Code, ex.Message);
+                if (meterError != null && String.Equals(meterError.Code, "METER_CONSENT_REQUIRED", StringComparison.OrdinalIgnoreCase))
+                {
+                    _overlay?.SetEncounterProcessingState("CONSENT_REQUIRED", "필수 동의 필요 · 트레이의 ‘웹 미터기’에서 동의 후 자동 재시도");
+                    _tray?.SetStatus("전투 로컬 보관 · 웹 미터기 필수 동의 필요");
+                }
+                else _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "서버 저장 실패 · 로컬 보관 및 자동 재시도 대기");
             }
+        }
+
+        private async Task RetryPendingSubmissionsAsync()
+        {
+            if (_outboxRetryBusy || _login == null || _selected == null || String.IsNullOrWhiteSpace(_login.SessionToken)) return;
+            _outboxRetryBusy = true;
+            try
+            {
+                foreach (var path in DiagnosticLog.PendingSubmissionOutboxPaths().Take(20))
+                {
+                    var document = DiagnosticLog.ReadSubmissionOutbox(path);
+                    if (document == null) continue;
+                    object rawStatus, rawCharacterKey, rawAction, rawPayload;
+                    document.TryGetValue("processingStatus", out rawStatus);
+                    if (String.Equals(Convert.ToString(rawStatus), "STORED", StringComparison.OrdinalIgnoreCase)) continue;
+                    document.TryGetValue("selectedCharacterKey", out rawCharacterKey);
+                    var characterKey = Convert.ToString(rawCharacterKey) ?? "";
+                    if (!String.IsNullOrWhiteSpace(characterKey) && !String.Equals(characterKey, _selected.CharacterKey, StringComparison.OrdinalIgnoreCase)) continue;
+                    document.TryGetValue("submissionAction", out rawAction);
+                    document.TryGetValue("payload", out rawPayload);
+                    var payload = rawPayload as Dictionary<string, object>;
+                    if (payload == null) continue;
+                    try
+                    {
+                        if (String.Equals(Convert.ToString(rawAction), "submitEncounter", StringComparison.OrdinalIgnoreCase))
+                            await _api.SubmitEncounterAsync(_login.SessionToken, payload);
+                        else await _api.SubmitObservedEncounterAsync(_login.SessionToken, payload);
+                        DiagnosticLog.UpdateSubmissionOutbox(path, "STORED", "", "");
+                        DiagnosticLog.Info("OUTBOX", "Pending encounter stored · " + path);
+                    }
+                    catch (Exception ex)
+                    {
+                        var meterError = ex as MeterApiException;
+                        DiagnosticLog.UpdateSubmissionOutbox(path, "PENDING", meterError == null ? ex.GetType().Name : meterError.Code, ex.Message);
+                        if (meterError != null && String.Equals(meterError.Code, "METER_CONSENT_REQUIRED", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _tray?.SetStatus("전투 로컬 보관 · 웹 미터기 필수 동의 필요");
+                            break;
+                        }
+                    }
+                }
+            }
+            finally { _outboxRetryBusy = false; }
+        }
+
+        private static void OpenMeterConsentPage()
+        {
+            try { Process.Start(new ProcessStartInfo("https://kinojo.info/meter/") { UseShellExecute = true }); }
+            catch (Exception ex) { DiagnosticLog.Error("CONSENT", "Meter consent page open failed", ex); }
         }
 
         private static string BuildSourceEventId(CombatSnapshot snapshot, CharacterProfile character)
