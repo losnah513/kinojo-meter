@@ -323,7 +323,7 @@ namespace KinojoMeterPrototype
             var characters = (_login == null ? null : _login.Characters) ?? new List<CharacterProfile>();
             if (characters.Count == 0) { ShowLogin(); return; }
             if (_discovery != null) _discovery.Close();
-            _discovery = new CharacterDiscoveryWindow(characters);
+            _discovery = new CharacterDiscoveryWindow(characters, _preferences);
             _discovery.CharacterSelected += delegate(object sender, CharacterProfile profile)
             {
                 Dispatcher.BeginInvoke(new Action(async delegate { await SelectDetectedCharacterAsync(profile, "직접 선택"); }));
@@ -1240,8 +1240,12 @@ namespace KinojoMeterPrototype
             try
             {
                 var profiles = await _api.GetPartyProfilesAsync(_login.SessionToken, new[] { row });
-                foreach (var profile in profiles) _overlay?.ApplyProfile(profile);
-                if (profiles.Count == 0 || profiles.Any(profile => String.Equals(profile.ProfileRefreshStatus, "QUEUED", StringComparison.OrdinalIgnoreCase)))
+                foreach (var profile in profiles)
+                {
+                    if (profile.Ok) _overlay?.ApplyProfile(profile);
+                    else DiagnosticLog.Info("PROFILE", "Party profile unresolved · name=" + (row.Name ?? "") + " · reason=" + (profile.ReasonCode ?? "") + " · " + (profile.Message ?? ""));
+                }
+                if (profiles.Count == 0 || profiles.Any(profile => !profile.Ok || String.Equals(profile.ProfileRefreshStatus, "QUEUED", StringComparison.OrdinalIgnoreCase)))
                 {
                     lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromMinutes(1);
                 }
@@ -1256,6 +1260,9 @@ namespace KinojoMeterPrototype
         private async Task UploadEncounterAsync(CombatSnapshot snapshot)
         {
             if (_login == null || _selected == null || snapshot == null || !snapshot.IsCleared) return;
+            var localResultPath = DiagnosticLog.SaveEncounterSnapshot(snapshot);
+            if (!String.IsNullOrWhiteSpace(localResultPath))
+                DiagnosticLog.Info("LOCAL_RESULT", "Encounter snapshot saved · " + localResultPath);
             if (!snapshot.UploadEligible)
             {
                 _overlay?.SetStatus("전투 종료 · 로컬 측정 완료");

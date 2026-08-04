@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Media.Animation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -35,6 +36,8 @@ namespace KinojoMeterPrototype
         private readonly CharacterProfile _selected;
         private readonly bool _isMeterAdmin;
         private readonly HashSet<string> _bossNames;
+        private readonly List<CatalogDungeon> _catalogDungeons;
+        private readonly List<CatalogBoss> _catalogBosses;
         private readonly Border _surface;
         private readonly StackPanel _rows;
         private readonly TextBlock _bossName;
@@ -51,6 +54,13 @@ namespace KinojoMeterPrototype
         private bool _dungeonEntered;
         private string _hudDungeonName = "";
         private string _hudDifficultyName = "";
+        private string _hudDungeonKey = "";
+        private readonly Dictionary<string, int> _bossOrderByTarget = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<CombatEvent>> _pendingDamageByTarget = new Dictionary<string, List<CombatEvent>>(StringComparer.OrdinalIgnoreCase);
+        private string _currentBossTarget = "";
+        private readonly Dictionary<string, int> _lastRowIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private List<string> _rankOrder = new List<string>();
+        private DateTime _lastRankUpdateUtc = DateTime.MinValue;
         private readonly Dictionary<string, Color> _observedClassColors =
             new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, Color> _classRawColors = new Dictionary<int, Color>();
@@ -77,6 +87,8 @@ namespace KinojoMeterPrototype
         {
             _selected = selected;
             _isMeterAdmin = isMeterAdmin;
+            _catalogDungeons = (catalog == null ? new List<CatalogDungeon>() : catalog.Dungeons ?? new List<CatalogDungeon>()).ToList();
+            _catalogBosses = (catalog == null ? new List<CatalogBoss>() : catalog.Bosses ?? new List<CatalogBoss>()).ToList();
             _bossNames = new HashSet<string>((catalog == null ? Enumerable.Empty<CatalogBoss>() : catalog.Bosses ?? new List<CatalogBoss>())
                 .Select(value => (value.BossName ?? "").Trim()).Where(value => value.Length > 0), StringComparer.OrdinalIgnoreCase);
             _preferences = preferences ?? MeterPreferences.Default();
@@ -311,7 +323,7 @@ namespace KinojoMeterPrototype
                             TimestampUtc = DateTime.UtcNow,
                             ActorId = "party-probe:" + member.ServerRaw.ToString(CultureInfo.InvariantCulture) + ":" + member.CharacterName,
                             ActorName = member.CharacterName,
-                            ActorServerId = member.ServerRaw.ToString(CultureInfo.InvariantCulture),
+                            ActorServerRaw = member.ServerRaw,
                             ActorClassRaw = member.ClassRaw,
                             PartyNumber = 1,
                             PartySlot = member.Slot
@@ -325,8 +337,10 @@ namespace KinojoMeterPrototype
                             _classRawColors[member.ClassRaw] = observed;
                     }
                     _partyObserved = roster.Count > 0;
-                    SetActivityStatus((_dungeonEntered ? "던전 입장 확인 · " : "") + "파티 구성원 " + roster.Count + "명 확인 중");
-                    Render(_engine.Snapshot());
+                    var rosterSnapshot = _engine.Snapshot();
+                    var observedCount = rosterSnapshot.Rows.Count(row => !row.IsEmpty);
+                    SetActivityStatus((_dungeonEntered ? "던전 입장 확인 · " : "") + "파티 구성원 " + observedCount + "명 실시간 확인 중");
+                    Render(rosterSnapshot);
                     PartyRosterObserved?.Invoke(this, value);
                 }));
             };
@@ -375,7 +389,18 @@ namespace KinojoMeterPrototype
             }
 
             if (!String.IsNullOrWhiteSpace(observation.DungeonName))
-                _hudDungeonName = observation.DungeonName.Trim();
+            {
+                var observedDungeon = observation.DungeonName.Trim();
+                if (!String.Equals(_hudDungeonName, observedDungeon, StringComparison.OrdinalIgnoreCase))
+                {
+                    _bossOrderByTarget.Clear();
+                    _pendingDamageByTarget.Clear();
+                    _currentBossTarget = "";
+                }
+                _hudDungeonName = observedDungeon;
+                var dungeon = _catalogDungeons.FirstOrDefault(value => String.Equals((value.DungeonName ?? "").Trim(), observedDungeon, StringComparison.OrdinalIgnoreCase));
+                _hudDungeonKey = dungeon == null ? "" : dungeon.DungeonKey ?? "";
+            }
             if (!String.IsNullOrWhiteSpace(observation.DifficultyName))
                 _hudDifficultyName = observation.DifficultyName.Trim();
 
@@ -388,16 +413,32 @@ namespace KinojoMeterPrototype
         {
             if (value != null && value.Kind == CombatEventKind.EntityIdentity && !String.IsNullOrWhiteSpace(value.ActorName))
                 CharacterIdentityObserved?.Invoke(this, value);
+            if (value != null && value.Kind == CombatEventKind.BossHp)
+            {
+                ApplyTestBossIdentity(value);
+                if (!String.IsNullOrWhiteSpace(_hudDungeonKey) && !value.IsBoss) return;
+                if (value.IsBoss)
+                {
+                    _dungeonEntered = true;
+                    ReplayPendingDamage(value, value.BossOrder);
+                }
+            }
             if (value != null && value.Kind == CombatEventKind.Damage)
             {
-                var catalogBoss = !String.IsNullOrWhiteSpace(value.TargetName) && _bossNames.Contains(value.TargetName.Trim());
-                if (!String.IsNullOrWhiteSpace(_hudDungeonName) && _bossNames.Count > 0 && !catalogBoss)
+                int bossOrder;
+                if (!String.IsNullOrWhiteSpace(value.TargetId) && _bossOrderByTarget.TryGetValue(RuntimeTargetKey(value), out bossOrder))
                 {
-                    SetActivityStatus("던전 상태 확인 · 파티 구성원 실시간 확인 중");
+                    ApplyKnownBossIdentity(value, bossOrder);
+                    _dungeonEntered = true;
+                }
+                else if (!String.IsNullOrWhiteSpace(_hudDungeonKey))
+                {
+                    BufferPendingDamage(value);
+                    SetActivityStatus("보스 전투 신호 확인 중 · 파티 구성원 실시간 확인 중");
                     return;
                 }
-                value.IsBoss = value.IsBoss || catalogBoss;
-                if (!String.IsNullOrWhiteSpace(_hudDungeonName)) _dungeonEntered = true;
+                if (String.IsNullOrWhiteSpace(value.ActorName) && !_engine.Snapshot().Rows.Any(row => !row.IsEmpty && String.Equals(row.ParticipantKey, value.ActorId, StringComparison.OrdinalIgnoreCase)))
+                    return;
             }
             _engine.SetRuntimeInfo(RuntimeInfo);
             _engine.Apply(value);
@@ -415,6 +456,90 @@ namespace KinojoMeterPrototype
                 _timer.Stop();
             }
             Render(snapshot);
+        }
+
+        private void BufferPendingDamage(CombatEvent value)
+        {
+            if (value == null || String.IsNullOrWhiteSpace(value.TargetId)) return;
+            var targetKey = RuntimeTargetKey(value);
+            List<CombatEvent> buffered;
+            if (!_pendingDamageByTarget.TryGetValue(targetKey, out buffered))
+            {
+                if (_pendingDamageByTarget.Count >= 8)
+                {
+                    var oldest = _pendingDamageByTarget.OrderBy(pair => pair.Value.Count == 0 ? DateTime.MinValue : pair.Value[0].TimestampUtc).First().Key;
+                    _pendingDamageByTarget.Remove(oldest);
+                }
+                buffered = new List<CombatEvent>();
+                _pendingDamageByTarget[targetKey] = buffered;
+            }
+            if (buffered.Count < 128) buffered.Add(value);
+        }
+
+        private void ReplayPendingDamage(CombatEvent bossEvent, int bossOrder)
+        {
+            if (bossEvent == null || String.IsNullOrWhiteSpace(bossEvent.TargetId)) return;
+            var targetKey = RuntimeTargetKey(bossEvent);
+            List<CombatEvent> buffered;
+            if (!_pendingDamageByTarget.TryGetValue(targetKey, out buffered)) return;
+            _pendingDamageByTarget.Remove(targetKey);
+            _engine.SetRuntimeInfo(RuntimeInfo);
+            foreach (var pending in buffered.OrderBy(value => value.TimestampUtc))
+            {
+                ApplyKnownBossIdentity(pending, bossOrder);
+                if (String.IsNullOrWhiteSpace(pending.ActorName) && !_engine.Snapshot().Rows.Any(row => !row.IsEmpty && String.Equals(row.ParticipantKey, pending.ActorId, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                _engine.Apply(pending);
+            }
+        }
+
+        private void ApplyTestBossIdentity(CombatEvent value)
+        {
+            if (value == null || String.IsNullOrWhiteSpace(value.TargetId) || String.IsNullOrWhiteSpace(_hudDungeonKey)) return;
+            var targetKey = RuntimeTargetKey(value);
+            int order;
+            var newlyMapped = false;
+            if (!_bossOrderByTarget.TryGetValue(targetKey, out order))
+            {
+                var snapshot = _engine.Snapshot();
+                if (!String.IsNullOrWhiteSpace(_currentBossTarget) &&
+                    !String.Equals(_currentBossTarget, value.TargetId, StringComparison.OrdinalIgnoreCase) &&
+                    snapshot.IsRunning && !snapshot.IsCleared)
+                    return;
+                order = _bossOrderByTarget.Count + 1;
+                var available = _catalogBosses.Count(boss => String.Equals(boss.DungeonKey, _hudDungeonKey, StringComparison.OrdinalIgnoreCase));
+                if (order < 1 || order > Math.Max(3, available)) return;
+                _bossOrderByTarget[targetKey] = order;
+                newlyMapped = true;
+                DiagnosticLog.Info("BOSS_ID_TEST", _hudDungeonName + " · order=" + order + " · runtimeTarget=" + value.TargetRuntimeId + " · scopedTarget=" + value.TargetId + " · firstHp=" + value.CurrentHp);
+            }
+            _currentBossTarget = value.TargetId;
+            ApplyKnownBossIdentity(value, order);
+            if (newlyMapped && _capture != null)
+                _capture.AddFixtureMarker("AUTO_BOSS_ORDER_" + order + "_TARGET_" + value.TargetId + "_HP_" + value.CurrentHp);
+        }
+
+        private static string RuntimeTargetKey(CombatEvent value)
+        {
+            return value != null && value.TargetRuntimeId > 0 ? "runtime:" + value.TargetRuntimeId : (value == null ? "" : value.TargetId ?? "");
+        }
+
+        private void ApplyKnownBossIdentity(CombatEvent value, int order)
+        {
+            var boss = _catalogBosses
+                .Where(candidate => String.Equals(candidate.DungeonKey, _hudDungeonKey, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(candidate => candidate.BossOrder)
+                .FirstOrDefault(candidate => candidate.BossOrder == order);
+            if (boss == null)
+                boss = _catalogBosses
+                    .Where(candidate => String.Equals(candidate.DungeonKey, _hudDungeonKey, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(candidate => candidate.BossOrder)
+                    .Skip(Math.Max(0, order - 1))
+                    .FirstOrDefault();
+            value.TargetName = boss == null || String.IsNullOrWhiteSpace(boss.BossName) ? order + "보스" : boss.BossName;
+            value.BossOrder = order;
+            value.BossIdentityMode = "TEST_ORDER_INFERRED";
+            value.IsBoss = true;
         }
 
         private void Tick(object sender, EventArgs args)
@@ -447,16 +572,63 @@ namespace KinojoMeterPrototype
             else if (_dungeonEntered) SetActivityStatus("던전 입장 확인 · 파티 구성원 실시간 확인 중");
             else if (_partyObserved) SetActivityStatus("파티 구성원 확인 중");
             _spinner.Visibility = snapshot.IsRunning || snapshot.IsCleared ? Visibility.Collapsed : Visibility.Visible;
-            RenderRows(snapshot.Rows);
+            RenderRows(snapshot.Rows, snapshot.IsRunning || snapshot.Rows.Any(row => !row.IsEmpty && row.TotalDamage > 0));
         }
 
-        private void RenderRows(IEnumerable<CombatRow> source)
+        private void RenderRows(IEnumerable<CombatRow> source, bool damageRanking)
         {
+            var incoming = (source ?? Enumerable.Empty<CombatRow>()).ToList();
+            var desired = damageRanking
+                ? incoming.OrderBy(row => row.IsEmpty).ThenByDescending(row => row.TotalDamage).ThenByDescending(row => row.Dps).ThenBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList()
+                : incoming.OrderBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList();
+            var desiredKeys = desired.Select(RowKey).ToList();
+            var membershipChanged = desiredKeys.Count != _rankOrder.Count || desiredKeys.Any(key => !_rankOrder.Contains(key, StringComparer.OrdinalIgnoreCase));
+            if (!damageRanking || membershipChanged || _rankOrder.Count == 0 || DateTime.UtcNow - _lastRankUpdateUtc >= TimeSpan.FromMilliseconds(350))
+            {
+                _rankOrder = desiredKeys;
+                _lastRankUpdateUtc = DateTime.UtcNow;
+            }
+            var orderIndex = _rankOrder.Select((key, index) => new { key, index })
+                .ToDictionary(value => value.key, value => value.index, StringComparer.OrdinalIgnoreCase);
+            var rows = incoming.OrderBy(row => orderIndex.ContainsKey(RowKey(row)) ? orderIndex[RowKey(row)] : Int32.MaxValue)
+                .ThenBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList();
+
             _rows.Children.Clear();
-            var rows = (source ?? Enumerable.Empty<CombatRow>()).OrderBy(row => row.PartyNumber).ThenBy(row => row.PartySlot).ToList();
-            foreach (var row in rows) _rows.Children.Add(BuildRow(row));
+            var newIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < rows.Count; index++)
+            {
+                var row = rows[index];
+                var key = RowKey(row);
+                newIndexes[key] = index;
+                var element = BuildRow(row) as FrameworkElement;
+                int oldIndex;
+                if (element != null && damageRanking && _lastRowIndexes.TryGetValue(key, out oldIndex) && oldIndex != index)
+                {
+                    var translate = new TranslateTransform(0, (oldIndex - index) * 34);
+                    element.RenderTransform = translate;
+                    Panel.SetZIndex(element, 10);
+                    var animation = new DoubleAnimation
+                    {
+                        From = translate.Y,
+                        To = 0,
+                        Duration = TimeSpan.FromMilliseconds(260),
+                        EasingFunction = new BackEase { Amplitude = 0.22, EasingMode = EasingMode.EaseOut }
+                    };
+                    translate.BeginAnimation(TranslateTransform.YProperty, animation, HandoffBehavior.SnapshotAndReplace);
+                }
+                _rows.Children.Add(element ?? BuildRow(row));
+            }
+            _lastRowIndexes.Clear();
+            foreach (var pair in newIndexes) _lastRowIndexes[pair.Key] = pair.Value;
             var adminHeight = _isMeterAdmin ? 34 : 0;
             Height = Math.Max(235 + adminHeight, Math.Min(655, 180 + adminHeight + rows.Count * 34));
+        }
+
+        private static string RowKey(CombatRow row)
+        {
+            if (row == null) return "row:null";
+            if (!String.IsNullOrWhiteSpace(row.ParticipantKey)) return row.ParticipantKey;
+            return (row.IsEmpty ? "empty:" : "name:") + row.PartyNumber + ":" + row.PartySlot + ":" + (row.Name ?? "");
         }
 
         private UIElement BuildRow(CombatRow row)

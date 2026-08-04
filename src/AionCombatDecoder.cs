@@ -11,14 +11,26 @@ namespace KinojoMeterPrototype
     {
         private sealed class ConnectionState
         {
+            public string ScopeId;
             public readonly Dictionary<long, string> EntityNames = new Dictionary<long, string>();
-            public readonly Dictionary<string, byte[]> TailByDirection = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, byte[]> RawTailByDirection = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, byte[]> EnvelopeStreamByDirection = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, DateTime> RecentDamage = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+            public readonly Dictionary<string, DateTime> RecentHp = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+            public readonly Dictionary<long, long> ObservedMaxHp = new Dictionary<long, long>();
+            public readonly HashSet<long> DamageTargets = new HashSet<long>();
+            public readonly Dictionary<long, int> DamageCountByTarget = new Dictionary<long, int>();
+            public readonly Dictionary<long, long> DamageTotalByTarget = new Dictionary<long, long>();
+            public readonly Dictionary<long, long> LastEmittedHpByTarget = new Dictionary<long, long>();
+            public readonly Dictionary<long, DateTime> LastHpAtByTarget = new Dictionary<long, DateTime>();
+            public readonly Dictionary<long, int> DamageCountAtZeroByTarget = new Dictionary<long, int>();
         }
 
         private readonly Dictionary<string, ConnectionState> _states = new Dictionary<string, ConnectionState>(StringComparer.OrdinalIgnoreCase);
+        private int _nextScopeId;
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
-        private const int TailSize = 512;
+        private const int RawTailSize = 4096;
+        private const int MaximumEnvelopeStream = 10 * 1024 * 1024;
 
         public bool TryDecode(GameFrameEventArgs frame, IList<CombatEvent> events)
         {
@@ -26,16 +38,22 @@ namespace KinojoMeterPrototype
             ConnectionState state;
             if (!_states.TryGetValue(frame.ConnectionKey ?? "", out state))
             {
-                state = new ConnectionState();
+                state = new ConnectionState { ScopeId = "flow-" + (++_nextScopeId).ToString("D3") };
                 _states[frame.ConnectionKey ?? ""] = state;
             }
 
+            var direction = frame.Direction ?? "";
             byte[] tail;
-            state.TailByDirection.TryGetValue(frame.Direction ?? "", out tail);
+            state.RawTailByDirection.TryGetValue(direction, out tail);
             var buffer = Concat(tail, frame.Frame);
             var found = DecodeBuffer(buffer, frame.TimestampUtc, state, events);
-            DecodeLz4Envelopes(buffer, frame.TimestampUtc, state, events, ref found);
-            state.TailByDirection[frame.Direction ?? ""] = SliceTail(buffer, TailSize);
+            state.RawTailByDirection[direction] = SliceTail(buffer, RawTailSize);
+
+            byte[] envelopeStream;
+            state.EnvelopeStreamByDirection.TryGetValue(direction, out envelopeStream);
+            envelopeStream = Concat(envelopeStream, frame.Frame);
+            DecodeLz4EnvelopeStream(ref envelopeStream, frame.TimestampUtc, state, events, ref found);
+            state.EnvelopeStreamByDirection[direction] = envelopeStream;
             CleanupRecent(state, frame.TimestampUtc);
             return found;
         }
@@ -43,22 +61,13 @@ namespace KinojoMeterPrototype
         private static bool DecodeBuffer(byte[] buffer, DateTime timestampUtc, ConnectionState state, IList<CombatEvent> events)
         {
             var found = false;
-            // Resolve names before damage so a record earlier in the same decoded block is named immediately.
+            // Resolve names before damage. 0x3633 is the observed local-player identity,
+            // while 0x3645 and 0x3641 carry other entity/party identities.
             for (var offset = 0; offset + 8 < buffer.Length; offset++)
             {
-                if (buffer[offset] != 0x41 || buffer[offset + 1] != 0x36) continue;
-                int cursor = offset + 2;
                 long entityId;
-                if (!TryReadVarUInt(buffer, ref cursor, out entityId) || entityId <= 0 || cursor + 4 > buffer.Length) continue;
-                cursor++; // observed entity subtype
-                if (buffer[cursor] != 0x00 || buffer[cursor + 1] != 0x01) continue;
-                var nameLength = buffer[cursor + 2];
-                cursor += 3;
-                if (nameLength == 0 || nameLength > 48 || cursor + nameLength > buffer.Length) continue;
                 string name;
-                try { name = StrictUtf8.GetString(buffer, cursor, nameLength); }
-                catch { continue; }
-                if (!IsPlausibleName(name)) continue;
+                if (!TryReadEntityIdentity(buffer, offset, out entityId, out name)) continue;
                 string previous;
                 if (state.EntityNames.TryGetValue(entityId, out previous) && String.Equals(previous, name, StringComparison.Ordinal)) continue;
                 state.EntityNames[entityId] = name;
@@ -66,7 +75,8 @@ namespace KinojoMeterPrototype
                 {
                     Kind = CombatEventKind.EntityIdentity,
                     TimestampUtc = timestampUtc,
-                    ActorId = EntityKey(entityId),
+                    ActorId = EntityKey(state, entityId),
+                    ActorRuntimeId = entityId,
                     ActorName = name
                 });
                 found = true;
@@ -95,6 +105,13 @@ namespace KinojoMeterPrototype
                 DateTime seenAt;
                 if (state.RecentDamage.TryGetValue(signature, out seenAt) && Math.Abs((timestampUtc - seenAt).TotalSeconds) < 30) continue;
                 state.RecentDamage[signature] = timestampUtc;
+                state.DamageTargets.Add(targetId);
+                int targetDamageCount;
+                long targetDamageTotal;
+                state.DamageCountByTarget.TryGetValue(targetId, out targetDamageCount);
+                state.DamageTotalByTarget.TryGetValue(targetId, out targetDamageTotal);
+                state.DamageCountByTarget[targetId] = targetDamageCount + 1;
+                state.DamageTotalByTarget[targetId] = targetDamageTotal + damage;
                 string actorName;
                 string targetName;
                 state.EntityNames.TryGetValue(actorId, out actorName);
@@ -103,9 +120,11 @@ namespace KinojoMeterPrototype
                 {
                     Kind = CombatEventKind.Damage,
                     TimestampUtc = timestampUtc,
-                    ActorId = EntityKey(actorId),
+                    ActorId = EntityKey(state, actorId),
+                    ActorRuntimeId = actorId,
                     ActorName = actorName ?? "",
-                    TargetId = EntityKey(targetId),
+                    TargetId = EntityKey(state, targetId),
+                    TargetRuntimeId = targetId,
                     TargetName = targetName ?? "",
                     Damage = damage,
                     ActionId = actionId,
@@ -114,11 +133,75 @@ namespace KinojoMeterPrototype
                 });
                 found = true;
             }
+
+            // Fixture 2026-08-02: 0x14 0x00 0x8D + target varint + 02 01 00
+            // is followed by a monotonically decreasing 64-bit current HP value.
+            // Restrict it to entities already observed as damage targets so player HP is not
+            // promoted to a boss event.
+            for (var offset = 0; offset + 18 <= buffer.Length; offset++)
+            {
+                if (buffer[offset] != 0x14 || buffer[offset + 1] != 0x00 || buffer[offset + 2] != 0x8D) continue;
+                var cursor = offset + 3;
+                long targetId;
+                if (!TryReadVarUInt(buffer, ref cursor, out targetId) || targetId <= 0 || !state.DamageTargets.Contains(targetId)) continue;
+                if (cursor + 11 > buffer.Length || buffer[cursor] != 0x02 || buffer[cursor + 1] != 0x01 || buffer[cursor + 2] != 0x00) continue;
+                cursor += 3;
+                var currentHp = ReadInt64(buffer, cursor);
+                if (currentHp < 0 || currentHp > 1000000000000L) continue;
+                long observedMax;
+                if (!state.ObservedMaxHp.TryGetValue(targetId, out observedMax) || currentHp > observedMax)
+                {
+                    observedMax = currentHp;
+                    state.ObservedMaxHp[targetId] = observedMax;
+                }
+                int targetDamageCount;
+                long targetDamageTotal;
+                state.DamageCountByTarget.TryGetValue(targetId, out targetDamageCount);
+                state.DamageTotalByTarget.TryGetValue(targetId, out targetDamageTotal);
+                if (targetDamageCount < 10 || targetDamageTotal < 500000) continue;
+                long lastEmittedHp;
+                DateTime lastHpAt;
+                if (state.LastEmittedHpByTarget.TryGetValue(targetId, out lastEmittedHp) && currentHp > lastEmittedHp)
+                {
+                    int countAtZero;
+                    state.DamageCountAtZeroByTarget.TryGetValue(targetId, out countAtZero);
+                    state.LastHpAtByTarget.TryGetValue(targetId, out lastHpAt);
+                    var newEncounter = lastEmittedHp == 0 &&
+                        timestampUtc - lastHpAt >= TimeSpan.FromSeconds(3) &&
+                        targetDamageCount >= countAtZero + 5 &&
+                        currentHp >= Math.Max(1L, observedMax / 2);
+                    if (!newEncounter) continue;
+                }
+                var signature = targetId + ":" + currentHp;
+                DateTime hpSeenAt;
+                if (state.RecentHp.TryGetValue(signature, out hpSeenAt) && Math.Abs((timestampUtc - hpSeenAt).TotalSeconds) < 30) continue;
+                state.RecentHp[signature] = timestampUtc;
+                state.LastEmittedHpByTarget[targetId] = currentHp;
+                state.LastHpAtByTarget[targetId] = timestampUtc;
+                if (currentHp == 0) state.DamageCountAtZeroByTarget[targetId] = targetDamageCount;
+                string targetName;
+                state.EntityNames.TryGetValue(targetId, out targetName);
+                events.Add(new CombatEvent
+                {
+                    Kind = CombatEventKind.BossHp,
+                    TimestampUtc = timestampUtc,
+                    TargetId = EntityKey(state, targetId),
+                    TargetRuntimeId = targetId,
+                    TargetName = targetName ?? "",
+                    CurrentHp = currentHp,
+                    MaxHp = observedMax,
+                    IsBoss = false,
+                    BossIdentityMode = "RUNTIME_HP_TARGET"
+                });
+                found = true;
+            }
             return found;
         }
 
-        private static void DecodeLz4Envelopes(byte[] buffer, DateTime timestampUtc, ConnectionState state, IList<CombatEvent> events, ref bool found)
+        private static void DecodeLz4EnvelopeStream(ref byte[] buffer, DateTime timestampUtc, ConnectionState state, IList<CombatEvent> events, ref bool found)
         {
+            if (buffer == null || buffer.Length == 0) return;
+            var earliestIncomplete = -1;
             for (var offset = 0; offset + 9 <= buffer.Length; offset++)
             {
                 if (buffer[offset + 2] != 0xFF || buffer[offset + 3] != 0xFF) continue;
@@ -126,14 +209,34 @@ namespace KinojoMeterPrototype
                 var expected = (int)ReadUInt32(buffer, offset + 4);
                 if (declared < 9 || expected <= 0 || expected > 8 * 1024 * 1024) continue;
                 var envelopeLength = declared;
-                if (offset + envelopeLength > buffer.Length && offset + envelopeLength + 2 <= buffer.Length) envelopeLength += 2;
-                if (offset + envelopeLength > buffer.Length) continue;
+                if (offset + envelopeLength > buffer.Length)
+                {
+                    if (earliestIncomplete < 0) earliestIncomplete = offset;
+                    continue;
+                }
                 var compressedLength = envelopeLength - 8;
                 byte[] decoded;
-                if (!TryDecompressLz4(buffer, offset + 8, compressedLength, expected, out decoded)) continue;
+                if (!TryDecompressLz4(buffer, offset + 8, compressedLength, expected, out decoded))
+                {
+                    if (offset + envelopeLength + 2 > buffer.Length ||
+                        !TryDecompressLz4(buffer, offset + 8, compressedLength + 2, expected, out decoded))
+                        continue;
+                    envelopeLength += 2;
+                }
                 if (DecodeBuffer(decoded, timestampUtc, state, events)) found = true;
                 offset += envelopeLength - 1;
             }
+
+            if (earliestIncomplete >= 0)
+            {
+                var remaining = new byte[buffer.Length - earliestIncomplete];
+                Buffer.BlockCopy(buffer, earliestIncomplete, remaining, 0, remaining.Length);
+                buffer = remaining;
+            }
+            else
+                buffer = SliceTail(buffer, 8);
+            if (buffer.Length > MaximumEnvelopeStream)
+                buffer = SliceTail(buffer, MaximumEnvelopeStream);
         }
 
         internal static bool TryDecompressLz4(byte[] source, int start, int length, int expectedLength, out byte[] result)
@@ -177,6 +280,31 @@ namespace KinojoMeterPrototype
             catch { return false; }
         }
 
+        private static bool TryReadEntityIdentity(byte[] data, int offset, out long entityId, out string name)
+        {
+            entityId = 0;
+            name = "";
+            if (data == null || offset < 0 || offset + 4 >= data.Length || data[offset + 1] != 0x36) return false;
+            var marker = data[offset];
+            if (marker != 0x33 && marker != 0x41 && marker != 0x45) return false;
+            var cursor = offset + 2;
+            if (!TryReadVarUInt(data, ref cursor, out entityId) || entityId <= 0) return false;
+
+            var searchEnd = Math.Min(data.Length - 1, cursor + 14);
+            for (var lengthOffset = cursor; lengthOffset <= searchEnd; lengthOffset++)
+            {
+                var byteLength = data[lengthOffset];
+                if (byteLength < 2 || byteLength > 48 || lengthOffset + 1 + byteLength > data.Length) continue;
+                string candidate;
+                try { candidate = StrictUtf8.GetString(data, lengthOffset + 1, byteLength); }
+                catch { continue; }
+                if (!IsPlausibleName(candidate)) continue;
+                name = candidate;
+                return true;
+            }
+            return false;
+        }
+
         private static bool TryReadVarUInt(byte[] data, ref int cursor, out long value)
         {
             value = 0;
@@ -196,7 +324,14 @@ namespace KinojoMeterPrototype
             return (uint)(data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24));
         }
 
-        private static string EntityKey(long value) { return "entity:" + value; }
+        private static long ReadInt64(byte[] data, int offset)
+        {
+            ulong value = 0;
+            for (var index = 0; index < 8; index++) value |= ((ulong)data[offset + index]) << (index * 8);
+            return value > Int64.MaxValue ? -1 : (long)value;
+        }
+
+        private static string EntityKey(ConnectionState state, long value) { return (state == null ? "flow-000" : state.ScopeId) + ":entity:" + value; }
         private static bool IsPlausibleName(string value)
         {
             if (String.IsNullOrWhiteSpace(value) || value.Length > 16) return false;
@@ -220,6 +355,7 @@ namespace KinojoMeterPrototype
         private static void CleanupRecent(ConnectionState state, DateTime now)
         {
             foreach (var key in state.RecentDamage.Where(pair => Math.Abs((now - pair.Value).TotalMinutes) > 2).Select(pair => pair.Key).ToList()) state.RecentDamage.Remove(key);
+            foreach (var key in state.RecentHp.Where(pair => Math.Abs((now - pair.Value).TotalMinutes) > 2).Select(pair => pair.Key).ToList()) state.RecentHp.Remove(key);
         }
     }
 }

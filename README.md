@@ -1,11 +1,31 @@
 ﻿# KINOJO Meter Desktop
 
 
-기준일: 2026-08-01  
+기준일: 2026-08-04
 Desktop version source: `release/version.json`  
 Latest Meter SQL: `50014`  
 Desktop API Contract: `50013`  
 Edge API: `50013.1`
+
+## KINOJO Meter 개발 분기
+
+- 분기 기준: 2026-08-04 · Desktop `0.2.30`
+- 이 지점 이후 Meter 원인 분석·구현·픽스처/실게임 검증·릴리스 상태는 WEB·일반 Server 작업과 분리해 기록합니다.
+- 회차 마감은 GitHub / Server / Google Drive / 작업 로그를 각각 독립 상태로 보고합니다.
+- 운영 Server 제출은 실제 게임에서 피해 합계 완전성과 보스·참가자 canonical 판정이 확인될 때까지 차단합니다.
+
+## 0.2.30 런타임 보스 HP·순서 매핑·안정 파티 명단 테스트
+
+- 최신 던전 픽스처에서 추가 확인된 자기 캐릭터 `0x33 0x36`, 다른 캐릭터 `0x45 0x36` 엔티티 이름 레코드를 지원합니다. 기존 `0x41 0x36`과 함께 런타임 ID를 이름에 연결해 파티원별 피해를 집계합니다.
+- `FF FF` LZ4 봉투를 TCP 조각 크기와 무관하게 길이 기준으로 재조립합니다. 기존 512바이트 꼬리만 보던 구조 때문에 긴 봉투의 피해 이벤트가 유실되던 원인을 제거했습니다.
+- 피해 대상에서 확인된 `0x14 0x00 0x8D + 대상 ID + 02 01 00 + 64비트 현재 HP`를 보스 현재 HP로 판독합니다. 첫 관측값은 정확한 총 체력 확정값이 아니므로 `OBSERVED_CURRENT_MAX`로 별도 표기합니다.
+- 테스트 버전에서 서버 카탈로그와 정확히 일치한 던전명이 먼저 확인되면, 서로 다른 런타임 보스 ID를 조우 순서대로 1·2·3보스에 연결합니다. 운영 canonical ID로 승격하거나 서버에 제출하지 않습니다.
+- 파티 명단이 순간적으로 4명만 잘려 들어와도 기존 5명 명단을 즉시 삭제하지 않습니다. 축소 명단이 3회 반복 확인될 때만 이탈로 확정하고, 전투 피해가 있는 행은 해당 보스전이 끝날 때까지 보존합니다.
+- 자동 캐릭터 검색 창은 화면 중앙을 덮는 카드 페이지 대신 기존 미터 위치의 작은 비활성 상태창으로 시작합니다. `직접 선택`을 눌렀을 때만 계정 캐릭터 카드를 펼칩니다.
+- 전투 중 행은 누적 피해 순으로 갱신하며 순위가 바뀔 때 위아래 위치 이동 애니메이션을 적용합니다. 피해 지분의 분모는 보스 HP가 아니라 파티에서 실제로 판독한 총 피해 합계입니다.
+- 처치된 보스 결과는 서버 제출 여부와 관계없이 `%LOCALAPPDATA%/KINOJO Meter/logs/encounters-YYYYMMDD.jsonl`에 보스 순서·런타임 ID·관측 HP·참가자 이름/서버/클래스/전투력/피해/DPS/지분을 저장합니다.
+- HP 0 이벤트가 확인되면 `HP_ZERO`, 마지막 피해 뒤 12초간 새 피해가 없으면 `DAMAGE_IDLE_12S`로 보스 구간을 종료합니다. 같은 런타임 보스 ID가 다음 회차에 다시 등장해도 이전 회차 피해를 초기화합니다.
+- Decoder는 계속 `BINARY_PARTIAL_VALIDATED`, `UploadEligible=false`입니다. 최신 픽스처의 피해 합계가 관측 HP의 약 11~19%에 불과해 운영 Server 제출 Gate는 해제하지 않습니다.
 
 ## 0.2.29 피해/DPS 부분 검증·자동 검색 오버레이·관리자 진단 버튼
 
@@ -197,7 +217,7 @@ Edge API: `50013.1`
 ## 현재 운영 차단
 
 
-`AionBinaryFrameDecoder`는 실제 익명화 fixture 검증 전이므로 `BINARY_UNVALIDATED`입니다.
+`AionBinaryFrameDecoder`는 제어 픽스처의 단타·연타·일부 던전 피해와 런타임 HP 구조까지 확인한 `BINARY_PARTIAL_VALIDATED`입니다. 전체 피해 이벤트 완전성은 아직 검증되지 않았습니다.
 
 
 관리자 패킷 진단 수집은 최대 20분·64MiB·100,000조각으로 제한됩니다. 시작 시 최근 최대 2분·8MiB 순환 버퍼를 먼저 기록하고, `frames.tsv`에는 익명 `connection_id`·방향·TCP sequence를, `markers.tsv`에는 관리자가 선택한 던전 진행 시점을 기록합니다. 원본 IP·포트와 PASS KEY·세션 토큰은 기록하지 않으며 자동 업로드하지 않습니다.
@@ -317,7 +337,7 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 
 - Supabase Meter SQL `50009~50014`: 운영 반영 완료
 - `meter-ingest` Edge Function API `50013.1`: 운영 배포 완료
-- Desktop 최신 소스 `0.2.29`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- Desktop 최신 소스 `0.2.30`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
 - AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.

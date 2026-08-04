@@ -428,7 +428,7 @@ namespace KinojoMeterPrototype
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
         public string DecoderType { get { return "BINARY_PARTIAL_VALIDATED"; } }
-        public string DecoderVersion { get { return "aion2-damage-varint-lz4-1"; } }
+        public string DecoderVersion { get { return "aion2-runtime-hp-order-probe-2"; } }
         public bool IsValidated { get { return false; } }
         public event EventHandler<string> AionConnectionIdentified;
         public event EventHandler<string> ParserEnvelopeCandidateObserved;

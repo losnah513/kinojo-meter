@@ -21,8 +21,15 @@ namespace KinojoMeterPrototype
                 var damage = events.Where(value => value.Kind == CombatEventKind.Damage).ToList();
                 Require(damage.Count == 1 && damage[0].Damage == 739455 && damage[0].SkillId == 18712, "single hit");
                 Require(damage[0].ActorName == "청소기" && damage[0].TargetName == "훈련용허수아비", "entity names");
+                Require(!events.Any(value => value.Kind == CombatEventKind.BossHp), "single target is not promoted to boss");
                 decoder.TryDecode(new GameFrameEventArgs(namedSingle, now.AddSeconds(1), "flow", "connection", "B_TO_A"), events);
                 Require(events.Count(value => value.Kind == CombatEventKind.Damage) == 1, "tail duplicate suppression");
+
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                decoder.TryDecode(new GameFrameEventArgs(BuildBossThresholdFixture(single), now, "flow", "boss-threshold", "B_TO_A"), events);
+                Require(events.Count(value => value.Kind == CombatEventKind.Damage) == 10, "boss threshold damage count");
+                Require(events.Any(value => value.Kind == CombatEventKind.BossHp && value.TargetRuntimeId == 48268 && value.CurrentHp == 1), "boss hp threshold");
 
                 decoder = new AionCombatDecoder();
                 events.Clear();
@@ -43,6 +50,21 @@ namespace KinojoMeterPrototype
                 events.Clear();
                 decoder.TryDecode(new GameFrameEventArgs(Lz4Envelope(single), now, "flow", "lz4", "B_TO_A"), events);
                 Require(events.Count(value => value.Kind == CombatEventKind.Damage && value.Damage == 739455) == 1, "lz4 envelope damage");
+
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                var alternateIdentities = Identity33(11640, "청소기").Concat(Identity45(14250, "쉰빵")).ToArray();
+                decoder.TryDecode(new GameFrameEventArgs(alternateIdentities, now, "flow", "identity-variants", "B_TO_A"), events);
+                Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 11640 && value.ActorName == "청소기"), "0x3633 self identity");
+                Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 14250 && value.ActorName == "쉰빵"), "0x3645 party identity");
+
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                var largePayload = Enumerable.Repeat((byte)0, 900).Concat(single).ToArray();
+                var largeEnvelope = Lz4Envelope(largePayload);
+                decoder.TryDecode(new GameFrameEventArgs(largeEnvelope.Take(300).ToArray(), now, "flow", "large-lz4", "B_TO_A"), events);
+                decoder.TryDecode(new GameFrameEventArgs(largeEnvelope.Skip(300).ToArray(), now.AddMilliseconds(1), "flow", "large-lz4", "B_TO_A"), events);
+                Require(events.Any(value => value.Kind == CombatEventKind.Damage && value.Damage == 739455), "length-aware lz4 reassembly");
                 return true;
             }
             catch (Exception ex)
@@ -72,6 +94,27 @@ namespace KinojoMeterPrototype
             return result.ToArray();
         }
 
+        private static byte[] Identity33(long entityId, string name)
+        {
+            var result = new List<byte> { 0x33, 0x36 };
+            result.AddRange(VarUInt(entityId));
+            var nameBytes = Encoding.UTF8.GetBytes(name);
+            result.Add((byte)nameBytes.Length);
+            result.AddRange(nameBytes);
+            return result.ToArray();
+        }
+
+        private static byte[] Identity45(long entityId, string name)
+        {
+            var result = new List<byte> { 0x45, 0x36 };
+            result.AddRange(VarUInt(entityId));
+            result.AddRange(new byte[] { 0x03, 0x00, 0xA6, 0x01, 0x07 });
+            var nameBytes = Encoding.UTF8.GetBytes(name);
+            result.Add((byte)nameBytes.Length);
+            result.AddRange(nameBytes);
+            return result.ToArray();
+        }
+
         private static byte[] Lz4Envelope(byte[] value)
         {
             var compressed = new List<byte> { 0xF0 };
@@ -87,6 +130,31 @@ namespace KinojoMeterPrototype
                 (byte)((value.Length >> 16) & 0xFF), (byte)((value.Length >> 24) & 0xFF)
             };
             result.AddRange(compressed);
+            return result.ToArray();
+        }
+
+        private static byte[] BuildBossThresholdFixture(byte[] single)
+        {
+            var result = new List<byte>();
+            var damageOffset = -1;
+            for (var index = 0; index + 2 < single.Length; index++)
+            {
+                if (single[index] == 0x26 && single[index + 1] == 0x04 && single[index + 2] == 0x38)
+                {
+                    damageOffset = index;
+                    break;
+                }
+            }
+            if (damageOffset < 0) throw new InvalidOperationException("Damage fixture marker was not found.");
+            for (var hit = 0; hit < 10; hit++)
+            {
+                var copy = single.ToArray();
+                copy[damageOffset + 23] = (byte)(hit + 1);
+                copy[damageOffset + 24] = 0;
+                copy[damageOffset + 25] = 0;
+                copy[damageOffset + 26] = 0;
+                result.AddRange(copy);
+            }
             return result.ToArray();
         }
 

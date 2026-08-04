@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Web.Script.Serialization;
 
 namespace KinojoMeterPrototype
 {
@@ -34,6 +36,78 @@ namespace KinojoMeterPrototype
         {
             Directory.CreateDirectory(DirectoryPath);
             Process.Start(new ProcessStartInfo(DirectoryPath) { UseShellExecute = true });
+        }
+
+        public static string SaveEncounterSnapshot(CombatSnapshot snapshot)
+        {
+            if (snapshot == null || !snapshot.IsCleared) return "";
+            try
+            {
+                var durationMs = snapshot.StartedAtUtc == DateTime.MinValue || snapshot.LastEventUtc == DateTime.MinValue
+                    ? 0L
+                    : Math.Max(0L, (long)(snapshot.LastEventUtc - snapshot.StartedAtUtc).TotalMilliseconds);
+                var participants = snapshot.Rows
+                    .Where(row => row != null && !row.IsEmpty)
+                    .Select(row => (object)new Dictionary<string, object>
+                    {
+                        { "participantKey", row.ParticipantKey ?? "" },
+                        { "characterName", row.Name ?? "" },
+                        { "serverId", row.ServerId ?? "" },
+                        { "serverName", row.ServerName ?? "" },
+                        { "classKey", row.ClassKey ?? "" },
+                        { "className", row.ClassName ?? "" },
+                        { "classRaw", row.ClassRaw },
+                        { "pveCombatPower", row.CombatPower },
+                        { "partyNumber", row.PartyNumber },
+                        { "partySlot", row.PartySlot },
+                        { "totalDamage", row.TotalDamage },
+                        { "dps", row.Dps },
+                        { "damageShare", row.Share },
+                        { "isSelf", row.IsSelf }
+                    })
+                    .ToList();
+                var document = new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 },
+                    { "savedAt", DateTime.UtcNow.ToString("o") },
+                    { "startedAt", snapshot.StartedAtUtc == DateTime.MinValue ? "" : snapshot.StartedAtUtc.ToUniversalTime().ToString("o") },
+                    { "endedAt", snapshot.LastEventUtc == DateTime.MinValue ? "" : snapshot.LastEventUtc.ToUniversalTime().ToString("o") },
+                    { "durationMs", durationMs },
+                    { "dungeonKey", snapshot.DungeonKey ?? "" },
+                    { "dungeonName", snapshot.DungeonName ?? "" },
+                    { "difficultyKey", snapshot.DifficultyKey ?? "" },
+                    { "difficultyName", snapshot.DifficultyName ?? "" },
+                    { "bossOrder", snapshot.BossOrder },
+                    { "bossScopedId", snapshot.BossId ?? "" },
+                    { "bossRuntimeId", snapshot.BossRuntimeId },
+                    { "bossName", snapshot.BossName ?? "" },
+                    { "bossIdentityMode", snapshot.BossIdentityMode ?? "" },
+                    { "bossHpSource", snapshot.BossHpSource ?? "" },
+                    { "completionMode", snapshot.CompletionMode ?? "" },
+                    { "bossObservedMaxHp", snapshot.BossMaxHp },
+                    { "bossCurrentHp", snapshot.BossCurrentHp },
+                    { "captureEngine", snapshot.CaptureEngine ?? "" },
+                    { "captureMode", snapshot.CaptureMode ?? "" },
+                    { "decoderType", snapshot.DecoderType ?? "" },
+                    { "decoderVersion", snapshot.DecoderVersion ?? "" },
+                    { "decoderValidated", snapshot.DecoderValidated },
+                    { "uploadEligible", snapshot.UploadEligible },
+                    { "participants", participants }
+                };
+                var path = Path.Combine(DirectoryPath, "encounters-" + DateTime.Now.ToString("yyyyMMdd") + ".jsonl");
+                var json = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue }.Serialize(document);
+                lock (Gate)
+                {
+                    Directory.CreateDirectory(DirectoryPath);
+                    File.AppendAllText(path, json + Environment.NewLine, new UTF8Encoding(false));
+                }
+                return path;
+            }
+            catch (Exception ex)
+            {
+                Error("LOCAL_RESULT", "Encounter snapshot persistence failed", ex);
+                return "";
+            }
         }
 
         private static void Write(string level, string category, string message, Exception exception)

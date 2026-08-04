@@ -161,6 +161,9 @@ namespace KinojoMeterPrototype
 
     internal sealed class PartyProfileResult
     {
+        public bool Ok { get; set; }
+        public string ReasonCode { get; set; }
+        public string Message { get; set; }
         public string ParticipantKey { get; set; }
         public long MeterCharacterId { get; set; }
         public string PlatformCharacterId { get; set; }
@@ -196,15 +199,18 @@ namespace KinojoMeterPrototype
         public CombatEventKind Kind { get; set; }
         public DateTime TimestampUtc { get; set; }
         public string ActorId { get; set; }
+        public long ActorRuntimeId { get; set; }
         public string PlatformCharacterId { get; set; }
         public string ActorName { get; set; }
         public string ActorServerId { get; set; }
         public string ActorServer { get; set; }
+        public int ActorServerRaw { get; set; }
         public string ActorClassKey { get; set; }
         public string ActorClass { get; set; }
         public int ActorClassRaw { get; set; }
         public string ProfileImageUrl { get; set; }
         public string TargetId { get; set; }
+        public long TargetRuntimeId { get; set; }
         public string TargetName { get; set; }
         public long Damage { get; set; }
         public long ActionId { get; set; }
@@ -212,6 +218,8 @@ namespace KinojoMeterPrototype
         public long HitSequence { get; set; }
         public long CurrentHp { get; set; }
         public long MaxHp { get; set; }
+        public int BossOrder { get; set; }
+        public string BossIdentityMode { get; set; }
         public bool IsBoss { get; set; }
         public bool IsDot { get; set; }
         public int PartyNumber { get; set; }
@@ -246,8 +254,13 @@ namespace KinojoMeterPrototype
         public DateTime LastEventUtc { get; set; }
         public string BossName { get; set; }
         public string BossId { get; set; }
+        public long BossRuntimeId { get; set; }
         public long BossCurrentHp { get; set; }
         public long BossMaxHp { get; set; }
+        public int BossOrder { get; set; }
+        public string BossIdentityMode { get; set; }
+        public string BossHpSource { get; set; }
+        public string CompletionMode { get; set; }
         public bool BossConfirmed { get; set; }
         public bool IsRunning { get; set; }
         public bool IsCleared { get; set; }

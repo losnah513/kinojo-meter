@@ -240,8 +240,11 @@ namespace KinojoMeterPrototype
                 { "participants", rows }
             });
             if (!Bool(result, "ok")) throw new MeterApiException("PARTY_PROFILE_REJECTED", Text(result, "message", "파티원 공개 프로필을 불러오지 못했습니다."));
-            return DictList(result, "profiles").Where(row => Bool(row, "ok")).Select(row => new PartyProfileResult
+            return DictList(result, "profiles").Select(row => new PartyProfileResult
             {
+                Ok = Bool(row, "ok"),
+                ReasonCode = Text(row, "reasonCode", ""),
+                Message = Text(row, "message", ""),
                 ParticipantKey = Text(row, "participantKey", ""),
                 MeterCharacterId = Number(row, "meterCharacterId", 0),
                 PlatformCharacterId = Text(row, "platformCharacterId", ""),
