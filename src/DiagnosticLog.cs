@@ -51,6 +51,7 @@ namespace KinojoMeterPrototype
                     .Select(row => (object)new Dictionary<string, object>
                     {
                         { "participantKey", row.ParticipantKey ?? "" },
+                        { "platformCharacterId", row.PlatformCharacterId ?? "" },
                         { "characterName", row.Name ?? "" },
                         { "serverId", row.ServerId ?? "" },
                         { "serverName", row.ServerName ?? "" },
@@ -58,6 +59,7 @@ namespace KinojoMeterPrototype
                         { "className", row.ClassName ?? "" },
                         { "classRaw", row.ClassRaw },
                         { "pveCombatPower", row.CombatPower },
+                        { "itemLevel", row.ItemLevel },
                         { "partyNumber", row.PartyNumber },
                         { "partySlot", row.PartySlot },
                         { "totalDamage", row.TotalDamage },
@@ -120,6 +122,7 @@ namespace KinojoMeterPrototype
                     .Select(row => (object)new Dictionary<string, object>
                     {
                         { "participantKey", row.ParticipantKey ?? "" },
+                        { "platformCharacterId", row.PlatformCharacterId ?? "" },
                         { "characterName", row.Name ?? "" },
                         { "serverId", row.ServerId ?? "" },
                         { "serverName", row.ServerName ?? "" },
@@ -127,6 +130,7 @@ namespace KinojoMeterPrototype
                         { "className", row.ClassName ?? "" },
                         { "classRaw", row.ClassRaw },
                         { "pveCombatPower", row.CombatPower },
+                        { "itemLevel", row.ItemLevel },
                         { "partyNumber", row.PartyNumber },
                         { "partySlot", row.PartySlot },
                         { "totalDamage", row.TotalDamage },
@@ -139,7 +143,8 @@ namespace KinojoMeterPrototype
                     { "schemaVersion", 1 },
                     { "processingMode", String.IsNullOrWhiteSpace(processingMode) ? "SIMULATED" : processingMode.Trim().ToUpperInvariant() },
                     { "processingStatus", "LOCAL_STAGED" },
-                    { "serverSubmissionBlocked", !snapshot.UploadEligible },
+                    { "canonicalStatisticsSubmissionBlocked", !snapshot.UploadEligible },
+                    { "observedServerSubmissionEnabled", !snapshot.UploadEligible && String.Equals(snapshot.CaptureMode, "ACTUAL", StringComparison.OrdinalIgnoreCase) },
                     { "damageCompleteness", snapshot.DecoderValidated ? "DECODER_VALIDATED" : "PARTIAL_OPCODE_COVERAGE" },
                     { "stagedAt", DateTime.UtcNow.ToString("o") },
                     { "selectedCharacterKey", selected == null ? "" : selected.CharacterKey ?? "" },
@@ -159,6 +164,7 @@ namespace KinojoMeterPrototype
                     { "startedAt", snapshot.StartedAtUtc == DateTime.MinValue ? "" : snapshot.StartedAtUtc.ToUniversalTime().ToString("o") },
                     { "endedAt", snapshot.LastEventUtc == DateTime.MinValue ? "" : snapshot.LastEventUtc.ToUniversalTime().ToString("o") },
                     { "captureEngine", snapshot.CaptureEngine ?? "" },
+                    { "captureMode", snapshot.CaptureMode ?? "" },
                     { "decoderType", snapshot.DecoderType ?? "" },
                     { "decoderVersion", snapshot.DecoderVersion ?? "" },
                     { "decoderValidated", snapshot.DecoderValidated },

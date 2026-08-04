@@ -3,9 +3,9 @@
 
 기준일: 2026-08-04
 Desktop version source: `release/version.json`  
-Latest Meter SQL: `50014`  
-Desktop API Contract: `50013`  
-Edge API: `50013.1`
+Latest Meter SQL: `50015`
+Desktop API Contract: `50015`
+Edge API: `50015.1`
 
 ## KINOJO Meter 개발 분기
 
@@ -13,6 +13,16 @@ Edge API: `50013.1`
 - 이 지점 이후 Meter 원인 분석·구현·픽스처/실게임 검증·릴리스 상태는 WEB·일반 Server 작업과 분리해 기록합니다.
 - 회차 마감은 GitHub / Server / Google Drive / 작업 로그를 각각 독립 상태로 보고합니다.
 - 운영 Server 제출은 실제 게임에서 피해 합계 완전성과 보스·참가자 canonical 판정이 확인될 때까지 차단합니다.
+
+## 0.2.33 실제 관측 저장·파티원 공식 프로필 보강·WEB 최근 수집 기록
+
+- 기존에는 `UploadEligible=false`인 순간 `UploadEncounterAsync`가 반환되어 로컬 outbox만 남고 Server에는 한 건도 저장되지 않았습니다. 이제 실제 NPCAP/WinDivert 캡처이고 파티 판독 피해가 있으면 `submitObservedEncounter`로 Server 격리 관측 저장소에 전송합니다.
+- 부분 Decoder 결과는 `statistics_eligible=false`, `visibility=OWNER`로 고정합니다. 공개 통계·랭킹 제출 Gate는 계속 `BINARY_VALIDATED + SERVER_CANONICAL`일 때만 열립니다.
+- 버스 파티에서 선택 캐릭터가 1·2보스를 공격하지 않아도 파티 총 판독 피해가 있으면 저장합니다. 보스 순서·런타임/구간 ID·관측 최대 HP·던전/난이도 단서·파티원별 피해/DPS/지분을 함께 보냅니다.
+- 파티원 공개 프로필은 이름만으로 `meter_character_master`에 행을 만들지 않습니다. 공식 고유값, 서버 ID 또는 유일한 서버명 접두 단서가 있을 때만 기존 Master에 연결하고 모든 외부 조회 시도·결과를 별도 Server 이력으로 남깁니다.
+- PLAYNC 검색 결과의 `<strong>` 이름 마크업을 제거하고, URL 인코딩된 공식 `characterId`를 한 번만 해제합니다. 상세 조회에는 필수 `serverId`를 전달하며 `/api/character/info`에서 클래스·전투력·아이템 레벨·프로필 이미지·안정 `charKey`를 읽습니다.
+- 프로필 미해결 재시도 간격을 25초로 줄이고 성공 시 서버·클래스·전투력을 진단 로그에 남겨 오버레이 반영 여부를 확인할 수 있게 했습니다.
+- 키노조 웹 미터기 페이지는 PASS KEY Meter 세션으로 `recentObserved`를 호출해 본인 계정의 최근 검증 전 수집 기록과 파티원별 판독 피해·공식 프로필 해결 상태를 표시합니다.
 
 ## 0.2.32 게임 창 제목 기반 즉시 캐릭터 자동 선택
 
@@ -356,9 +366,9 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 ## 운영 반영 상태
 
 
-- Supabase Meter SQL `50009~50014`: 운영 반영 완료
-- `meter-ingest` Edge Function API `50013.1`: 운영 배포 완료
-- Desktop 최신 소스 `0.2.32`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- Supabase Meter SQL `50009~50015`: 운영 반영 완료
+- `meter-ingest` Edge Function API `50015.1`: 운영 배포 완료
+- Desktop 최신 소스 `0.2.33`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
 - AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.

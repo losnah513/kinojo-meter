@@ -244,7 +244,7 @@ namespace KinojoMeterPrototype
             {
                 Ok = Bool(row, "ok"),
                 ReasonCode = Text(row, "reasonCode", ""),
-                Message = Text(row, "message", ""),
+                Message = Text(row, "message", Text(row, "profileRefreshMessage", "")),
                 ParticipantKey = Text(row, "participantKey", ""),
                 MeterCharacterId = Number(row, "meterCharacterId", 0),
                 PlatformCharacterId = Text(row, "platformCharacterId", ""),
@@ -293,6 +293,22 @@ namespace KinojoMeterPrototype
             });
             if (!Bool(result, "ok"))
                 throw new MeterApiException("ENCOUNTER_REJECTED", Text(result, "message", "전투 저장이 거부되었습니다."));
+            return result;
+        }
+
+        public async Task<Dictionary<string, object>> SubmitObservedEncounterAsync(string sessionToken, Dictionary<string, object> payload)
+        {
+            if (String.IsNullOrWhiteSpace(sessionToken)) throw new MeterApiException("SESSION_MISSING", "관측 전투 저장을 위한 서버 세션이 없습니다.");
+            if (payload == null) throw new MeterApiException("ENCOUNTER_EMPTY", "관측 전투 데이터가 비어 있습니다.");
+            await EnsureConfigAsync();
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "submitObservedEncounter" },
+                { "sessionToken", sessionToken },
+                { "payload", payload }
+            });
+            if (!Bool(result, "ok") || !Bool(result, "stored"))
+                throw new MeterApiException(Text(result, "code", "OBSERVED_ENCOUNTER_REJECTED"), Text(result, "message", "검증 전 관측 전투 저장이 거부되었습니다."));
             return result;
         }
 

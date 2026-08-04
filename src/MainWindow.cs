@@ -1262,7 +1262,7 @@ namespace KinojoMeterPrototype
             lock (_profileRequestGate)
             {
                 DateTime lastAttempt;
-                if (_profileRequestedAt.TryGetValue(key, out lastAttempt) && DateTime.UtcNow - lastAttempt < TimeSpan.FromMinutes(2)) return;
+                if (_profileRequestedAt.TryGetValue(key, out lastAttempt) && DateTime.UtcNow - lastAttempt < TimeSpan.FromSeconds(25)) return;
                 _profileRequestedAt[key] = DateTime.UtcNow;
             }
             try
@@ -1270,40 +1270,55 @@ namespace KinojoMeterPrototype
                 var profiles = await _api.GetPartyProfilesAsync(_login.SessionToken, new[] { row });
                 foreach (var profile in profiles)
                 {
-                    if (profile.Ok) _overlay?.ApplyProfile(profile);
-                    else DiagnosticLog.Info("PROFILE", "Party profile unresolved · name=" + (row.Name ?? "") + " · reason=" + (profile.ReasonCode ?? "") + " · " + (profile.Message ?? ""));
+                    var resolved = profile.Ok && (profile.MeterCharacterId > 0 || !String.IsNullOrWhiteSpace(profile.PlatformCharacterId)) &&
+                        (!String.IsNullOrWhiteSpace(profile.ServerName) || !String.IsNullOrWhiteSpace(profile.ClassName) || profile.PveCombatPower > 0);
+                    if (resolved)
+                    {
+                        _overlay?.ApplyProfile(profile);
+                        DiagnosticLog.Info("PROFILE", "Party profile resolved · name=" + (profile.CharacterName ?? row.Name ?? "") +
+                            " · server=" + (profile.ServerName ?? "") + " · class=" + (profile.ClassName ?? "") +
+                            " · power=" + profile.PveCombatPower + " · source=" + (profile.ProfileRefreshStatus ?? ""));
+                    }
+                    else
+                    {
+                        DiagnosticLog.Info("PROFILE", "Party profile unresolved · name=" + (row.Name ?? "") + " · reason=" + (profile.ReasonCode ?? "") + " · " + (profile.Message ?? ""));
+                    }
                 }
-                if (profiles.Count == 0 || profiles.Any(profile => !profile.Ok || String.Equals(profile.ProfileRefreshStatus, "QUEUED", StringComparison.OrdinalIgnoreCase)))
+                if (profiles.Count == 0 || profiles.Any(profile => !profile.Ok ||
+                    String.Equals(profile.ProfileRefreshStatus, "QUEUED", StringComparison.OrdinalIgnoreCase) ||
+                    String.Equals(profile.ProfileRefreshStatus, "UNRESOLVED", StringComparison.OrdinalIgnoreCase)))
                 {
-                    lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromMinutes(1);
+                    lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromSeconds(10);
                 }
             }
             catch (Exception ex)
             {
                 DiagnosticLog.Error("PROFILE", "Party profile enrichment failed", ex);
-                lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromMinutes(1);
+                lock (_profileRequestGate) _profileRequestedAt[key] = DateTime.UtcNow - TimeSpan.FromSeconds(10);
             }
         }
 
         private async Task UploadEncounterAsync(CombatSnapshot snapshot)
         {
             if (_login == null || _selected == null || snapshot == null || !snapshot.IsCleared) return;
-            _overlay?.SetEncounterProcessingState("FINALIZING", "보스 전투 종료 · 결과 고정 및 가상 서버 처리 중");
+            _overlay?.SetEncounterProcessingState("FINALIZING", "보스 전투 종료 · 결과 고정 및 서버 저장 준비 중");
             var localResultPath = DiagnosticLog.SaveEncounterSnapshot(snapshot);
             if (!String.IsNullOrWhiteSpace(localResultPath))
                 DiagnosticLog.Info("LOCAL_RESULT", "Encounter snapshot saved · " + localResultPath);
-            var outboxPath = DiagnosticLog.SaveEncounterOutbox(snapshot, _selected, snapshot.UploadEligible ? "SUBMISSION_READY" : "SIMULATED");
+            var isActualCapture = String.Equals(snapshot.CaptureMode, "ACTUAL", StringComparison.OrdinalIgnoreCase) &&
+                (String.Equals(snapshot.CaptureEngine, "NPCAP", StringComparison.OrdinalIgnoreCase) || String.Equals(snapshot.CaptureEngine, "WINDIVERT", StringComparison.OrdinalIgnoreCase));
+            var outboxPath = DiagnosticLog.SaveEncounterOutbox(snapshot, _selected, snapshot.UploadEligible ? "SUBMISSION_READY" : (isActualCapture ? "OBSERVED_SUBMISSION" : "SIMULATED"));
             if (!String.IsNullOrWhiteSpace(outboxPath))
                 DiagnosticLog.Info("OUTBOX", "Encounter staged · " + outboxPath);
-            if (!snapshot.UploadEligible)
-            {
-                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "가상 서버 처리 완료 · 다음 보스 전투 데이터 수집 대기");
-                DiagnosticLog.Info("UPLOAD", "Upload blocked by decoder validation gate");
-                return;
-            }
             var durationMs = snapshot.StartedAtUtc == DateTime.MinValue || snapshot.LastEventUtc == DateTime.MinValue ? 0L : Math.Max(0L, (long)(snapshot.LastEventUtc - snapshot.StartedAtUtc).TotalMilliseconds);
             var self = snapshot.Rows.FirstOrDefault(row => row.IsSelf && !row.IsEmpty);
-            if (durationMs < 5000 || self == null || self.TotalDamage <= 0 || String.IsNullOrWhiteSpace(snapshot.BossName)) return;
+            var partyTotalDamage = snapshot.Rows.Where(row => !row.IsEmpty).Sum(row => Math.Max(0L, row.TotalDamage));
+            if (!isActualCapture || durationMs < 1000 || partyTotalDamage <= 0 || String.IsNullOrWhiteSpace(snapshot.BossName))
+            {
+                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "로컬 보관 완료 · 다음 보스 전투 데이터 수집 대기");
+                DiagnosticLog.Info("UPLOAD", "Server observation skipped · actual=" + isActualCapture + " · durationMs=" + durationMs + " · partyDamage=" + partyTotalDamage);
+                return;
+            }
 
             try
             {
@@ -1320,7 +1335,16 @@ namespace KinojoMeterPrototype
                     VariantKey = snapshot.VariantKey,
                     PartySize = snapshot.Rows.Count(row => !row.IsEmpty)
                 };
-                var canonical = await _api.ResolveEncounterCatalogAsync(context, _selected, snapshot.BossName);
+                CanonicalCatalogSelection canonical = null;
+                try
+                {
+                    canonical = await _api.ResolveEncounterCatalogAsync(context, _selected, snapshot.BossName);
+                }
+                catch (Exception ex)
+                {
+                    if (snapshot.UploadEligible) throw;
+                    DiagnosticLog.Info("UPLOAD", "Observed encounter uses captured catalog hints · " + ex.Message);
+                }
                 var participants = snapshot.Rows.Where(row => !row.IsEmpty).Select(row => (object)new Dictionary<string, object>
                 {
                     { "participantKey", row.ParticipantKey ?? ((row.Name ?? "") + ":" + row.PartyNumber + ":" + row.PartySlot) },
@@ -1340,25 +1364,35 @@ namespace KinojoMeterPrototype
                     { "damageShare", row.Share },
                     { "isSelf", row.IsSelf }
                 }).ToList();
+                var damageCompleteness = snapshot.BossMaxHp > 0 ? Math.Min(1.0, Math.Max(0.0, partyTotalDamage / (double)snapshot.BossMaxHp)) : 0.0;
                 var payload = new Dictionary<string, object>
                 {
                     { "sourceEventId", BuildSourceEventId(snapshot, _selected) },
-                    { "catalogVersion", canonical.CatalogVersion },
-                    { "classKey", canonical.ClassKey },
+                    { "catalogVersion", canonical == null ? (_catalog == null ? "" : _catalog.CatalogVersion) : canonical.CatalogVersion },
+                    { "classKey", canonical == null ? (_selected.ClassKey ?? "") : canonical.ClassKey },
                     { "serverId", _selected.ServerId ?? "" },
+                    { "serverName", _selected.ServerName ?? "" },
                     { "pveCombatPower", _selected.PveCombatPower },
-                    { "contentKey", canonical.ContentKey },
-                    { "dungeonKey", canonical.DungeonKey },
-                    { "difficultyKey", canonical.DifficultyKey },
-                    { "variantKey", canonical.VariantKey },
-                    { "bossKey", canonical.BossKey },
-                    { "bossName", canonical.BossName },
-                    { "dungeonName", canonical.DungeonName },
+                    { "contentKey", canonical == null ? (snapshot.ContentKey ?? "") : canonical.ContentKey },
+                    { "contentName", snapshot.ContentName ?? "" },
+                    { "dungeonKey", canonical == null ? (snapshot.DungeonKey ?? "") : canonical.DungeonKey },
+                    { "difficultyKey", canonical == null ? (snapshot.DifficultyKey ?? "") : canonical.DifficultyKey },
+                    { "difficultyName", snapshot.DifficultyName ?? "" },
+                    { "variantKey", canonical == null ? (snapshot.VariantKey ?? "") : canonical.VariantKey },
+                    { "bossKey", canonical == null ? "" : canonical.BossKey },
+                    { "bossName", canonical == null ? snapshot.BossName : canonical.BossName },
+                    { "dungeonName", canonical == null ? (snapshot.DungeonName ?? "") : canonical.DungeonName },
+                    { "bossOrder", snapshot.BossOrder },
+                    { "bossRuntimeId", snapshot.BossRuntimeId },
+                    { "bossScopedId", snapshot.BossId ?? "" },
+                    { "bossMaxHp", snapshot.BossMaxHp },
                     { "encounterStatus", "CLEARED" },
                     { "status", "CLEARED" },
-                    { "totalDamage", self.TotalDamage },
-                    { "dps", self.Dps },
+                    { "totalDamage", self == null ? 0L : self.TotalDamage },
+                    { "partyTotalDamage", partyTotalDamage },
+                    { "dps", self == null ? 0.0 : self.Dps },
                     { "durationMs", durationMs },
+                    { "durationSeconds", durationMs / 1000.0 },
                     { "activeDurationMs", durationMs },
                     { "partySize", participants.Count },
                     { "schemaVersion", 3 },
@@ -1368,11 +1402,24 @@ namespace KinojoMeterPrototype
                     { "captureMode", snapshot.CaptureMode ?? "" },
                     { "decoderType", snapshot.DecoderType ?? "" },
                     { "decoderVersion", snapshot.DecoderVersion ?? "" },
-                    { "catalogResolutionMode", "SERVER_CANONICAL" },
+                    { "damageCompleteness", damageCompleteness },
+                    { "catalogResolutionMode", canonical == null ? "CAPTURED_HINT" : "SERVER_CANONICAL" },
                     { "participants", participants }
                 };
-                await _api.SubmitEncounterAsync(_login.SessionToken, payload);
-                _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "서버 저장 완료 · 다음 보스 전투 데이터 수집 대기");
+                if (snapshot.UploadEligible)
+                {
+                    if (self == null || self.TotalDamage <= 0)
+                        throw new MeterApiException("SELF_DAMAGE_REQUIRED", "공개 통계 제출에는 선택 캐릭터 피해량이 필요합니다.");
+                    await _api.SubmitEncounterAsync(_login.SessionToken, payload);
+                    _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "공개 전투 통계 저장 완료 · 다음 보스 전투 데이터 수집 대기");
+                    DiagnosticLog.Info("UPLOAD", "Canonical encounter stored · boss=" + (snapshot.BossName ?? "") + " · damage=" + partyTotalDamage);
+                }
+                else
+                {
+                    await _api.SubmitObservedEncounterAsync(_login.SessionToken, payload);
+                    _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "검증 전 수집 기록 서버 저장 완료 · 다음 보스 전투 데이터 수집 대기");
+                    DiagnosticLog.Info("UPLOAD", "Observed encounter stored · publicStats=false · boss=" + (snapshot.BossName ?? "") + " · damage=" + partyTotalDamage);
+                }
             }
             catch (Exception ex)
             {

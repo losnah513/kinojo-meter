@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "product": "KINOJO Meter",
-  "version": "0.2.32",
-  "fileVersion": "0.2.32.0",
+  "version": "0.2.33",
+  "fileVersion": "0.2.33.0",
   "channel": "stable",
-  "databaseContract": "50013",
-  "edgeApiVersion": "50013.1",
+  "databaseContract": "50015",
+  "edgeApiVersion": "50015.1",
   "catalogMode": "SERVER_OWNED_AUTO_DETECTED",
   "canonicalSubmissionRequired": true,
   "localAliasResolutionAllowed": false,
@@ -19,6 +19,7 @@
   "administratorDiagnosticsOnly": true,
   "serverUpdateManifestReady": true,
   "serverUploadEnabled": false,
+  "serverObservedUploadEnabled": true,
   "binaryDecoderValidated": false,
   "captureDependencies": {
     "SharpPcap": "6.3.1 (NuGet restore)",
