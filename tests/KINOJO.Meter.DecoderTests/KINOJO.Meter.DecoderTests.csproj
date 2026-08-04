@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <StartupObject>KinojoMeterPrototype.DecoderTestProgram</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\src\Models.cs" Link="Models.cs" />
+    <Compile Include="..\..\src\AionWindowCharacterDetector.cs" Link="AionWindowCharacterDetector.cs" />
+    <Compile Include="..\..\src\GameCapture.cs" Link="GameCapture.cs" />
+    <Compile Include="..\..\src\AionCombatDecoder.cs" Link="AionCombatDecoder.cs" />
+    <Compile Include="..\..\src\DecoderSelfTest.cs" Link="DecoderSelfTest.cs" />
+    <Compile Include="..\..\src\CombatEngine.cs" Link="CombatEngine.cs" />
+    <Compile Include="..\..\src\DiagnosticLog.cs" Link="DiagnosticLog.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SharpPcap" Version="6.3.1" />
+    <PackageReference Include="PacketDotNet" Version="1.4.8" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+</Project>
