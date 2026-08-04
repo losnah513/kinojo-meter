@@ -39,6 +39,7 @@
     <Compile Include="..\..\src\AionWindowCharacterDetector.cs" Link="AionWindowCharacterDetector.cs" />
     <Compile Include="..\..\src\GameHudProbe.cs" Link="GameHudProbe.cs" />
     <Compile Include="..\..\src\CombatEngine.cs" Link="CombatEngine.cs" />
+    <Compile Include="..\..\src\PartyProfileRetryQueue.cs" Link="PartyProfileRetryQueue.cs" />
     <Compile Include="..\..\src\Models.cs" Link="Models.cs" />
     <Compile Include="..\..\src\PreferencesStore.cs" Link="PreferencesStore.cs" />
     <Compile Include="..\..\src\SystemTrayController.cs" Link="SystemTrayController.cs" />

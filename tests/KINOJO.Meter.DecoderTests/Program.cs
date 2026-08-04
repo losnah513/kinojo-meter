@@ -13,7 +13,8 @@ namespace KinojoMeterPrototype
         {
             if (args != null && args.Length == 2 && String.Equals(args[0], "--fixture", StringComparison.OrdinalIgnoreCase))
                 return ReplayFixture(args[1]);
-            var passed = DecoderSelfTest.Run() && RunWindowTitleCharacterTests() && RunSmallPartyRosterTests() && RunCombatEngineTests();
+            var passed = DecoderSelfTest.Run() && RunWindowTitleCharacterTests() && RunSmallPartyRosterTests() &&
+                RunCombatEngineTests() && RunProfileRetryQueueTests();
             Console.WriteLine(passed ? "KINOJO decoder and combat-engine regression tests passed." : "KINOJO regression tests failed.");
             return passed ? 0 : 1;
         }
@@ -62,6 +63,37 @@ namespace KinojoMeterPrototype
             engine.ReplaceObservedParty(partial);
             if (engine.Snapshot().Rows.Count(row => !row.IsEmpty) != 5) return EngineFailure("bus passenger was removed by repeated partial rosters");
 
+            var precombat = new CombatSessionEngine(self, 5);
+            var three = new[] { "청소기", "따숩", "찜" }.Select((name, index) => new CombatEvent
+            {
+                Kind = CombatEventKind.PartyMember,
+                ActorId = "party-probe:" + (1200 + index) + ":" + name,
+                ActorName = name,
+                ActorServerRaw = 1200 + index,
+                PartyNumber = 1,
+                PartySlot = index + 1
+            }).ToList();
+            precombat.ReplaceObservedParty(three, "PACKET_SMALL_ROSTER_CONFIRMED");
+            precombat.ReplaceObservedParty(three.Take(2), "PACKET_SMALL_ROSTER_CONFIRMED");
+            if (precombat.Snapshot().Rows.Count(row => !row.IsEmpty) != 2) return EngineFailure("confirmed pre-combat 3-to-2 leave did not converge");
+            precombat.ReplaceObservedParty(three.Take(1), "PACKET_SOLO_ROSTER_CONFIRMED");
+            if (precombat.Snapshot().Rows.Count(row => !row.IsEmpty) != 1) return EngineFailure("confirmed pre-combat 2-to-1 leave did not converge");
+
+            var inCombat = new CombatSessionEngine(self, 5);
+            inCombat.ReplaceObservedParty(three, "PACKET_SMALL_ROSTER_CONFIRMED");
+            inCombat.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow, ActorId = three[0].ActorId, ActorName = three[0].ActorName, ActorServerRaw = three[0].ActorServerRaw, TargetId = "boss", Damage = 100, IsBoss = true });
+            inCombat.ReplaceObservedParty(three.Take(2), "PACKET_SMALL_ROSTER_CONFIRMED");
+            if (inCombat.Snapshot().Rows.Count(row => !row.IsEmpty) != 3) return EngineFailure("in-combat confirmed shrink removed an encounter participant");
+
+            var sameName = new CombatSessionEngine(null, 5);
+            sameName.ReplaceObservedParty(new[]
+            {
+                new CombatEvent { Kind = CombatEventKind.PartyMember, ActorId = "party-probe:1200:중복", ActorName = "중복", ActorServerRaw = 1200, PartyNumber = 1, PartySlot = 1 },
+                new CombatEvent { Kind = CombatEventKind.PartyMember, ActorId = "party-probe:1201:중복", ActorName = "중복", ActorServerRaw = 1201, PartyNumber = 1, PartySlot = 2 }
+            }, "PACKET_SMALL_ROSTER_CONFIRMED");
+            if (sameName.Snapshot().Rows.Count(row => !row.IsEmpty) != 2) return EngineFailure("same-name characters on different servers were merged");
+            sameName.ApplyProfile(new PartyProfileResult { ParticipantKey = "missing", CharacterName = "없는사람", ServerId = "999" });
+
             engine = new CombatSessionEngine(self, 5);
             engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow, ActorId = "a", ActorName = "청소기", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", BossOrder = 1, Damage = 100, IsBoss = true });
             engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow.AddSeconds(1), ActorId = "b", ActorName = "권트", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", BossOrder = 1, Damage = 300, IsBoss = true });
@@ -105,10 +137,21 @@ namespace KinojoMeterPrototype
             var frame = new GameFrameEventArgs(threeMembers, DateTime.UtcNow, "A>B", "A<>B", "A_TO_B");
             decoder.TryDecode(frame, new List<CombatEvent>());
             if (detected.Count != 0) return EngineFailure("small roster was accepted without repeated confirmation");
+            decoder.TryDecode(new GameFrameEventArgs(new byte[] { 0x10, 0x20, 0x30, 0x40 }, DateTime.UtcNow, "A>B", "A<>B", "A_TO_B"), new List<CombatEvent>());
+            if (detected.Count != 0) return EngineFailure("retained TCP tail was counted as an independent roster observation");
             decoder.TryDecode(frame, new List<CombatEvent>());
             if (detected.Count != 1 || detected[0].Members.Count != 3 ||
                 !String.Equals(detected[0].Evidence, "PACKET_SMALL_ROSTER_CONFIRMED", StringComparison.Ordinal))
                 return EngineFailure("confirmed 3/5 roster was not emitted · candidates=" + String.Join(" || ", candidateDetails));
+
+            var solo = new GameFrameEventArgs(BuildRosterFrame(new[] { "청소기" }), DateTime.UtcNow, "A>B", "A<>B", "A_TO_B");
+            decoder.TryDecode(solo, new List<CombatEvent>());
+            decoder.TryDecode(solo, new List<CombatEvent>());
+            if (detected.Count != 1) return EngineFailure("solo roster was accepted before three independent confirmations");
+            decoder.TryDecode(solo, new List<CombatEvent>());
+            if (detected.Count != 2 || detected[1].Members.Count != 1 ||
+                !String.Equals(detected[1].Evidence, "PACKET_SOLO_ROSTER_CONFIRMED", StringComparison.Ordinal))
+                return EngineFailure("confirmed solo roster was not emitted");
 
             var untrustedDetected = 0;
             var untrusted = new AionBinaryFrameDecoder(new[] { "다른캐릭터" });
@@ -123,6 +166,35 @@ namespace KinojoMeterPrototype
             var fourMembers = BuildRosterFrame(new[] { "청소기", "따숩", "찜", "네번째" });
             legacy.TryDecode(new GameFrameEventArgs(fourMembers, DateTime.UtcNow, "A>B", "C<>D", "A_TO_B"), new List<CombatEvent>());
             if (legacyDetected != 1) return EngineFailure("legacy 4+ roster recognition regressed");
+
+            var duplicateNameDetected = new List<PartyRosterDetectedEventArgs>();
+            var duplicateNameDecoder = new AionBinaryFrameDecoder(new[] { "중복" });
+            duplicateNameDecoder.PartyRosterDetected += delegate(object sender, PartyRosterDetectedEventArgs value) { duplicateNameDetected.Add(value); };
+            var duplicateNameFrame = new GameFrameEventArgs(BuildRosterFrame(new[] { "중복", "중복" }), DateTime.UtcNow, "A>B", "E<>F", "A_TO_B");
+            duplicateNameDecoder.TryDecode(duplicateNameFrame, new List<CombatEvent>());
+            duplicateNameDecoder.TryDecode(duplicateNameFrame, new List<CombatEvent>());
+            if (duplicateNameDetected.Count != 1 || duplicateNameDetected[0].Members.Count != 2)
+                return EngineFailure("same-name roster records from different raw servers were collapsed");
+            return true;
+        }
+
+        private static bool RunProfileRetryQueueTests()
+        {
+            var now = DateTime.UtcNow;
+            var row = new CombatRow { ParticipantKey = "party:one", Name = "따숩", ServerRaw = 1200 };
+            var queue = new PartyProfileRetryQueue(TimeSpan.FromSeconds(25));
+            string key;
+            if (!queue.TryBegin(row, now, out key)) return EngineFailure("initial profile lookup was not scheduled");
+            queue.Complete(key, row, false, now);
+            if (queue.TakeDue(now.AddSeconds(24), new[] { row }).Count != 0) return EngineFailure("profile retry ran before the 25-second interval");
+            var due = queue.TakeDue(now.AddSeconds(25), new[] { row });
+            if (due.Count != 1 || !queue.TryBegin(due[0], now.AddSeconds(25), out key)) return EngineFailure("unresolved profile was not retried automatically");
+            queue.Complete(key, row, true, now.AddSeconds(25));
+            if (queue.TakeDue(now.AddMinutes(1), new[] { row }).Count != 0) return EngineFailure("resolved profile remained in the retry queue");
+
+            if (!queue.TryBegin(row, now.AddMinutes(2), out key)) return EngineFailure("new profile lookup was not scheduled after resolution");
+            queue.Complete(key, row, false, now.AddMinutes(2));
+            if (queue.TakeDue(now.AddMinutes(3), new CombatRow[0]).Count != 0) return EngineFailure("departed participant remained in the retry queue");
             return true;
         }
 

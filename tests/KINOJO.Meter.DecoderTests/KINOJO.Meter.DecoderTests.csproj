@@ -15,6 +15,7 @@
     <Compile Include="..\..\src\AionCombatDecoder.cs" Link="AionCombatDecoder.cs" />
     <Compile Include="..\..\src\DecoderSelfTest.cs" Link="DecoderSelfTest.cs" />
     <Compile Include="..\..\src\CombatEngine.cs" Link="CombatEngine.cs" />
+    <Compile Include="..\..\src\PartyProfileRetryQueue.cs" Link="PartyProfileRetryQueue.cs" />
     <Compile Include="..\..\src\DiagnosticLog.cs" Link="DiagnosticLog.cs" />
   </ItemGroup>
   <ItemGroup>

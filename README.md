@@ -14,6 +14,15 @@ Edge API: `50015.2`
 - 회차 마감은 GitHub / Server / Google Drive / 작업 로그를 각각 독립 상태로 보고합니다.
 - 운영 Server 제출은 실제 게임에서 피해 합계 완전성과 보스·참가자 canonical 판정이 확인될 때까지 차단합니다.
 
+## 0.2.36 파티 탈퇴 수렴·프로필 자동 재시도·CI 회귀검사
+
+- TCP 꼬리에 남은 과거 명단은 새 바이트에 걸친 레코드가 없으면 새 관측으로 세지 않습니다. 새 `0x3641` envelope가 들어오면 그 envelope 이후 레코드만 독립 관측으로 사용합니다.
+- 전투 전에는 소유 캐릭터와 envelope를 확인한 2~3인 명단 2회 또는 1인 명단 3회가 독립 확인되면 `3→2`, `2→1` 탈퇴를 반영합니다. 전투가 시작됐거나 피해가 있는 행은 축소·절단 관측으로 제거하지 않습니다.
+- 파티원 병합·프로필 반영은 캐릭터 이름뿐 아니라 플랫폼 캐릭터 ID, Server ID, Server raw/name을 함께 비교합니다. 동명이인 후보가 둘 이상이면 이름만으로 임의 병합하지 않습니다.
+- 최초 `partyProfiles` 응답이 `UNRESOLVED`·빈 응답·예외여도 25초 뒤 자동 재조회합니다. 파티에서 이탈한 행은 재시도 큐에서 제거하고 해결된 프로필은 재조회하지 않습니다.
+- Windows GitHub Actions는 설치기 패키징 전에 Decoder·파티 명단·전투 엔진·프로필 재시도 회귀검사를 실제 실행합니다. `tests/**` 변경도 CI 실행 대상으로 포함합니다.
+- Decoder는 계속 `BINARY_PARTIAL_VALIDATED`, `UploadEligible=false`이며 공개 통계 Gate, Meter SQL `50015`, Edge API `50015.2`는 변경하지 않습니다.
+
 ## 0.2.35 모집 중 2~3인 파티 실시간 명단 판독
 
 - 기존 파티 파서는 연속 구조화 레코드가 4명 이상일 때만 명단 이벤트를 만들었기 때문에 게임 파티창이 `2/5` 또는 `3/5`인 모집 단계에서는 본인 외 인원이 미터기에 나타날 수 없었습니다.
@@ -386,7 +395,7 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 
 - Supabase Meter SQL `50009~50015`: 운영 반영 완료
 - `meter-ingest` Edge Function API `50015.2`: 운영 배포 완료
-- Desktop 최신 소스 `0.2.34`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- Desktop 최신 소스 `0.2.36`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
 - AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.

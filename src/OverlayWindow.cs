@@ -355,9 +355,19 @@ namespace KinojoMeterPrototype
 
         public void ApplyProfile(PartyProfileResult profile)
         {
-            var before = _engine.Snapshot().Rows.FirstOrDefault(row => !row.IsEmpty &&
-                ((!String.IsNullOrWhiteSpace(profile == null ? "" : profile.ParticipantKey) && String.Equals(row.ParticipantKey, profile.ParticipantKey, StringComparison.OrdinalIgnoreCase)) ||
-                 (!String.IsNullOrWhiteSpace(profile == null ? "" : profile.CharacterName) && String.Equals(row.Name, profile.CharacterName, StringComparison.OrdinalIgnoreCase))));
+            var rows = _engine.Snapshot().Rows.Where(row => !row.IsEmpty).ToList();
+            var before = profile == null ? null : rows.FirstOrDefault(row =>
+                (!String.IsNullOrWhiteSpace(profile.ParticipantKey) && String.Equals(row.ParticipantKey, profile.ParticipantKey, StringComparison.OrdinalIgnoreCase)) ||
+                (!String.IsNullOrWhiteSpace(profile.PlatformCharacterId) && String.Equals(row.PlatformCharacterId, profile.PlatformCharacterId, StringComparison.OrdinalIgnoreCase)));
+            if (before == null && profile != null && !String.IsNullOrWhiteSpace(profile.CharacterName))
+            {
+                var nameMatches = rows.Where(row => String.Equals(row.Name, profile.CharacterName, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (!String.IsNullOrWhiteSpace(profile.ServerId))
+                    before = nameMatches.FirstOrDefault(row => String.Equals(row.ServerId, profile.ServerId, StringComparison.OrdinalIgnoreCase));
+                else if (!String.IsNullOrWhiteSpace(profile.ServerName))
+                    before = nameMatches.FirstOrDefault(row => String.Equals(row.ServerName, profile.ServerName, StringComparison.OrdinalIgnoreCase));
+                else if (nameMatches.Count == 1) before = nameMatches[0];
+            }
             _engine.ApplyProfile(profile);
             if (before != null && before.ClassRaw > 0 && profile != null &&
                 (!String.IsNullOrWhiteSpace(profile.ClassKey) || !String.IsNullOrWhiteSpace(profile.ClassName)))
@@ -367,6 +377,11 @@ namespace KinojoMeterPrototype
                 _engine.ApplyClassMapping(before.ClassRaw, profile.ClassKey, profile.ClassName);
             }
             Render(_engine.Snapshot());
+        }
+
+        public IList<CombatRow> GetParticipantSnapshot()
+        {
+            return _engine.Snapshot().Rows.Where(row => !row.IsEmpty).ToList();
         }
 
         public void SetEncounterProcessingState(string state, string text)
@@ -482,7 +497,7 @@ namespace KinojoMeterPrototype
                 })
                 .ToList();
             if (roster.Count == 0) return;
-            _engine.ReplaceObservedParty(roster);
+            _engine.ReplaceObservedParty(roster, evidence);
             foreach (var member in value.Members ?? new List<DetectedPartyMember>())
             {
                 Color observed;

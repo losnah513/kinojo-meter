@@ -35,9 +35,7 @@ namespace KinojoMeterPrototype
         private string _variantKey = "";
         private string _zoneId = "";
         private string _zoneName = "";
-        private readonly HashSet<string> _rosterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private string _lastPartialRosterSignature = "";
-        private int _partialRosterConfirmations;
+        private readonly HashSet<string> _rosterParticipantKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private CaptureRuntimeInfo _runtime = new CaptureRuntimeInfo { CaptureMode = "ACTUAL", DecoderType = "BINARY_UNVALIDATED", DecoderVersion = "aion2-pending-fixture", UploadEligible = false };
 
         public event EventHandler SnapshotChanged;
@@ -72,9 +70,7 @@ namespace KinojoMeterPrototype
                 _bossIdentityMode = _bossHpSource = "";
                 _completionMode = "";
                 _bossConfirmed = _running = _cleared = false;
-                _rosterNames.Clear();
-                _lastPartialRosterSignature = "";
-                _partialRosterConfirmations = 0;
+                _rosterParticipantKeys.Clear();
             }
             RaiseSnapshotChanged();
         }
@@ -236,9 +232,7 @@ namespace KinojoMeterPrototype
                 if (!String.IsNullOrWhiteSpace(profile.ParticipantKey)) _participants.TryGetValue(profile.ParticipantKey, out changed);
                 if (changed == null && !String.IsNullOrWhiteSpace(profile.PlatformCharacterId))
                     changed = _participants.Values.FirstOrDefault(row => String.Equals(row.PlatformCharacterId, profile.PlatformCharacterId, StringComparison.OrdinalIgnoreCase));
-                if (changed == null && !String.IsNullOrWhiteSpace(profile.CharacterName))
-                    changed = _participants.Values.FirstOrDefault(row => String.Equals(row.Name, profile.CharacterName, StringComparison.OrdinalIgnoreCase)
-                        && (String.IsNullOrWhiteSpace(profile.ServerId) || String.Equals(row.ServerId, profile.ServerId, StringComparison.OrdinalIgnoreCase)));
+                if (changed == null) changed = FindParticipantForProfileLocked(profile);
                 if (changed == null) return;
                 if (!String.IsNullOrWhiteSpace(profile.PlatformCharacterId)) changed.PlatformCharacterId = profile.PlatformCharacterId;
                 if (!String.IsNullOrWhiteSpace(profile.ServerId)) changed.ServerId = profile.ServerId;
@@ -254,58 +248,44 @@ namespace KinojoMeterPrototype
             RaiseSnapshotChanged();
         }
 
-        public void ReplaceObservedParty(IEnumerable<CombatEvent> members)
+        public void ReplaceObservedParty(IEnumerable<CombatEvent> members, string evidence = null)
         {
             var changed = new List<CombatRow>();
             lock (_gate)
             {
                 var incoming = (members ?? Enumerable.Empty<CombatEvent>())
                     .Where(member => member != null && !String.IsNullOrWhiteSpace(member.ActorName))
-                    .GroupBy(member => member.ActorName.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .GroupBy(BuildRosterIdentity, StringComparer.OrdinalIgnoreCase)
                     .Select(group => group.First())
                     .ToList();
-                var incomingNames = new HashSet<string>(incoming.Select(member => member.ActorName.Trim()), StringComparer.OrdinalIgnoreCase);
-                var partial = _rosterNames.Count > 0 && incomingNames.Count < _rosterNames.Count && _rosterNames.Except(incomingNames).Any();
-                var signature = String.Join("|", incomingNames.OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
-                if (partial)
+                var incomingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var member in incoming)
                 {
-                    if (String.Equals(_lastPartialRosterSignature, signature, StringComparison.OrdinalIgnoreCase)) _partialRosterConfirmations++;
-                    else
-                    {
-                        _lastPartialRosterSignature = signature;
-                        _partialRosterConfirmations = 1;
-                    }
-                }
-                else
-                {
-                    _lastPartialRosterSignature = "";
-                    _partialRosterConfirmations = 0;
+                    var row = UpsertParticipant(member);
+                    incomingKeys.Add(row.ParticipantKey);
+                    changed.Add(Clone(row));
                 }
 
-                foreach (var member in incoming)
-                    changed.Add(Clone(UpsertParticipant(member)));
+                var hasMissing = _rosterParticipantKeys.Except(incomingKeys).Any();
+                var partial = _rosterParticipantKeys.Count > 0 && incomingKeys.Count < _rosterParticipantKeys.Count && hasMissing;
+                var replacementAllowed = !hasMissing || (!HasEncounterActivityLocked() && (!partial || IsConfirmedRosterEvidence(evidence)));
 
                 // A bus party can legitimately have four zero-damage passengers waiting at
-                // the final boss. A truncated roster must never evict them merely because
-                // they have not dealt damage. A complete same-size replacement can still
-                // replace members by name; partial observations only refresh what was seen.
-                if (!partial)
+                // the final boss. Only an independently confirmed pre-combat small/solo roster
+                // may converge a shrink; truncated or in-combat observations remain upserts.
+                if (replacementAllowed)
                 {
-                    foreach (var missingName in _rosterNames.Except(incomingNames).ToList())
+                    foreach (var missingKey in _rosterParticipantKeys.Except(incomingKeys).ToList())
                     {
-                        var missing = _participants.Values.FirstOrDefault(row => !row.IsEmpty && String.Equals(row.Name, missingName, StringComparison.OrdinalIgnoreCase));
-                        if (missing != null && !missing.IsSelf)
-                        {
-                            var missingKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, missing)).Key;
-                            _participants.Remove(missingKey);
-                        }
+                        CombatRow missing;
+                        if (_participants.TryGetValue(missingKey, out missing) && !missing.IsSelf) _participants.Remove(missingKey);
                     }
-                    _rosterNames.Clear();
-                    foreach (var name in incomingNames) _rosterNames.Add(name);
+                    _rosterParticipantKeys.Clear();
+                    foreach (var key in incomingKeys) _rosterParticipantKeys.Add(key);
                 }
                 else
                 {
-                    foreach (var name in incomingNames) _rosterNames.Add(name);
+                    foreach (var key in incomingKeys) _rosterParticipantKeys.Add(key);
                 }
                 RecalculateShares(_cleared && _endedAtUtc != DateTime.MinValue ? _endedAtUtc : DateTime.UtcNow);
             }
@@ -426,19 +406,19 @@ namespace KinojoMeterPrototype
 
         private CombatRow UpsertParticipant(CombatEvent value)
         {
-            var key = !String.IsNullOrWhiteSpace(value.ActorId) ? value.ActorId : (value.ActorServerId + ":" + value.ActorName);
+            var key = BuildParticipantKey(value);
             if (String.IsNullOrWhiteSpace(key)) key = "unknown-" + _participants.Count;
             CombatRow row;
             if (!_participants.TryGetValue(key, out row))
             {
-                if (!String.IsNullOrWhiteSpace(value.ActorName))
-                    row = _participants.Values.FirstOrDefault(candidate => !candidate.IsEmpty && String.Equals(candidate.Name, value.ActorName, StringComparison.OrdinalIgnoreCase));
+                row = FindParticipantLocked(value);
                 if (row != null)
                 {
                     var previousKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, row)).Key;
                     _participants.Remove(previousKey);
                     row.ParticipantKey = key;
                     _participants[key] = row;
+                    ReplaceRosterKeyLocked(previousKey, key);
                 }
             }
             if (row == null)
@@ -482,8 +462,7 @@ namespace KinojoMeterPrototype
                 row.IsSelf = row.IsSelf || IsSelf(value);
                 return row;
             }
-            row = _participants.Values.FirstOrDefault(candidate => !candidate.IsEmpty &&
-                !String.IsNullOrWhiteSpace(value.ActorName) && String.Equals(candidate.Name, value.ActorName, StringComparison.OrdinalIgnoreCase));
+            row = FindParticipantLocked(value);
             if (row == null && IsSelf(value)) return UpsertParticipant(value);
             if (row == null) return null;
             var oldKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, row)).Key;
@@ -492,8 +471,92 @@ namespace KinojoMeterPrototype
                 _participants.Remove(oldKey);
                 row.ParticipantKey = value.ActorId;
                 _participants[value.ActorId] = row;
+                ReplaceRosterKeyLocked(oldKey, value.ActorId);
             }
             return row;
+        }
+
+        private CombatRow FindParticipantLocked(CombatEvent value)
+        {
+            if (value == null || String.IsNullOrWhiteSpace(value.ActorName)) return null;
+            var candidates = _participants.Values.Where(candidate => !candidate.IsEmpty &&
+                String.Equals(candidate.Name, value.ActorName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!String.IsNullOrWhiteSpace(value.PlatformCharacterId))
+            {
+                var byPlatform = candidates.FirstOrDefault(candidate => String.Equals(candidate.PlatformCharacterId, value.PlatformCharacterId, StringComparison.OrdinalIgnoreCase));
+                if (byPlatform != null) return byPlatform;
+            }
+            if (!String.IsNullOrWhiteSpace(value.ActorServerId))
+            {
+                var byServerId = candidates.FirstOrDefault(candidate => String.Equals(candidate.ServerId, value.ActorServerId, StringComparison.OrdinalIgnoreCase));
+                if (byServerId != null) return byServerId;
+                return null;
+            }
+            if (value.ActorServerRaw > 0)
+            {
+                var byServerRaw = candidates.FirstOrDefault(candidate => candidate.ServerRaw == value.ActorServerRaw);
+                if (byServerRaw != null) return byServerRaw;
+                return null;
+            }
+            if (!String.IsNullOrWhiteSpace(value.ActorServer))
+            {
+                var byServerName = candidates.FirstOrDefault(candidate => String.Equals(candidate.ServerName, value.ActorServer, StringComparison.OrdinalIgnoreCase));
+                if (byServerName != null) return byServerName;
+                return null;
+            }
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+
+        private CombatRow FindParticipantForProfileLocked(PartyProfileResult profile)
+        {
+            if (profile == null || String.IsNullOrWhiteSpace(profile.CharacterName)) return null;
+            var candidates = _participants.Values.Where(row => !row.IsEmpty &&
+                String.Equals(row.Name, profile.CharacterName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!String.IsNullOrWhiteSpace(profile.ServerId))
+                return candidates.FirstOrDefault(row => String.Equals(row.ServerId, profile.ServerId, StringComparison.OrdinalIgnoreCase));
+            if (!String.IsNullOrWhiteSpace(profile.ServerName))
+                return candidates.FirstOrDefault(row => String.Equals(row.ServerName, profile.ServerName, StringComparison.OrdinalIgnoreCase));
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+
+        private static string BuildParticipantKey(CombatEvent value)
+        {
+            if (value == null) return "";
+            if (!String.IsNullOrWhiteSpace(value.ActorId)) return value.ActorId;
+            if (!String.IsNullOrWhiteSpace(value.PlatformCharacterId)) return "platform:" + value.PlatformCharacterId.Trim();
+            if (!String.IsNullOrWhiteSpace(value.ActorServerId)) return "server:" + value.ActorServerId.Trim() + ":" + (value.ActorName ?? "").Trim();
+            if (value.ActorServerRaw > 0) return "server-raw:" + value.ActorServerRaw + ":" + (value.ActorName ?? "").Trim();
+            if (!String.IsNullOrWhiteSpace(value.ActorServer)) return "server-name:" + value.ActorServer.Trim() + ":" + (value.ActorName ?? "").Trim();
+            return (value.ActorName ?? "").Trim();
+        }
+
+        private static string BuildRosterIdentity(CombatEvent value)
+        {
+            if (value == null) return "";
+            if (!String.IsNullOrWhiteSpace(value.PlatformCharacterId)) return "platform:" + value.PlatformCharacterId.Trim();
+            if (!String.IsNullOrWhiteSpace(value.ActorServerId)) return "server:" + value.ActorServerId.Trim() + ":" + (value.ActorName ?? "").Trim();
+            if (value.ActorServerRaw > 0) return "server-raw:" + value.ActorServerRaw + ":" + (value.ActorName ?? "").Trim();
+            if (!String.IsNullOrWhiteSpace(value.ActorServer)) return "server-name:" + value.ActorServer.Trim() + ":" + (value.ActorName ?? "").Trim();
+            return "name:" + (value.ActorName ?? "").Trim();
+        }
+
+        private void ReplaceRosterKeyLocked(string previousKey, string newKey)
+        {
+            if (String.IsNullOrWhiteSpace(previousKey) || String.IsNullOrWhiteSpace(newKey) ||
+                !_rosterParticipantKeys.Remove(previousKey)) return;
+            _rosterParticipantKeys.Add(newKey);
+        }
+
+        private static bool IsConfirmedRosterEvidence(string evidence)
+        {
+            return String.Equals(evidence, "PACKET_SMALL_ROSTER_CONFIRMED", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(evidence, "PACKET_SOLO_ROSTER_CONFIRMED", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(evidence, "HUD_OCR_PARTY_ROSTER_CONFIRMED", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool HasEncounterActivityLocked()
+        {
+            return _running || _startedAtUtc != DateTime.MinValue || _participants.Values.Any(row => row.TotalDamage > 0);
         }
 
         private void ResetEncounterDamageLocked()
@@ -525,7 +588,12 @@ namespace KinojoMeterPrototype
         {
             if (_self == null) return false;
             if (!String.IsNullOrWhiteSpace(_self.CharKey) && !String.IsNullOrWhiteSpace(value.ActorId) && String.Equals(_self.CharKey, value.ActorId, StringComparison.OrdinalIgnoreCase)) return true;
-            return !String.IsNullOrWhiteSpace(value.ActorName) && String.Equals(_self.CharacterName, value.ActorName, StringComparison.OrdinalIgnoreCase);
+            if (String.IsNullOrWhiteSpace(value.ActorName) || !String.Equals(_self.CharacterName, value.ActorName, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!String.IsNullOrWhiteSpace(_self.ServerId) && !String.IsNullOrWhiteSpace(value.ActorServerId) &&
+                !String.Equals(_self.ServerId, value.ActorServerId, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!String.IsNullOrWhiteSpace(_self.ServerName) && !String.IsNullOrWhiteSpace(value.ActorServer) &&
+                !String.Equals(_self.ServerName, value.ActorServer, StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
         }
 
         private Tuple<int, int> FindNextSlot()
