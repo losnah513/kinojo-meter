@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 
 namespace KinojoMeterPrototype
 {
@@ -12,7 +13,7 @@ namespace KinojoMeterPrototype
         {
             if (args != null && args.Length == 2 && String.Equals(args[0], "--fixture", StringComparison.OrdinalIgnoreCase))
                 return ReplayFixture(args[1]);
-            var passed = DecoderSelfTest.Run() && RunWindowTitleCharacterTests() && RunCombatEngineTests();
+            var passed = DecoderSelfTest.Run() && RunWindowTitleCharacterTests() && RunSmallPartyRosterTests() && RunCombatEngineTests();
             Console.WriteLine(passed ? "KINOJO decoder and combat-engine regression tests passed." : "KINOJO regression tests failed.");
             return passed ? 0 : 1;
         }
@@ -91,6 +92,68 @@ namespace KinojoMeterPrototype
                 return EngineFailure("completed snapshot timing changed during roster or metadata enrichment");
             if (enriched.DungeonName != "환영의 회랑" || enriched.DifficultyName != "정복") return EngineFailure("HUD metadata was not retained by the combat engine");
             return true;
+        }
+
+        private static bool RunSmallPartyRosterTests()
+        {
+            var detected = new List<PartyRosterDetectedEventArgs>();
+            var candidateDetails = new List<string>();
+            var decoder = new AionBinaryFrameDecoder(new[] { "청소기" });
+            decoder.PartyRosterDetected += delegate(object sender, PartyRosterDetectedEventArgs value) { detected.Add(value); };
+            decoder.PartyRosterCandidateObserved += delegate(object sender, string value) { candidateDetails.Add(value); };
+            var threeMembers = BuildRosterFrame(new[] { "청소기", "따숩", "찜" });
+            var frame = new GameFrameEventArgs(threeMembers, DateTime.UtcNow, "A>B", "A<>B", "A_TO_B");
+            decoder.TryDecode(frame, new List<CombatEvent>());
+            if (detected.Count != 0) return EngineFailure("small roster was accepted without repeated confirmation");
+            decoder.TryDecode(frame, new List<CombatEvent>());
+            if (detected.Count != 1 || detected[0].Members.Count != 3 ||
+                !String.Equals(detected[0].Evidence, "PACKET_SMALL_ROSTER_CONFIRMED", StringComparison.Ordinal))
+                return EngineFailure("confirmed 3/5 roster was not emitted · candidates=" + String.Join(" || ", candidateDetails));
+
+            var untrustedDetected = 0;
+            var untrusted = new AionBinaryFrameDecoder(new[] { "다른캐릭터" });
+            untrusted.PartyRosterDetected += delegate { untrustedDetected++; };
+            untrusted.TryDecode(frame, new List<CombatEvent>());
+            untrusted.TryDecode(frame, new List<CombatEvent>());
+            if (untrustedDetected != 0) return EngineFailure("untrusted small roster bypassed the owned-character gate");
+
+            var legacyDetected = 0;
+            var legacy = new AionBinaryFrameDecoder();
+            legacy.PartyRosterDetected += delegate { legacyDetected++; };
+            var fourMembers = BuildRosterFrame(new[] { "청소기", "따숩", "찜", "네번째" });
+            legacy.TryDecode(new GameFrameEventArgs(fourMembers, DateTime.UtcNow, "A>B", "C<>D", "A_TO_B"), new List<CombatEvent>());
+            if (legacyDetected != 1) return EngineFailure("legacy 4+ roster recognition regressed");
+            return true;
+        }
+
+        private static byte[] BuildRosterFrame(IEnumerable<string> names)
+        {
+            var bytes = new List<byte> { 0x41, 0x36, 0x01 };
+            var serverRaw = 1200;
+            var classRaw = 1;
+            foreach (var name in names)
+            {
+                Write7Bit(bytes, serverRaw++);
+                var encoded = Encoding.UTF8.GetBytes(name);
+                bytes.Add((byte)encoded.Length);
+                bytes.AddRange(encoded);
+                bytes.AddRange(BitConverter.GetBytes(classRaw++));
+                bytes.AddRange(BitConverter.GetBytes(50));
+                bytes.AddRange(new byte[4]);
+            }
+            return bytes.ToArray();
+        }
+
+        private static void Write7Bit(ICollection<byte> destination, int value)
+        {
+            do
+            {
+                var current = value & 0x7F;
+                value >>= 7;
+                if (value > 0) current |= 0x80;
+                destination.Add((byte)current);
+            }
+            while (value > 0);
         }
 
         private static bool EngineFailure(string message)

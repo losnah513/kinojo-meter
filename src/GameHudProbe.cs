@@ -37,6 +37,8 @@ namespace KinojoMeterPrototype
         private bool _disposed;
         private string _pendingCharacter = "";
         private int _pendingCharacterCount;
+        private string _pendingPartySignature = "";
+        private int _pendingPartyCount;
         private string _pendingTitleCharacter = "";
         private int _pendingTitleCharacterCount;
         private string _lastEmittedTitleCharacter = "";
@@ -291,9 +293,38 @@ namespace KinojoMeterPrototype
             var confirmedCharacter = _pendingCharacterCount >= 2 ? _pendingCharacter : "";
             var dungeon = BestKnownMatch(panel.Text, dungeons);
             var difficulty = BestKnownMatch(panel.Text, difficulties);
-            var colors = ReadPartyIconColors(panel, party);
-            var servers = ReadPartyServers(panel.Text, party);
-            if (String.IsNullOrWhiteSpace(confirmedCharacter) && String.IsNullOrWhiteSpace(dungeon) && String.IsNullOrWhiteSpace(difficulty) && colors.Count == 0 && servers.Count == 0)
+            var trustedCurrentCharacter = _pendingTitleCharacterCount >= 2 ? _pendingTitleCharacter : confirmedCharacter;
+            var observedParty = ReadPartyMembers(panel.Text, trustedCurrentCharacter, characters, party);
+            var observedPartySignature = String.Join("|", observedParty
+                .Select(member => (member.CharacterName ?? "").Trim() + "[" + (member.ServerName ?? "").Trim() + "]")
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+            if (observedParty.Count >= 2 && !String.IsNullOrWhiteSpace(trustedCurrentCharacter) &&
+                observedParty.Any(member => String.Equals(member.CharacterName, trustedCurrentCharacter, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (String.Equals(_pendingPartySignature, observedPartySignature, StringComparison.OrdinalIgnoreCase))
+                    _pendingPartyCount++;
+                else
+                {
+                    _pendingPartySignature = observedPartySignature;
+                    _pendingPartyCount = 1;
+                }
+            }
+            else
+            {
+                _pendingPartySignature = "";
+                _pendingPartyCount = 0;
+            }
+            var confirmedParty = _pendingPartyCount >= 2 ? observedParty : new List<DetectedPartyMember>();
+            var metadataPartyNames = party
+                .Concat(confirmedParty.Select(member => member.CharacterName))
+                .Where(value => !String.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var colors = ReadPartyIconColors(panel, metadataPartyNames);
+            var servers = ReadPartyServers(panel.Text, metadataPartyNames);
+            foreach (var member in confirmedParty)
+                if (!String.IsNullOrWhiteSpace(member.ServerName)) servers[member.CharacterName] = member.ServerName;
+            if (String.IsNullOrWhiteSpace(confirmedCharacter) && String.IsNullOrWhiteSpace(dungeon) && String.IsNullOrWhiteSpace(difficulty) && confirmedParty.Count == 0 && colors.Count == 0 && servers.Count == 0)
                 return null;
 
             return new GameHudObservation
@@ -302,10 +333,62 @@ namespace KinojoMeterPrototype
                 CharacterName = confirmedCharacter,
                 DungeonName = dungeon,
                 DifficultyName = difficulty,
+                PartyMembers = confirmedParty,
                 PartyClassColors = colors,
                 PartyServers = servers,
                 Evidence = "WINDOWS_OCR_FIXED_ROI"
             };
+        }
+
+        private static List<DetectedPartyMember> ReadPartyMembers(
+            string panelText,
+            string trustedCurrentCharacter,
+            IEnumerable<string> ownedCharacters,
+            IEnumerable<string> knownPartyNames)
+        {
+            var result = new List<DetectedPartyMember>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Action<string, string> add = delegate(string name, string server)
+            {
+                name = (name ?? "").Trim();
+                server = (server ?? "").Trim();
+                if (!IsPlausiblePartyName(name) || !seen.Add(name)) return;
+                result.Add(new DetectedPartyMember
+                {
+                    Slot = result.Count + 1,
+                    CharacterName = name,
+                    ServerName = server
+                });
+            };
+
+            if (!String.IsNullOrWhiteSpace(trustedCurrentCharacter)) add(trustedCurrentCharacter, "");
+            var source = panelText ?? "";
+            foreach (Match match in Regex.Matches(
+                source,
+                @"(?<![가-힣A-Za-z0-9])(?<name>[가-힣A-Za-z0-9]{1,12})\s*[\[\(]\s*(?<server>[가-힣]{1,4})\s*[\]\)]",
+                RegexOptions.IgnoreCase))
+                add(match.Groups["name"].Value, match.Groups["server"].Value);
+
+            var normalizedSource = Normalize(source);
+            foreach (var known in (ownedCharacters ?? Enumerable.Empty<string>())
+                .Concat(knownPartyNames ?? Enumerable.Empty<string>())
+                .Where(value => !String.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var normalized = Normalize(known);
+                if (normalized.Length >= 2 && normalizedSource.IndexOf(normalized, StringComparison.OrdinalIgnoreCase) >= 0)
+                    add(known, "");
+            }
+            for (var index = 0; index < result.Count; index++) result[index].Slot = index + 1;
+            return result.Take(6).ToList();
+        }
+
+        private static bool IsPlausiblePartyName(string value)
+        {
+            if (String.IsNullOrWhiteSpace(value) || value.Length > 12) return false;
+            if (!value.Any(Char.IsLetter)) return false;
+            var excluded = new[] { "원정", "파티", "시련", "정복", "보통", "어려움", "시작", "나가기", "참가", "신청", "대기", "전투", "던전" };
+            return !excluded.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase);
         }
 
         private static Dictionary<string, string> ReadPartyServers(string panelText, IEnumerable<string> knownNames)

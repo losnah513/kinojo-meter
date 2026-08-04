@@ -427,6 +427,9 @@ namespace KinojoMeterPrototype
             public bool CombatEvidenceSeen;
             public bool ParserEnvelopeCandidateAnnounced;
             public string LastPartyRosterSignature = "";
+            public string PendingSmallRosterSignature = "";
+            public int PendingSmallRosterConfirmations;
+            public string LastRejectedSmallRosterSignature = "";
             public DateTime LastSeenUtc;
         }
         private sealed class PartyMemberProbe
@@ -440,15 +443,25 @@ namespace KinojoMeterPrototype
         private readonly object _gate = new object();
         private readonly Dictionary<string, TransportState> _connections = new Dictionary<string, TransportState>(StringComparer.OrdinalIgnoreCase);
         private readonly AionCombatDecoder _combatDecoder = new AionCombatDecoder();
+        private readonly HashSet<string> _trustedPartyNames;
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
         public string DecoderType { get { return "BINARY_PARTIAL_VALIDATED"; } }
-        public string DecoderVersion { get { return "aion2-variable-damage-records-3"; } }
+        public string DecoderVersion { get { return "aion2-variable-damage-records-4"; } }
         public bool IsValidated { get { return false; } }
         public event EventHandler<string> AionConnectionIdentified;
         public event EventHandler<string> ParserEnvelopeCandidateObserved;
         public event EventHandler<string> PartyRosterCandidateObserved;
         public event EventHandler<PartyRosterDetectedEventArgs> PartyRosterDetected;
+
+        public AionBinaryFrameDecoder(IEnumerable<string> trustedPartyNames = null)
+        {
+            _trustedPartyNames = new HashSet<string>(
+                (trustedPartyNames ?? Enumerable.Empty<string>())
+                    .Select(value => (value ?? "").Trim())
+                    .Where(value => value.Length > 0),
+                StringComparer.OrdinalIgnoreCase);
+        }
 
         public bool TryDecode(GameFrameEventArgs frame, IList<CombatEvent> events)
         {
@@ -497,16 +510,54 @@ namespace KinojoMeterPrototype
                 string rosterSignature;
                 string rosterDetail;
                 List<DetectedPartyMember> rosterMembers;
-                if (TryObservePartyRosterCandidate(state, frame.Direction, frame.Frame, out rosterSignature, out rosterDetail, out rosterMembers) &&
-                    !String.Equals(state.LastPartyRosterSignature, rosterSignature, StringComparison.Ordinal))
+                var rosterCandidateObserved = TryObservePartyRosterCandidate(state, frame.Direction, frame.Frame, out rosterSignature, out rosterDetail, out rosterMembers);
+                var rosterAccepted = rosterCandidateObserved;
+                var rosterEvidence = "PACKET_ROSTER_4_PLUS";
+                if (rosterCandidateObserved && rosterMembers.Count < 4)
+                {
+                    var trustedNameSeen = rosterMembers.Any(member => _trustedPartyNames.Contains((member.CharacterName ?? "").Trim()));
+                    if (!state.ParserEnvelopeSeen || !trustedNameSeen)
+                    {
+                        rosterAccepted = false;
+                        if (!String.Equals(state.LastRejectedSmallRosterSignature, rosterSignature, StringComparison.Ordinal))
+                        {
+                            state.LastRejectedSmallRosterSignature = rosterSignature;
+                            partyRosterCandidate = frame.ConnectionKey + "|" + frame.Direction + "|" + rosterDetail +
+                                ";state=held;reason=" + (!state.ParserEnvelopeSeen ? "envelope_missing" : "trusted_character_missing");
+                        }
+                    }
+                    else
+                    {
+                        if (String.Equals(state.PendingSmallRosterSignature, rosterSignature, StringComparison.Ordinal))
+                            state.PendingSmallRosterConfirmations++;
+                        else
+                        {
+                            state.PendingSmallRosterSignature = rosterSignature;
+                            state.PendingSmallRosterConfirmations = 1;
+                        }
+                        rosterAccepted = state.PendingSmallRosterConfirmations >= 2;
+                        rosterEvidence = "PACKET_SMALL_ROSTER_CONFIRMED";
+                        if (!rosterAccepted)
+                            partyRosterCandidate = frame.ConnectionKey + "|" + frame.Direction + "|" + rosterDetail +
+                                ";state=confirming;confirmation=1/2";
+                    }
+                }
+                else if (rosterCandidateObserved)
+                {
+                    state.PendingSmallRosterSignature = "";
+                    state.PendingSmallRosterConfirmations = 0;
+                    state.LastRejectedSmallRosterSignature = "";
+                }
+                if (rosterAccepted && !String.Equals(state.LastPartyRosterSignature, rosterSignature, StringComparison.Ordinal))
                 {
                     state.PartyRosterSeen = true;
                     state.LastPartyRosterSignature = rosterSignature;
-                    partyRosterCandidate = frame.ConnectionKey + "|" + frame.Direction + "|" + rosterDetail;
+                    partyRosterCandidate = frame.ConnectionKey + "|" + frame.Direction + "|" + rosterDetail + ";state=accepted;evidence=" + rosterEvidence;
                     partyRosterDetected = new PartyRosterDetectedEventArgs
                     {
                         ConnectionKey = frame.ConnectionKey,
                         Direction = frame.Direction,
+                        Evidence = rosterEvidence,
                         Members = rosterMembers
                     };
                 }
@@ -576,7 +627,7 @@ namespace KinojoMeterPrototype
                     if (!unique.ContainsKey(current.Name)) unique[current.Name] = current;
                     if (unique.Count >= 6) break;
                 }
-                if (unique.Count < 4) continue;
+                if (unique.Count < 2) continue;
                 var members = unique.Values.OrderBy(member => member.Offset).ToList();
                 var span = members[members.Count - 1].Offset - members[0].Offset;
                 var levelIsCurrentCap = members.Any(member => member.Level == 50);
@@ -597,15 +648,18 @@ namespace KinojoMeterPrototype
             var signatureBuilder = new StringBuilder();
             var detailBuilder = new StringBuilder();
             detailBuilder.Append("members=").Append(best.Count.ToString(CultureInfo.InvariantCulture));
-            for (var index = 0; index < best.Count; index++)
+            foreach (var member in best.OrderBy(value => value.Name, StringComparer.OrdinalIgnoreCase))
             {
-                var member = best[index];
-                if (index > 0) signatureBuilder.Append("|");
+                if (signatureBuilder.Length > 0) signatureBuilder.Append("|");
                 signatureBuilder
                     .Append(member.ServerRaw.ToString(CultureInfo.InvariantCulture)).Append(":")
                     .Append(member.Name).Append(":")
                     .Append(member.ClassRaw.ToString(CultureInfo.InvariantCulture)).Append(":")
                     .Append(member.Level.ToString(CultureInfo.InvariantCulture));
+            }
+            for (var index = 0; index < best.Count; index++)
+            {
+                var member = best[index];
                 detailBuilder
                     .Append(";slot=").Append((index + 1).ToString(CultureInfo.InvariantCulture))
                     .Append(",name=").Append(member.Name)
@@ -776,7 +830,7 @@ namespace KinojoMeterPrototype
         private static readonly TimeSpan MaximumPrebufferAge = TimeSpan.FromMinutes(2);
         private readonly CaptureFallbackService _capture = new CaptureFallbackService();
         private readonly TcpReassemblyService _reassembly = new TcpReassemblyService();
-        private readonly AionBinaryFrameDecoder _decoder = new AionBinaryFrameDecoder();
+        private readonly AionBinaryFrameDecoder _decoder;
         private readonly DiagnosticFrameCollector _fixtureCollector = new DiagnosticFrameCollector();
         private readonly object _gate = new object();
         private readonly Queue<CapturedTcpPayloadEventArgs> _prebuffer = new Queue<CapturedTcpPayloadEventArgs>();
@@ -796,8 +850,9 @@ namespace KinojoMeterPrototype
         public event EventHandler<string> DiagnosticStatusChanged;
         public CaptureRuntimeInfo RuntimeInfo { get; private set; }
 
-        public CombatCaptureCoordinator()
+        public CombatCaptureCoordinator(IEnumerable<string> trustedPartyNames = null)
         {
+            _decoder = new AionBinaryFrameDecoder(trustedPartyNames);
             RuntimeInfo = new CaptureRuntimeInfo
             {
                 CaptureEngine = "NONE",

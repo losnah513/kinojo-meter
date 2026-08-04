@@ -69,6 +69,7 @@ namespace KinojoMeterPrototype
         private readonly Dictionary<int, string> _classRawNames = new Dictionary<int, string>();
         private string _encounterProcessingState = "";
         private string _encounterProcessingText = "";
+        private string _lastHudRosterSignature = "";
         private Button _diagnosticStartButton;
         private Button _diagnosticStopButton;
         private TextBlock _diagnosticState;
@@ -319,7 +320,7 @@ namespace KinojoMeterPrototype
         private void StartCapture()
         {
             if (_capture != null) return;
-            _capture = new CombatCaptureCoordinator();
+            _capture = new CombatCaptureCoordinator(new[] { _selected == null ? "" : _selected.CharacterName });
             _engine.SetRuntimeInfo(_capture.RuntimeInfo);
             _capture.CombatEventReceived += delegate(object sender, CombatEvent value)
             {
@@ -329,39 +330,7 @@ namespace KinojoMeterPrototype
             {
                 Dispatcher.BeginInvoke(new Action(delegate
                 {
-                    var roster = (value.Members ?? new List<DetectedPartyMember>())
-                        .Select(member => new CombatEvent
-                        {
-                            Kind = CombatEventKind.PartyMember,
-                            TimestampUtc = DateTime.UtcNow,
-                            ActorId = "party-probe:" + member.ServerRaw.ToString(CultureInfo.InvariantCulture) + ":" + member.CharacterName,
-                            ActorName = member.CharacterName,
-                            ActorServerRaw = member.ServerRaw,
-                            ActorClassRaw = member.ClassRaw,
-                            PartyNumber = 1,
-                            PartySlot = member.Slot
-                        })
-                        .ToList();
-                    _engine.ReplaceObservedParty(roster);
-                    foreach (var member in value.Members ?? new List<DetectedPartyMember>())
-                    {
-                        Color observed;
-                        if (member.ClassRaw > 0 && _observedClassColors.TryGetValue(member.CharacterName ?? "", out observed))
-                            _classRawColors[member.ClassRaw] = observed;
-                        if (member.ClassRaw > 0 && _selected != null &&
-                            String.Equals(member.CharacterName, _selected.CharacterName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (!String.IsNullOrWhiteSpace(_selected.ClassKey)) _classRawKeys[member.ClassRaw] = _selected.ClassKey;
-                            if (!String.IsNullOrWhiteSpace(_selected.ClassName)) _classRawNames[member.ClassRaw] = _selected.ClassName;
-                            _engine.ApplyClassMapping(member.ClassRaw, _selected.ClassKey, _selected.ClassName);
-                        }
-                    }
-                    _partyObserved = roster.Count > 0;
-                    var rosterSnapshot = _engine.Snapshot();
-                    var observedCount = rosterSnapshot.Rows.Count(row => !row.IsEmpty);
-                    SetActivityStatus((_dungeonEntered ? "던전 입장 확인 · " : "") + "파티 구성원 " + observedCount + "명 실시간 확인 중");
-                    Render(rosterSnapshot);
-                    PartyRosterObserved?.Invoke(this, value);
+                    ApplyObservedPartyRoster(value);
                 }));
             };
             _capture.StatusChanged += delegate(object sender, string text)
@@ -410,6 +379,26 @@ namespace KinojoMeterPrototype
         public void ApplyHudObservation(GameHudObservation observation)
         {
             if (observation == null) return;
+            var hudMembers = observation.PartyMembers ?? new List<DetectedPartyMember>();
+            if (hudMembers.Count >= 2)
+            {
+                var hudSignature = String.Join("|", hudMembers
+                    .Select(member => (member.CharacterName ?? "").Trim() + "[" + (member.ServerName ?? "").Trim() + "]")
+                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+                if (!String.Equals(_lastHudRosterSignature, hudSignature, StringComparison.OrdinalIgnoreCase))
+                {
+                    _lastHudRosterSignature = hudSignature;
+                    ApplyObservedPartyRoster(new PartyRosterDetectedEventArgs
+                    {
+                        ConnectionKey = "HUD_OCR",
+                        Direction = "SCREEN",
+                        Evidence = "HUD_OCR_PARTY_ROSTER_CONFIRMED",
+                        Members = hudMembers
+                    });
+                    CaptureDiagnosticChanged?.Invoke(this, "HUD party roster accepted after repeated observation. Members=" +
+                        hudMembers.Count.ToString(CultureInfo.InvariantCulture) + ".");
+                }
+            }
             foreach (var pair in observation.PartyClassColors ??
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
             {
@@ -470,6 +459,49 @@ namespace KinojoMeterPrototype
             // 파티 구성 창의 콘텐츠명은 입장 전에도 보이므로 표시 후보로만 사용한다.
             // 실제 입장은 검증된 ZoneEntered/DungeonDetected 패킷 이벤트가 확인할 때만 전환한다.
             Render(_engine.Snapshot());
+        }
+
+        private void ApplyObservedPartyRoster(PartyRosterDetectedEventArgs value)
+        {
+            if (value == null) return;
+            var evidence = (value.Evidence ?? "PACKET_ROSTER").Trim();
+            var roster = (value.Members ?? new List<DetectedPartyMember>())
+                .Where(member => member != null && !String.IsNullOrWhiteSpace(member.CharacterName))
+                .Select(member => new CombatEvent
+                {
+                    Kind = CombatEventKind.PartyMember,
+                    TimestampUtc = DateTime.UtcNow,
+                    ActorId = (evidence.StartsWith("HUD_", StringComparison.OrdinalIgnoreCase) ? "hud-roster:" : "party-probe:") +
+                        member.ServerRaw.ToString(CultureInfo.InvariantCulture) + ":" + member.CharacterName,
+                    ActorName = member.CharacterName,
+                    ActorServer = member.ServerName,
+                    ActorServerRaw = member.ServerRaw,
+                    ActorClassRaw = member.ClassRaw,
+                    PartyNumber = 1,
+                    PartySlot = member.Slot
+                })
+                .ToList();
+            if (roster.Count == 0) return;
+            _engine.ReplaceObservedParty(roster);
+            foreach (var member in value.Members ?? new List<DetectedPartyMember>())
+            {
+                Color observed;
+                if (member.ClassRaw > 0 && _observedClassColors.TryGetValue(member.CharacterName ?? "", out observed))
+                    _classRawColors[member.ClassRaw] = observed;
+                if (member.ClassRaw > 0 && _selected != null &&
+                    String.Equals(member.CharacterName, _selected.CharacterName, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!String.IsNullOrWhiteSpace(_selected.ClassKey)) _classRawKeys[member.ClassRaw] = _selected.ClassKey;
+                    if (!String.IsNullOrWhiteSpace(_selected.ClassName)) _classRawNames[member.ClassRaw] = _selected.ClassName;
+                    _engine.ApplyClassMapping(member.ClassRaw, _selected.ClassKey, _selected.ClassName);
+                }
+            }
+            _partyObserved = true;
+            var rosterSnapshot = _engine.Snapshot();
+            var observedCount = rosterSnapshot.Rows.Count(row => !row.IsEmpty);
+            SetActivityStatus((_dungeonEntered ? "던전 입장 확인 · " : "") + "파티 구성원 " + observedCount + "명 실시간 확인 중");
+            Render(rosterSnapshot);
+            PartyRosterObserved?.Invoke(this, value);
         }
 
         public void ApplyCombatEvent(CombatEvent value)

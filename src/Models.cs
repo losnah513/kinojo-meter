@@ -37,6 +37,7 @@ namespace KinojoMeterPrototype
         public string EntityId { get; set; }
         public int Slot { get; set; }
         public int ServerRaw { get; set; }
+        public string ServerName { get; set; }
         public string CharacterName { get; set; }
         public int ClassRaw { get; set; }
         public int Level { get; set; }
@@ -47,6 +48,7 @@ namespace KinojoMeterPrototype
         public string ConnectionKey { get; set; }
         public string Direction { get; set; }
         public bool LateAttached { get; set; }
+        public string Evidence { get; set; }
         public List<DetectedPartyMember> Members { get; set; } = new List<DetectedPartyMember>();
     }
 
@@ -57,6 +59,7 @@ namespace KinojoMeterPrototype
         public string DungeonName { get; set; }
         public string DifficultyName { get; set; }
         public string Evidence { get; set; }
+        public List<DetectedPartyMember> PartyMembers { get; set; } = new List<DetectedPartyMember>();
         public Dictionary<string, string> PartyClassColors { get; set; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> PartyServers { get; set; } =

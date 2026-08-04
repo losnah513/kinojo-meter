@@ -804,7 +804,8 @@ namespace KinojoMeterPrototype
             StopAutomaticCharacterDetection();
             if (_login == null || _login.Characters == null || _login.Characters.Count == 0 || _pendingUpdateMandatory) return;
             _autoSelectionStarted = true;
-            _characterDetector = new CombatCaptureCoordinator();
+            _characterDetector = new CombatCaptureCoordinator(
+                _login.Characters.Select(character => character == null ? "" : character.CharacterName));
             _characterDetector.StatusChanged += delegate(object sender, string status)
             {
                 Dispatcher.BeginInvoke(new Action(delegate
