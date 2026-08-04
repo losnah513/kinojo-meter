@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <KinojoVersion Condition="'$(KinojoVersion)' == ''">0.0.0</KinojoVersion>
+    <KinojoFileVersion Condition="'$(KinojoFileVersion)' == ''">0.0.0.0</KinojoFileVersion>
+    <Version>$(KinojoVersion)</Version>
+    <AssemblyVersion>$(KinojoFileVersion)</AssemblyVersion>
+    <FileVersion>$(KinojoFileVersion)</FileVersion>
+    <InformationalVersion>$(KinojoVersion)</InformationalVersion>
+    <AssemblyTitle>KINOJO Meter Setup</AssemblyTitle>
+    <Product>KINOJO Meter</Product>
+    <Company>KINOJO INFO</Company>
+    <AssemblyName>KINOJO_Meter_$(KinojoVersion)_Setup</AssemblyName>
+    <RootNamespace>KinojoMeterSetup</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationIcon>..\assets\kinojo-updater-icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Deterministic>true</Deterministic>
+    <PayloadZipPath Condition="'$(PayloadZipPath)' == ''">..\build\KinojoMeterPayload_$(KinojoVersion).zip</PayloadZipPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="SetupProgram.cs" />
+    <Compile Include="SetupEngine.cs" />
+    <EmbeddedResource Include="$(PayloadZipPath)" LogicalName="KinojoMeterPayload" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+</Project>

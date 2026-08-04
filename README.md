@@ -135,33 +135,36 @@ Edge API: `50015.2`
 05_METER_DESKTOP/
 ├─ README.md
 ├─ KINOJO.Meter.sln
-├─ PREPARE_GITHUB_RELEASE.cmd
-├─ VERIFY_GITHUB_RELEASE.cmd
+├─ BUILD_WINDOWS_RELEASE.cmd
 ├─ .github/workflows/windows-build.yml
 ├─ assets/
+│  └─ runtime/
 ├─ release/version.json
-├─ build/payload/
-├─ projects/
+├─ build/
 ├─ scripts/
+│  ├─ prepare-github-release.cmd
+│  ├─ verify-github-release.cmd
+│  └─ test-clean-install-sandbox.cmd
 ├─ setup/
+│  └─ KINOJO.Meter.Setup.csproj
 ├─ src/
-└─ KinojoMeter.ServerBridge/
+│  └─ KINOJO.Meter.csproj
+└─ tests/
 ```
 
 
-- 앱 프로젝트: `projects/KINOJO.Meter.Test/KINOJO.Meter.Test.csproj`
-- 설치기 프로젝트: `projects/KINOJO.Meter.Setup/KINOJO.Meter.Setup.csproj`
-- 앱 소스: `src/*.cs`
+- 앱 프로젝트·소스: `src/KINOJO.Meter.csproj`, `src/*.cs`
+- 설치기 프로젝트·소스: `setup/KINOJO.Meter.Setup.csproj`, `setup/*.cs`
 - 설치기 UI·진입점: `setup/SetupProgram.cs`
 - 설치 트랜잭션·복구 엔진: `setup/SetupEngine.cs`
 - 버전 원본: `release/version.json`
 - Windows 빌드: `BUILD_WINDOWS_RELEASE.cmd`, `scripts/build-windows.ps1`
 - GitHub Actions: `.github/workflows/windows-build.yml`
-- Payload 계약: `build/payload/README.txt`, 빌드 시 자동 동기화되는 `build/payload/version.json`
-- WinDivert 원본·검증: `build/payload/WinDivert.dll`, `WinDivert64.sys`, `third-party-checksums.txt`
+- Payload 고정 재료: `assets/runtime/README.txt`, `WinDivert.dll`, `WinDivert64.sys`, `third-party-checksums.txt`
+- Payload 버전 계약: `release/version.json`을 빌드 시 임시 Payload에 직접 주입하며 소스 트리에 생성본을 저장하지 않습니다.
 
 
-`KinojoMeter.ServerBridge`는 초기 Server 연결 경계를 보존한 라이브러리입니다. 현재 앱 본체는 같은 계약을 `src/KinojoApiClient.cs`와 전투 제출 흐름에 직접 통합합니다.
+초기 `KinojoMeter.ServerBridge`는 현재 솔루션에서 사용되지 않아 활성 구조에서 제거했습니다. Server 연결 계약은 `src/KinojoApiClient.cs`와 전투 제출 흐름에서 단일 관리합니다.
 
 
 ## 버전 관리
@@ -172,7 +175,7 @@ Edge API: `50015.2`
 - 빌드 시 앱 EXE, 설치기 EXE, 설치기 파일명, Payload 파일명, 설치 폴더 `version.json`, checksum 파일명을 자동 동기화합니다.
 - 앱 화면·트레이·API 요청은 하드코딩 문자열이 아니라 실행 중인 EXE Assembly 버전을 사용합니다.
 - 실행 시 설치 폴더 `version.json`과 EXE 파일 버전이 일치하는지 진단 로그로 검증합니다.
-- `build/payload/version.json`은 편집 원본이 아니며 빌드 과정에서 `release/version.json`으로 덮어씁니다.
+- `build`는 최신 빌드 후보의 설치기·Payload·checksum만 두는 출력 폴더입니다. `artifacts`, `bin`, `obj`는 빌드 시 생성되고 기준본에는 보관하지 않습니다.
 
 
 ## 역할 분담
@@ -449,7 +452,7 @@ After a Windows build, prepare the GitHub Release metadata by running:
 
 
 ```text
-PREPARE_GITHUB_RELEASE.cmd
+scripts\prepare-github-release.cmd
 ```
 
 
@@ -466,7 +469,7 @@ After upload, run:
 
 
 ```text
-VERIFY_GITHUB_RELEASE.cmd
+scripts\verify-github-release.cmd
 ```
 
 
@@ -491,7 +494,7 @@ Use the isolated clean-install test after building a release installer:
 
 
 ```text
-TEST_CLEAN_INSTALL_SANDBOX.cmd
+scripts\test-clean-install-sandbox.cmd
 ```
 
 

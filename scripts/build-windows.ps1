@@ -47,17 +47,17 @@ function Resolve-MeterRoot {
 
 $Root = Resolve-MeterRoot -RequestedRoot $ProjectRoot
 $ResolvedProjectRoot = Split-Path $Root -Parent
-$VersionManifest = Join-Path $Root 'release\version.json' 
+$VersionManifest = Join-Path $Root 'release\version.json'
 $BuildDir = Join-Path $Root 'build'
 $ArtifactsDir = Join-Path $Root 'artifacts'
 $AppOut = Join-Path $ArtifactsDir 'app'
 $SetupOut = Join-Path $ArtifactsDir 'setup'
 $PayloadStage = Join-Path $ArtifactsDir 'payload'
-$PayloadSourceDir = Join-Path $BuildDir 'payload'
-$AppProject = Join-Path $Root 'projects\KINOJO.Meter.Test\KINOJO.Meter.Test.csproj'
-$SetupProject = Join-Path $Root 'projects\KINOJO.Meter.Setup\KINOJO.Meter.Setup.csproj'
-$AppManifest = Join-Path $Root 'projects\KINOJO.Meter.Test\app.manifest'
-$SetupManifest = Join-Path $Root 'projects\KINOJO.Meter.Setup\app.manifest'
+$RuntimeAssetsDir = Join-Path $Root 'assets\runtime'
+$AppProject = Join-Path $Root 'src\KINOJO.Meter.csproj'
+$SetupProject = Join-Path $Root 'setup\KINOJO.Meter.Setup.csproj'
+$AppManifest = Join-Path $Root 'src\app.manifest'
+$SetupManifest = Join-Path $Root 'setup\app.manifest'
 $SetupProgram = Join-Path $Root 'setup\SetupProgram.cs'
 $SetupEngine = Join-Path $Root 'setup\SetupEngine.cs'
 $ReleasePreparationScript = Join-Path $Root 'scripts\prepare-github-release.ps1'
@@ -73,6 +73,14 @@ function Assert-RequiredFile {
     param([Parameter(Mandatory=$true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Required file is missing: $Path"
+    }
+}
+
+
+function Assert-ForbiddenPath {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        throw "Legacy or generated path must not exist in the active source tree: $Path"
     }
 }
 
@@ -168,6 +176,13 @@ function Assert-ProjectCompileInputs {
     foreach ($node in @($projectXml.SelectNodes('//Compile[@Include]'))) {
         $include = [string]$node.Include
         if ([String]::IsNullOrWhiteSpace($include) -or $include.Contains('$(')) { continue }
+        if ($include.IndexOfAny([char[]]'*?') -ge 0) {
+            $matches = @(Get-ChildItem -Path (Join-Path $projectDirectory $include) -File -ErrorAction SilentlyContinue)
+            if ($matches.Count -eq 0) {
+                throw "Project compile wildcard matched no files: $ProjectPath -> $include"
+            }
+            continue
+        }
         $sourcePath = [IO.Path]::GetFullPath((Join-Path $projectDirectory $include))
         Assert-RequiredFile -Path $sourcePath
     }
@@ -241,6 +256,16 @@ function Assert-BinaryVersion {
 
 
 Write-Host '[0/7] Preflight validation'
+foreach ($path in @(
+    (Join-Path $Root 'projects'),
+    (Join-Path $Root 'build\payload'),
+    (Join-Path $Root 'KinojoMeter.ServerBridge'),
+    (Join-Path $Root 'PREPARE_GITHUB_RELEASE.cmd'),
+    (Join-Path $Root 'VERIFY_GITHUB_RELEASE.cmd'),
+    (Join-Path $Root 'TEST_CLEAN_INSTALL_SANDBOX.cmd')
+)) {
+    Assert-ForbiddenPath -Path $path
+}
 foreach ($path in @($VersionManifest, $AppProject, $SetupProject, $SetupProgram, $SetupEngine, $ReleasePreparationScript)) {
     Assert-RequiredFile -Path $path
 }
@@ -256,22 +281,11 @@ $FileVersion = [string]$Release.fileVersion
 $PayloadZip = Join-Path $BuildDir "KinojoMeterPayload_$Version.zip"
 $SetupFinal = Join-Path $BuildDir "KINOJO_Meter_${Version}_Setup.exe"
 $ChecksumFile = Join-Path $BuildDir "checksums_$Version.txt"
-$GeneratedPayloadManifest = Join-Path $PayloadSourceDir 'version.json'
-
-
 foreach ($name in @('README.txt','third-party-checksums.txt')) {
-    Assert-RequiredFile -Path (Join-Path $PayloadSourceDir $name)
+    Assert-RequiredFile -Path (Join-Path $RuntimeAssetsDir $name)
 }
 foreach ($entry in $ExpectedWinDivertHashes.GetEnumerator()) {
-    Assert-FileSha256 -Path (Join-Path $PayloadSourceDir $entry.Key) -ExpectedHash $entry.Value
-}
-
-
-New-Item $PayloadSourceDir -ItemType Directory -Force | Out-Null
-Copy-Item $VersionManifest $GeneratedPayloadManifest -Force
-$GeneratedRelease = Read-VersionManifest -Path $GeneratedPayloadManifest
-if (([string]$GeneratedRelease.version) -ne $Version -or ([string]$GeneratedRelease.fileVersion) -ne $FileVersion) {
-    throw 'Generated payload version manifest does not match release/version.json.'
+    Assert-FileSha256 -Path (Join-Path $RuntimeAssetsDir $entry.Key) -ExpectedHash $entry.Value
 }
 
 
@@ -334,7 +348,7 @@ Get-ChildItem $AppOut -File | Where-Object { $_.Extension -in @('.dll', '.config
     Copy-Item $_.FullName (Join-Path $PayloadStage $_.Name) -Force
 }
 foreach ($name in @('WinDivert.dll','WinDivert64.sys','README.txt','third-party-checksums.txt')) {
-    $source = Join-Path $PayloadSourceDir $name
+    $source = Join-Path $RuntimeAssetsDir $name
     Assert-RequiredFile -Path $source
     Copy-Item $source (Join-Path $PayloadStage $name) -Force
 }
@@ -406,4 +420,4 @@ Write-Host 'Build completed successfully.'
 Write-Host "Payload : $PayloadZip"
 Write-Host "Setup   : $SetupFinal"
 Write-Host "SHA-256 : $ChecksumFile"
-Write-Host 'Next     : Run PREPARE_GITHUB_RELEASE.cmd before uploading a GitHub Release.'
+Write-Host 'Next     : Run scripts\prepare-github-release.cmd before uploading a GitHub Release.'
