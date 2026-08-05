@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="..\..\launcher\CorePackageInstaller.cs" Link="CorePackageInstaller.cs" />
+    <Compile Include="..\..\launcher\CoreReleaseIntegrityVerifier.cs" Link="CoreReleaseIntegrityVerifier.cs" />
     <Compile Include="..\..\launcher\LauncherModels.cs" Link="LauncherModels.cs" />
     <Compile Include="..\..\launcher\LauncherPaths.cs" Link="LauncherPaths.cs" />
   </ItemGroup>

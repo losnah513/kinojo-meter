@@ -21,18 +21,7 @@ $checksumPath = Join-Path $root "build\checksums_launcher_${version}.txt"
 $repository = "$GitHubOwner/$GitHubRepository"
 $tag = "launcher-v$version"
 
-function Assert-PublisherSignature([string]$Path, [string]$Publisher, [string]$Label) {
-    $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    $signerName = if ($signature.SignerCertificate) {
-        $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-    } else { '' }
-    if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
-        -not [String]::Equals($signerName, $Publisher, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "$Label must have a valid Authenticode signature from '$Publisher'."
-    }
-}
-
-function Assert-EmbeddedLauncher([string]$SetupPath, [string]$Publisher, [string]$ExpectedFileVersion) {
+function Assert-EmbeddedLauncher([string]$SetupPath, [string]$ExpectedFileVersion) {
     $assembly = [Reflection.Assembly]::LoadFile($SetupPath)
     $resourceName = 'KINOJO.Meter.Launcher.Payload'
     if ($assembly.GetManifestResourceNames() -notcontains $resourceName) { throw 'Launcher setup payload resource is missing.' }
@@ -44,7 +33,6 @@ function Assert-EmbeddedLauncher([string]$SetupPath, [string]$Publisher, [string
         finally { $output.Dispose() }
         $actualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($temporary).FileVersion
         if ($actualVersion -ne $ExpectedFileVersion) { throw "Embedded Launcher file version mismatch: $actualVersion" }
-        Assert-PublisherSignature $temporary $Publisher 'Installed Launcher application'
     }
     finally {
         if ($stream) { $stream.Dispose() }
@@ -52,14 +40,13 @@ function Assert-EmbeddedLauncher([string]$SetupPath, [string]$Publisher, [string
     }
 }
 
-if ($manifest.cutoverState -ne 'ACTIVE' -or $manifest.publicDistribution -ne $true -or $manifest.codeSignatureRequired -ne $true) {
-    throw 'Launcher publication requires ACTIVE, publicDistribution=true and codeSignatureRequired=true.'
+if ($manifest.cutoverState -ne 'ACTIVE' -or $manifest.publicDistribution -ne $true -or
+    $manifest.codeSignatureRequired -ne $false -or [string]$manifest.publisherSubject -cne '' -or
+    [string]$manifest.trustMode -cne 'WINDOWS_UNSIGNED_HOBBY' -or $manifest.smartScreenWarningExpected -ne $true) {
+    throw 'Launcher publication requires ACTIVE and the explicit unsigned hobby trust contract.'
 }
 if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Launcher artifact is missing: $artifactPath" }
-$publisher = [string]$manifest.publisherSubject
-if ($publisher -cne 'KINOJO INFO') { throw 'Launcher publisherSubject must be exactly KINOJO INFO.' }
-Assert-PublisherSignature $artifactPath $publisher 'Launcher setup'
-Assert-EmbeddedLauncher $artifactPath $publisher ([string]$manifest.fileVersion)
+Assert-EmbeddedLauncher $artifactPath ([string]$manifest.fileVersion)
 
 function Resolve-TagCommit([string]$Repository, [string]$Tag) {
     $raw = & gh api "repos/$Repository/git/ref/tags/$Tag" 2>$null
@@ -98,8 +85,7 @@ try {
     & gh release download $tag --repo $repository --dir $downloadRoot --pattern $artifactName
     if ($LASTEXITCODE -ne 0) { throw 'Launcher remote executable download failed.' }
     $remoteArtifact = Join-Path $downloadRoot $artifactName
-    Assert-PublisherSignature $remoteArtifact $publisher 'Published Launcher setup'
-    Assert-EmbeddedLauncher $remoteArtifact $publisher ([string]$manifest.fileVersion)
+    Assert-EmbeddedLauncher $remoteArtifact ([string]$manifest.fileVersion)
     $size = (Get-Item -LiteralPath $remoteArtifact).Length
     $sha256 = (Get-FileHash -LiteralPath $remoteArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
     $checksumLine = "$artifactName`t$size`t$sha256"

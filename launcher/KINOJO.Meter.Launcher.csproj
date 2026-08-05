@@ -28,6 +28,7 @@
     <Compile Include="LauncherForm.cs" />
     <Compile Include="LauncherApiClient.cs" />
     <Compile Include="CorePackageInstaller.cs" />
+    <Compile Include="CoreReleaseIntegrityVerifier.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />
   </ItemGroup>

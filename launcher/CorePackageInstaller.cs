@@ -45,9 +45,11 @@ namespace KinojoMeterLauncher
             {
                 try
                 {
+                    var currentRelease = ReleaseFromState(current);
                     var matchesRelease = String.Equals(current.CoreVersion, release.CoreVersion, StringComparison.Ordinal) &&
-                        String.Equals(current.PackageSha256, release.Sha256, StringComparison.OrdinalIgnoreCase);
-                    VerifyInstalledFiles(current, matchesRelease ? release : null);
+                        String.Equals(current.PackageSha256, release.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                        String.Equals(current.ManifestSignature, release.ManifestSignature, StringComparison.Ordinal);
+                    VerifyInstalledFiles(current, matchesRelease ? release : currentRelease);
                     if (matchesRelease)
                     {
                         progress?.Report(100);
@@ -81,12 +83,23 @@ namespace KinojoMeterLauncher
 
                 var active = new ActiveCoreState
                 {
-                    SchemaVersion = 1,
+                    SchemaVersion = 2,
+                    Channel = release.Channel,
                     CoreVersion = release.CoreVersion,
+                    MinimumCoreVersion = release.MinimumCoreVersion,
+                    MinimumLauncherVersion = release.MinimumLauncherVersion,
+                    PackageId = release.PackageId,
+                    FileName = release.FileName,
+                    FileSize = release.FileSize,
                     EntryPoint = release.EntryPoint,
                     InstalledPath = target,
                     ActivatedAtUtc = DateTime.UtcNow.ToString("o"),
-                    PackageSha256 = release.Sha256
+                    PackageSha256 = release.Sha256,
+                    InstallManifestSha256 = release.InstallManifestSha256,
+                    Mandatory = release.Mandatory,
+                    IntegrityMode = release.IntegrityMode,
+                    SigningKeyId = release.SigningKeyId,
+                    ManifestSignature = release.ManifestSignature
                 };
                 WriteActiveState(active);
                 progress?.Report(100);
@@ -135,6 +148,9 @@ namespace KinojoMeterLauncher
 
         private async Task StartCoreAndWaitForReadyAsync(ActiveCoreState state, LauncherLoginResult login, string installationId)
         {
+            // Re-check the signed release contract and every installed file immediately
+            // before both normal startup and an automatic rollback startup.
+            VerifyInstalledFiles(state, ReleaseFromState(state));
             var executable = Path.Combine(state.InstalledPath, state.EntryPoint);
             var envelope = _json.Serialize(new Dictionary<string, object>
             {
@@ -263,6 +279,8 @@ namespace KinojoMeterLauncher
 
             var installManifestPath = Path.Combine(destination, "install-manifest.json");
             if (!File.Exists(installManifestPath)) throw new InvalidOperationException("Core install-manifest.json이 없습니다.");
+            if (!String.Equals(Sha256(installManifestPath), release.InstallManifestSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Core install manifest의 서명된 SHA-256이 일치하지 않습니다.");
             var manifest = _json.Deserialize<CoreInstallManifest>(File.ReadAllText(installManifestPath, Encoding.UTF8));
             if (manifest == null || manifest.SchemaVersion != 1 || !String.Equals(manifest.CoreVersion, release.CoreVersion, StringComparison.Ordinal) ||
                 !String.Equals(manifest.EntryPoint, release.EntryPoint, StringComparison.OrdinalIgnoreCase) || manifest.Files == null ||
@@ -283,7 +301,7 @@ namespace KinojoMeterLauncher
             if (!File.Exists(executable)) throw new InvalidOperationException("Core 실행 파일이 없습니다.");
             if (!managedPaths.Contains(NormalizeRelativePath(release.EntryPoint)))
                 throw new InvalidOperationException("Core 실행 파일이 install manifest에 등록되지 않았습니다.");
-            if (release.CodeSignatureRequired) VerifySignedBinaries(destination, manifest, release.PublisherSubject);
+            VerifyBundledDriverSignatures(destination, manifest);
         }
 
         internal void ExtractAndVerifyForTest(string packagePath, string destination, CoreReleaseManifest release)
@@ -294,8 +312,12 @@ namespace KinojoMeterLauncher
         private void VerifyInstalledFiles(ActiveCoreState state, CoreReleaseManifest release)
         {
             if (!IsActiveStateUsable(state)) throw new InvalidOperationException("설치된 Core 활성 상태가 올바르지 않습니다.");
+            if (release == null) release = ReleaseFromState(state);
+            CoreReleaseIntegrityVerifier.Verify(release);
             var manifestPath = Path.Combine(state.InstalledPath, "install-manifest.json");
             if (!File.Exists(manifestPath)) throw new InvalidOperationException("설치된 Core manifest가 없습니다.");
+            if (!String.Equals(Sha256(manifestPath), release.InstallManifestSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("설치된 Core manifest의 서명된 SHA-256이 일치하지 않습니다.");
             var manifest = _json.Deserialize<CoreInstallManifest>(File.ReadAllText(manifestPath, Encoding.UTF8));
             var expectedVersion = release == null ? state.CoreVersion : release.CoreVersion;
             var expectedEntryPoint = release == null ? state.EntryPoint : release.EntryPoint;
@@ -318,7 +340,7 @@ namespace KinojoMeterLauncher
             var actualPaths = new HashSet<string>(Directory.GetFiles(state.InstalledPath, "*", SearchOption.AllDirectories)
                 .Select(path => NormalizeRelativePath(path.Substring(rootPath.Length))), StringComparer.OrdinalIgnoreCase);
             if (!actualPaths.SetEquals(managedPaths)) throw new InvalidOperationException("설치된 Core에 관리되지 않는 파일이 있습니다.");
-            VerifySignedBinaries(state.InstalledPath, manifest, release == null ? "KINOJO INFO" : release.PublisherSubject);
+            VerifyBundledDriverSignatures(state.InstalledPath, manifest);
         }
 
         private static void VerifyManagedFile(string root, CoreInstallFile item)
@@ -367,17 +389,35 @@ namespace KinojoMeterLauncher
             return normalized;
         }
 
-        private static void VerifySignedBinaries(string root, CoreInstallManifest manifest, string publisherSubject)
+        private static void VerifyBundledDriverSignatures(string root, CoreInstallManifest manifest)
         {
-            var signedFiles = manifest.Files
-                .Where(item => item != null && (String.Equals(Path.GetExtension(item.Path), ".exe", StringComparison.OrdinalIgnoreCase) ||
-                    String.Equals(Path.GetExtension(item.Path), ".dll", StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-            if (signedFiles.Count == 0) throw new InvalidOperationException("Core 패키지에 서명 검증 대상이 없습니다.");
-            foreach (var item in signedFiles)
-                AuthenticodeVerifier.Verify(Path.Combine(root, item.Path.Replace('/', Path.DirectorySeparatorChar)), publisherSubject);
             foreach (var item in manifest.Files.Where(item => item != null && String.Equals(Path.GetExtension(item.Path), ".sys", StringComparison.OrdinalIgnoreCase)))
                 AuthenticodeVerifier.Verify(Path.Combine(root, item.Path.Replace('/', Path.DirectorySeparatorChar)), "");
+        }
+
+        private static CoreReleaseManifest ReleaseFromState(ActiveCoreState state)
+        {
+            if (state == null) return null;
+            return new CoreReleaseManifest
+            {
+                SchemaVersion = 1,
+                Channel = state.Channel,
+                CoreVersion = state.CoreVersion,
+                MinimumCoreVersion = state.MinimumCoreVersion,
+                MinimumLauncherVersion = state.MinimumLauncherVersion,
+                PackageId = state.PackageId,
+                FileName = state.FileName,
+                FileSize = state.FileSize,
+                Sha256 = state.PackageSha256,
+                InstallManifestSha256 = state.InstallManifestSha256,
+                EntryPoint = state.EntryPoint,
+                Mandatory = state.Mandatory,
+                IntegrityMode = state.IntegrityMode,
+                SigningKeyId = state.SigningKeyId,
+                ManifestSignature = state.ManifestSignature,
+                CodeSignatureRequired = false,
+                PublisherSubject = ""
+            };
         }
 
         private void WriteActiveState(ActiveCoreState state)
@@ -391,8 +431,10 @@ namespace KinojoMeterLauncher
 
         private static bool IsActiveStateUsable(ActiveCoreState state)
         {
-            if (state == null || state.SchemaVersion != 1 || String.IsNullOrWhiteSpace(state.CoreVersion) ||
-                String.IsNullOrWhiteSpace(state.EntryPoint) || String.IsNullOrWhiteSpace(state.InstalledPath)) return false;
+            if (state == null || state.SchemaVersion != 2 || String.IsNullOrWhiteSpace(state.Channel) ||
+                String.IsNullOrWhiteSpace(state.CoreVersion) || String.IsNullOrWhiteSpace(state.EntryPoint) ||
+                String.IsNullOrWhiteSpace(state.InstalledPath) || String.IsNullOrWhiteSpace(state.PackageSha256) ||
+                String.IsNullOrWhiteSpace(state.InstallManifestSha256) || String.IsNullOrWhiteSpace(state.ManifestSignature)) return false;
             try
             {
                 if (!String.Equals(state.EntryPoint, "KINOJO.Meter.exe", StringComparison.OrdinalIgnoreCase)) return false;
@@ -407,6 +449,12 @@ namespace KinojoMeterLauncher
 
         private static void ValidateRelease(CoreReleaseManifest release, string expectedProjectHost)
         {
+            ValidateReleaseFields(release, expectedProjectHost);
+            CoreReleaseIntegrityVerifier.Verify(release);
+        }
+
+        private static void ValidateReleaseFields(CoreReleaseManifest release, string expectedProjectHost)
+        {
             if (release == null || release.SchemaVersion != 1) throw new InvalidOperationException("지원하지 않는 Core release manifest입니다.");
             LauncherPaths.VersionDirectory(release.CoreVersion);
             if (!String.Equals(release.Channel, LauncherVersion.Channel, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Core release 채널이 다릅니다.");
@@ -420,14 +468,29 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("Core 패키지 파일명과 Core 버전이 일치하지 않습니다.");
             if (!String.Equals(release.EntryPoint, "KINOJO.Meter.exe", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("허용되지 않은 Core 실행 파일입니다.");
-            if (!release.CodeSignatureRequired || !String.Equals(release.PublisherSubject, "KINOJO INFO", StringComparison.Ordinal))
-                throw new InvalidOperationException("Core는 KINOJO INFO 코드 서명을 반드시 요구해야 합니다.");
+            if (release.CodeSignatureRequired || !String.IsNullOrWhiteSpace(release.PublisherSubject))
+                throw new InvalidOperationException("무료 개인 배포 Core는 Windows 게시자 코드서명을 요구하지 않아야 합니다.");
+            if (String.IsNullOrWhiteSpace(release.InstallManifestSha256) ||
+                !System.Text.RegularExpressions.Regex.IsMatch(release.InstallManifestSha256, "^[0-9a-f]{64}$"))
+                throw new InvalidOperationException("Core install manifest SHA-256 형식이 올바르지 않습니다.");
+            if (!System.Text.RegularExpressions.Regex.IsMatch(release.MinimumCoreVersion ?? "", "^[0-9]+\\.[0-9]+\\.[0-9]+$") ||
+                !System.Text.RegularExpressions.Regex.IsMatch(release.MinimumLauncherVersion ?? "", "^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                throw new InvalidOperationException("Core 최소 버전 계약이 올바르지 않습니다.");
+            var expectedPackageId = release.Channel.ToLowerInvariant() + ":" + release.CoreVersion + ":" + release.Sha256.Substring(0, 16);
+            if (!String.Equals(release.PackageId, expectedPackageId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Core packageId가 서명 대상 파일과 일치하지 않습니다.");
             RequireApprovedDownloadUri(release.DownloadUrl, expectedProjectHost);
         }
 
         internal static void ValidateReleaseForTest(CoreReleaseManifest release, string expectedProjectHost)
         {
             ValidateRelease(release, expectedProjectHost);
+        }
+
+        internal static void ValidateReleaseForTest(CoreReleaseManifest release, string expectedProjectHost, RSAParameters publicKey, string expectedKeyId)
+        {
+            ValidateReleaseFields(release, expectedProjectHost);
+            CoreReleaseIntegrityVerifier.VerifyForTest(release, publicKey, expectedKeyId);
         }
 
         private static Uri RequireApprovedDownloadUri(string value, string expectedProjectHost)

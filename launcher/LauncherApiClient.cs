@@ -142,17 +142,22 @@ namespace KinojoMeterLauncher
                 Channel = Text(value, "channel", LauncherVersion.Channel),
                 CoreVersion = Text(value, "coreVersion", ""),
                 MinimumCoreVersion = Text(value, "minimumCoreVersion", ""),
+                MinimumLauncherVersion = Text(value, "minimumLauncherVersion", ""),
                 PackageId = Text(value, "packageId", ""),
                 FileName = Text(value, "fileName", ""),
                 FileSize = Long(value, "fileSize", 0),
                 Sha256 = Text(value, "sha256", "").ToLowerInvariant(),
+                InstallManifestSha256 = Text(value, "installManifestSha256", "").ToLowerInvariant(),
                 DownloadUrl = Text(value, "downloadUrl", ""),
                 ExpiresAt = expiresAt,
                 EntryPoint = Text(value, "entryPoint", "KINOJO.Meter.exe"),
                 Mandatory = Bool(value, "mandatory"),
                 ReleaseNote = Text(value, "releaseNote", ""),
                 CodeSignatureRequired = Bool(value, "codeSignatureRequired"),
-                PublisherSubject = Text(value, "publisherSubject", "")
+                PublisherSubject = Text(value, "publisherSubject", ""),
+                IntegrityMode = Text(value, "integrityMode", ""),
+                SigningKeyId = Text(value, "signingKeyId", ""),
+                ManifestSignature = Text(value, "manifestSignature", "")
             };
         }
 
