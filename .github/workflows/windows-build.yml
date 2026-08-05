@@ -79,9 +79,39 @@ jobs:
             build/KINOJO_Meter_${{ steps.release.outputs.version }}_Setup.exe
             build/checksums_${{ steps.release.outputs.version }}.txt
 
-  publish:
+  release-check:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.version-change.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect release version change
+        id: version-change
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          elif ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- release/version.json; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.release-check.outputs.publish == 'true'
+    needs: [build, release-check]
     runs-on: windows-latest
     permissions:
       contents: write

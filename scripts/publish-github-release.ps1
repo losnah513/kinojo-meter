@@ -72,11 +72,19 @@ if (-not $releaseExists) {
 if (-not $existingTagCommit -or $existingTagCommit.ToLowerInvariant() -ne $ExpectedCommit.ToLowerInvariant()) {
     throw "Published tag commit does not match the workflow commit: tag=$existingTagCommit workflow=$ExpectedCommit"
 }
-$releaseJson = & gh release view $tag --repo $repository --json tagName,isDraft,isPrerelease,url
+$releaseJson = & gh release view $tag --repo $repository --json tagName,isDraft,isPrerelease,url,assets
 if ($LASTEXITCODE -ne 0) { throw "GitHub Release readback failed: $tag" }
 $publishedRelease = ($releaseJson -join "`n") | ConvertFrom-Json
 if ($publishedRelease.isDraft -eq $true -or $publishedRelease.isPrerelease -eq $true) {
     throw 'Stable publication must not be draft or prerelease.'
+}
+$publishedAssetNames = @($publishedRelease.assets | ForEach-Object { [string]$_.name })
+foreach ($assetPath in @($setupPath, $checksumPath)) {
+    $assetName = Split-Path -Leaf $assetPath
+    if ($publishedAssetNames -notcontains $assetName) {
+        & gh release upload $tag $assetPath --repo $repository
+        if ($LASTEXITCODE -ne 0) { throw "Missing GitHub Release asset recovery failed: $assetName" }
+    }
 }
 
 & (Join-Path $PSScriptRoot 'prepare-github-release.ps1') -GitHubOwner $GitHubOwner -GitHubRepository $GitHubRepository -VerifyRemote
