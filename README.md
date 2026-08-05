@@ -2,10 +2,10 @@
 
 
 기준일: 2026-08-05
-운영 기준: Desktop `0.2.37` / SQL `50015` / Edge `50015.3`
+운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / `MAINTENANCE` / `downloadEnabled=false`
 
-전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.38` / SQL `50016` / Edge `50016.1`
-전환 상태: `PREPARE_PRIVATE_PIPELINE` — 운영 WEB·Server·공개 Release는 아직 바꾸지 않는다.
+전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.38` / Database `50018` / `meter-ingest` `50016.1` v20 / release sync `50018.1` v7·v6
+전환 상태: `PREPARE_PRIVATE_PIPELINE` — 공개 PR `#9`는 main `bacf8d60a79178a8ee3012bd53de2d5c422967b6`, 비공개 PR `#3`은 main `6483979f80dc45fefe03f96f53c30ab266c9268f`로 병합 완료했다. 운영 WEB·Server active release·공개 Release는 아직 바꾸지 않았다.
 
 ## 목표 구조
 
@@ -31,7 +31,7 @@ WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-sig
 |---|---|---:|---|
 | Launcher | 이 공개 저장소의 `launcher/**` → `launcher-v*` GitHub Release | 공개 | 미서명 취미 배포 명시, 원격 size/SHA-256, GitHub OIDC, Server readback |
 | Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | RSA-3072 manifest 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
-| Server | SQL `50017/50018`, `meter-ingest`, `meter-release-sync`, `meter-core-release-sync` | 내부 | migration/Edge staging 검증 후 별도 운영 승인 |
+| Server | SQL `50016~50018`, `meter-ingest`, `meter-release-sync`, `meter-core-release-sync` | 내부 | dormant migration·Edge source/health/권한 readback 완료. 활성화는 clean Windows E2E 통과 후 |
 | WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher·Core·Server readback 완료 후 마지막 전환 |
 
 Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이나 Supabase service-role key를 클라이언트에 넣지 않는다. Storage object는 `stable/<version>/KinojoMeterCore_<version>_x64.zip`의 불변 경로를 사용한다.
@@ -48,18 +48,23 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 - `scripts/build-launcher.ps1`: 공개 Launcher 빌드.
 - `scripts/build-core-private.ps1`: public repository에서는 실행을 거부하는 Core 빌드·패키지.
 
-## 전환 Gate
+## 전환 상태와 남은 Gate
 
-다음 항목이 모두 확인되기 전에는 두 manifest의 `cutoverState`를 `ACTIVE`로 바꾸지 않는다.
+완료된 기반:
 
-1. private Core 저장소와 `meter-core-production` Environment. GitHub Free private 저장소에서 branch protection·required reviewer가 지원되지 않는 동안에는 정확한 `PUBLISH_CORE_<version>` 문자열을 요구하고 일반 `main` push 발행을 금지한다.
-2. private Storage bucket `meter-core-private`와 public access 차단.
-3. `meter-core-production` Environment의 `KINOJO_CORE_SIGNING_PRIVATE_KEY_B64`와 Launcher에 내장된 대응 공개키 readback.
-4. SQL `50017/50018` staging 검증과 Edge 세 Function의 소스/health/권한 readback.
-5. 미서명 Launcher 경고 안내, RSA 검증 Core의 clean Windows VM 설치·업데이트·강제 실패·롤백 테스트.
-6. WEB가 기존 Desktop URL 대신 Server가 승인한 Launcher URL만 사용하는지 검증.
-7. private Core `0.2.38` 이상을 첫 비공개 버전으로 발행. 공개됐던 `0.2.37` 로직은 노출된 것으로 간주한다.
-8. 마지막 단계에서 WEB 전환 후 기존 Desktop 공개 다운로드를 닫고, 공개 저장소의 Core workflow와 현재 소스를 제거한다.
+- private Core 저장소·`meter-core-production` Environment·수동 `PUBLISH_CORE_<version>` 발행 Gate를 구성했다.
+- private Storage `meter-core-private`는 `public=false`이며 public policy가 없다.
+- RSA-3072 개인키는 private Environment secret에만 두고 Launcher·Core workflow·release sync Edge의 공개키 일치를 확인했다.
+- SQL `50016~50018` 운영 Migration과 Edge 세 Function의 source·health·권한 readback을 완료했다.
+- 공개 PR `#9`와 비공개 PR `#3`은 사전 CI를 통과했고 각각 main `bacf8d60a79178a8ee3012bd53de2d5c422967b6`, `6483979f80dc45fefe03f96f53c30ab266c9268f`로 병합됐다. PREPARE 상태라 publish는 계속 차단된다.
+
+남은 Gate:
+
+1. clean Windows에서 미서명 Launcher 최초 설치·PASS KEY 인증·RSA Core 설치와 업데이트·변조 차단·ready handshake·강제 실패 자동 롤백을 검증한다.
+2. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한다.
+3. 검증 통과 후 private Core `0.2.38` → Launcher `1.0.0` 순서로 ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
+4. `MAINTENANCE`와 `downloadEnabled=false`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환하고 smoke test를 수행한다.
+5. smoke test 통과 후 다운로드를 개방하고 신규 사용자 전체 흐름을 확인한 뒤 기존 Desktop 공개 다운로드와 공개 저장소의 Core workflow·현재 소스를 정리한다.
 
 운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.
 
