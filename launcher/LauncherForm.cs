@@ -17,7 +17,7 @@ namespace KinojoMeterLauncher
 
         public LauncherForm()
         {
-            Text = "KINOJO Meter Launcher " + LauncherVersion.Current;
+            Text = "KINOJO Meter Launcher" + LauncherBuildProfile.DisplaySuffix + " " + LauncherVersion.Current;
             ClientSize = new Size(520, 350);
             MinimumSize = new Size(520, 390);
             MaximumSize = new Size(520, 390);
@@ -29,7 +29,7 @@ namespace KinojoMeterLauncher
 
             Controls.Add(new Label
             {
-                Text = "KINOJO METER",
+                Text = "KINOJO METER" + LauncherBuildProfile.DisplaySuffix,
                 ForeColor = Color.FromArgb(37, 99, 235),
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 AutoSize = true,
@@ -130,7 +130,7 @@ namespace KinojoMeterLauncher
             using (var installer = new CorePackageInstaller())
             {
                 var active = installer.ReadActiveState();
-                return "Launcher " + LauncherVersion.Current + " · Core " + (active == null ? "설치 전" : active.CoreVersion);
+                return "Launcher " + LauncherVersion.Current + " · " + LauncherVersion.Channel.ToUpperInvariant() + " · Core " + (active == null ? "설치 전" : active.CoreVersion);
             }
         }
 
@@ -190,7 +190,7 @@ namespace KinojoMeterLauncher
 
                         SetStatus("Core 실행을 확인하는 중입니다.", false);
                         await installer.LaunchAndVerifyAsync(install, login, installationId);
-                        _version.Text = "Launcher " + LauncherVersion.Current + " · Core " + install.Active.CoreVersion;
+                        _version.Text = "Launcher " + LauncherVersion.Current + " · " + LauncherVersion.Channel.ToUpperInvariant() + " · Core " + install.Active.CoreVersion;
                         sessionToken = ""; // Core가 stdin으로 세션을 인계받았으므로 Launcher는 폐기한다.
                         SetStatus("KINOJO Meter가 실행되었습니다.", false);
                         _progress.Value = 100;
