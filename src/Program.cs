@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading;
 using System.Windows;
 
@@ -10,9 +9,13 @@ namespace KinojoMeterPrototype
         [STAThread]
         private static void Main(string[] args)
         {
-            if (args != null && args.Any(value => String.Equals(value, "--decoder-self-test", StringComparison.OrdinalIgnoreCase)))
+            LoginResult launcherLogin;
+            string launcherError;
+            if (!LauncherSessionEnvelope.TryRead(out launcherLogin, out launcherError))
             {
-                Environment.ExitCode = DecoderSelfTest.Run() ? 0 : 1;
+                try { MessageBox.Show(launcherError, "KINOJO Meter", MessageBoxButton.OK, MessageBoxImage.Warning); }
+                catch { }
+                Environment.ExitCode = 4;
                 return;
             }
             bool ownsInstance;
@@ -25,7 +28,7 @@ namespace KinojoMeterPrototype
                     KinojoVersion.ValidateInstalledManifest();
                     var app = new Application();
                     app.ShutdownMode = ShutdownMode.OnMainWindowClose;
-                    app.Run(new MainWindow());
+                    app.Run(new MainWindow(launcherLogin));
                 }
                 catch (Exception ex)
                 {

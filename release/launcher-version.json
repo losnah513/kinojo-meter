@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "product": "KINOJO Meter Launcher",
+  "version": "1.0.0",
+  "fileVersion": "1.0.0.0",
+  "channel": "stable",
+  "minimumVersion": "1.0.0",
+  "mandatory": false,
+  "releaseNote": "Launcher/Core 분리 배포 기반",
+  "publicDistribution": true,
+  "artifactName": "KINOJO_Meter_Launcher_1.0.0.exe",
+  "codeSignatureRequired": true,
+  "publisherSubject": "KINOJO INFO",
+  "coreDelivery": "SERVER_AUTHORIZED_PRIVATE_STORAGE",
+  "coreUpdateAction": "coreUpdateAuthorization",
+  "cutoverState": "PREPARE_PRIVATE_PIPELINE"
+}

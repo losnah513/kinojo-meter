@@ -14,6 +14,7 @@ namespace KinojoMeterPrototype
     {
         internal static string ClientVersion { get { return KinojoVersion.Current; } }
         private const string SiteConfigUrl = "https://kinojo.info/config.json";
+        private const string ExpectedSupabaseHost = "josvoltpktvwysrasffq.supabase.co";
         private readonly HttpClient _http;
         private readonly JavaScriptSerializer _json = new JavaScriptSerializer();
         private string _supabaseUrl;
@@ -393,7 +394,10 @@ namespace KinojoMeterPrototype
             if (supabase == null) throw new MeterApiException("CONFIG_SUPABASE_MISSING", "config.json에서 Supabase 설정을 찾지 못했습니다.");
             _supabaseUrl = Text(supabase, "url", "").TrimEnd('/');
             _publishableKey = Text(supabase, "publishableKey", "");
-            if (String.IsNullOrWhiteSpace(_supabaseUrl) || String.IsNullOrWhiteSpace(_publishableKey))
+            Uri endpoint;
+            if (String.IsNullOrWhiteSpace(_supabaseUrl) || String.IsNullOrWhiteSpace(_publishableKey) ||
+                !Uri.TryCreate(_supabaseUrl, UriKind.Absolute, out endpoint) || endpoint.Scheme != Uri.UriSchemeHttps ||
+                !String.Equals(endpoint.Host, ExpectedSupabaseHost, StringComparison.OrdinalIgnoreCase))
                 throw new MeterApiException("CONFIG_EMPTY", "KINOJO 서버 연결 설정이 비어 있습니다.");
         }
 

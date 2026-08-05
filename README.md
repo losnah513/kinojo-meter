@@ -1,11 +1,82 @@
-﻿# KINOJO Meter Desktop
+﻿# KINOJO Meter Launcher + Private Core
 
 
 기준일: 2026-08-05
-Desktop version source: `release/version.json`  
-Latest Meter SQL: `50015`
-Desktop API Contract: `50015`
-Edge API: `50015.3`
+운영 기준: Desktop `0.2.37` / SQL `50015` / Edge `50015.3`
+
+전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.37` / SQL `50016` / Edge `50016.1`
+전환 상태: `PREPARE_PRIVATE_PIPELINE` — 운영 WEB·Server·공개 Release는 아직 바꾸지 않는다.
+
+## 목표 구조
+
+WEB에는 공개·코드서명된 Launcher만 둔다. Launcher는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core는 버전별 폴더에 검증 설치하고 `active.json`만 원자적으로 바꾼다. 새 Core가 8초 안에 종료되면 이전 정상 버전으로 되돌린다.
+
+```text
+WEB → signed Launcher → meter-ingest → private Storage → signed Core
+                         └ operation/session/consent/version gate
+```
+
+### 실시간 불변 조건
+
+- 업데이트·인증·네트워크 다운로드·서명 검증은 Core 실행 전에 끝낸다.
+- 캡처 callback은 payload를 `KINOJO-Realtime-Decoder` 큐에 넣고 즉시 반환한다.
+- Decoder와 DPS 누적은 각각 `AboveNormal` 전용 worker에서 순서대로 처리한다.
+- UI는 계산 결과 snapshot만 최대 20fps로 표시하며 DPS 누적을 기다리게 하지 않는다.
+- 일반 로그와 관리자 fixture 쓰기는 `BelowNormal` writer로 분리하고, 진단 과부하 시 진단 데이터만 버린다.
+- PASS KEY와 session token은 파일·CLI·로그에 남기지 않는다. Launcher가 Core의 redirected stdin으로 한 번 전달하고 폐기한다.
+
+## 배포 Lane
+
+| Lane | 저장소/배포 위치 | 공개 여부 | 활성 조건 |
+|---|---|---:|---|
+| Launcher | 이 공개 저장소의 `launcher/**` → `launcher-v*` GitHub Release | 공개 | Azure Artifact Signing, 원격 size/SHA-256, GitHub OIDC, Server readback |
+| Core | 신규 private 저장소 → private `meter-core-private` Storage | 비공개 | 전체 EXE/DLL 서명, Storage readback hash, GitHub OIDC, 보호 Environment 승인 |
+| Server | SQL `50016`, `meter-ingest`, `meter-release-sync`, `meter-core-release-sync` | 내부 | migration/Edge staging 검증 후 별도 운영 승인 |
+| WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher·Core·Server readback 완료 후 마지막 전환 |
+
+Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이나 Supabase service-role key를 클라이언트에 넣지 않는다. Storage object는 `stable/<version>/KinojoMeterCore_<version>_x64.zip`의 불변 경로를 사용한다.
+
+## 폴더 기준
+
+- `launcher/`: 공개 Launcher. 인증·업데이트·검증·실행만 담당한다.
+- `src/`: 전환 전 Core 작업본. 신규 private 저장소로 옮긴 뒤 공개 저장소에서는 제거한다.
+- `private-core-template/`: private 저장소에 적용할 보호 Environment/OIDC/서명 workflow 기준.
+- `release/launcher-version.json`: 공개 Launcher 단일 버전 기준.
+- `release/core-version.json`: private Core 단일 버전 기준.
+- `contracts/`: Launcher↔Server↔Core 배포 계약.
+- `scripts/build-launcher.ps1`: 공개 Launcher 빌드.
+- `scripts/build-core-private.ps1`: public repository에서는 실행을 거부하는 Core 빌드·패키지.
+
+## 전환 Gate
+
+다음 항목이 모두 확인되기 전에는 두 manifest의 `cutoverState`를 `ACTIVE`로 바꾸지 않는다.
+
+1. 신규 private Core 저장소와 `main` branch protection, `meter-core-production` 승인자 보호.
+2. private Storage bucket `meter-core-private`와 public access 차단.
+3. Azure Artifact Signing 계정·인증서 profile·GitHub OIDC federation.
+4. SQL `50016` staging 검증과 Edge 세 Function의 소스/health/권한 readback.
+5. 서명 Launcher와 서명 Core의 clean Windows VM 설치·업데이트·강제 실패·롤백 테스트.
+6. WEB가 기존 Desktop URL 대신 Server가 승인한 Launcher URL만 사용하는지 검증.
+7. private Core `0.2.38` 이상을 첫 비공개 버전으로 발행. 공개됐던 `0.2.37` 로직은 노출된 것으로 간주한다.
+8. 마지막 단계에서 WEB 전환 후 기존 Desktop 공개 다운로드를 닫고, 공개 저장소의 Core workflow와 현재 소스를 제거한다.
+
+운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.
+
+## 코드 보호 경계
+
+비공개 저장소·짧은 URL·서명은 무단 배포와 변조를 막지만 사용자 PC의 바이너리 역분석 자체를 없애지는 못한다. 새로 보호할 Decoder/판정 규칙은 private 저장소의 네이티브 모듈로 이동하고, 로컬 ring buffer 안에서 decode+aggregate를 끝낸 뒤 50ms snapshot만 UI에 전달한다. 이 경계는 서버 왕복이 없고 이벤트별 managed/native 왕복도 만들지 않는다. 기존 공개 `0.2.37` 소스와 바이너리는 회수할 수 없으므로 동일 로직을 비밀로 취급하지 않는다.
+
+## 이어서 작업할 때
+
+1. 이 문서의 운영 기준과 전환 준비 기준을 함께 확인한다.
+2. `git diff --check`와 `scripts/verify-distribution-boundary.ps1`을 먼저 실행한다.
+3. Core 변경은 private 저장소에서만 하고 `core-version.json` 버전을 함께 올린다.
+4. Launcher 변경은 공개 저장소 PR CI를 통과시킨다. 버전 manifest가 바뀐 `main`만 서명·Release·Server sync를 실행한다.
+5. GitHub, Server DB/Edge, Storage, WEB, 기준 문서를 각각 독립적으로 readback한다.
+
+---
+
+## 기존 Desktop 변경 이력
 
 ## KINOJO Meter 개발 분기
 

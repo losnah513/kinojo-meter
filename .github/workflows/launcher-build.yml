@@ -1,0 +1,171 @@
+name: Build KINOJO Meter Launcher
+
+concurrency:
+  group: kinojo-meter-launcher-${{ github.ref }}
+  cancel-in-progress: false
+
+'on':
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'launcher/**'
+      - 'contracts/**'
+      - 'release/launcher-version.json'
+      - 'scripts/build-launcher.ps1'
+      - 'scripts/publish-launcher-release.ps1'
+      - 'scripts/sync-launcher-release.ps1'
+      - 'scripts/verify-distribution-boundary.ps1'
+      - '.github/workflows/launcher-build.yml'
+      - 'KINOJO.Meter.sln'
+  push:
+    paths:
+      - 'launcher/**'
+      - 'contracts/**'
+      - 'release/launcher-version.json'
+      - 'scripts/build-launcher.ps1'
+      - 'scripts/publish-launcher-release.ps1'
+      - 'scripts/sync-launcher-release.ps1'
+      - 'scripts/verify-distribution-boundary.ps1'
+      - '.github/workflows/launcher-build.yml'
+      - 'KINOJO.Meter.sln'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Read Launcher version
+        id: release
+        shell: pwsh
+        run: |
+          $manifest = Get-Content ./release/launcher-version.json -Raw | ConvertFrom-Json
+          "version=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Parse Launcher PowerShell
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          foreach ($path in @(
+            './scripts/build-launcher.ps1',
+            './scripts/publish-launcher-release.ps1',
+            './scripts/sync-launcher-release.ps1',
+            './scripts/verify-distribution-boundary.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if (@($errors).Count -gt 0) { throw "$path`n$(@($errors) -join "`n")" }
+          }
+      - name: Verify public/private distribution boundary
+        shell: pwsh
+        run: ./scripts/verify-distribution-boundary.ps1
+      - name: Build public Launcher only
+        shell: pwsh
+        run: ./scripts/build-launcher.ps1 -Configuration Release
+      - name: Reject embedded Core payload
+        shell: pwsh
+        run: |
+          $launcher = Get-Item "./build/KINOJO_Meter_Launcher_${{ steps.release.outputs.version }}.exe"
+          if ($launcher.Length -gt 10485760) { throw 'Public Launcher exceeds the 10 MiB boundary.' }
+          if (Test-Path './build/KinojoMeterCore_*.zip') { throw 'Private Core artifact must never exist in the public Launcher build.' }
+      - name: Upload Launcher verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KINOJO-Meter-Launcher-${{ steps.release.outputs.version }}
+          if-no-files-found: error
+          path: |
+            build/KINOJO_Meter_Launcher_${{ steps.release.outputs.version }}.exe
+            build/checksums_launcher_${{ steps.release.outputs.version }}.txt
+
+  cutover-gate:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Require explicit ACTIVE cutover and version change
+        id: gate
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          state="$(python -c "import json; print(json.load(open('release/launcher-version.json', encoding='utf-8'))['cutoverState'])")"
+          if [[ "$state" != "ACTIVE" ]]; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          elif [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- release/launcher-version.json; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    if: needs.cutover-gate.outputs.publish == 'true'
+    needs: [build, cutover-gate]
+    runs-on: windows-2025
+    environment: meter-launcher-production
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read Launcher release
+        id: release
+        shell: pwsh
+        run: |
+          $manifest = Get-Content ./release/launcher-version.json -Raw | ConvertFrom-Json
+          "version=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - uses: actions/download-artifact@v4
+        with:
+          name: KINOJO-Meter-Launcher-${{ steps.release.outputs.version }}
+          path: build
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign public Launcher with Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\build
+          files-folder-filter: exe
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Publish immutable signed Launcher release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./scripts/publish-launcher-release.ps1
+          -GitHubOwner '${{ github.repository_owner }}'
+          -GitHubRepository '${{ github.event.repository.name }}'
+          -ExpectedCommit '${{ github.sha }}'
+      - name: Synchronize signed Launcher to Server Master
+        shell: pwsh
+        run: >-
+          ./scripts/sync-launcher-release.ps1
+          -Endpoint 'https://josvoltpktvwysrasffq.supabase.co/functions/v1/meter-release-sync'
+          -ExpectedCommit '${{ github.sha }}'
