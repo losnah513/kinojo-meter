@@ -15,7 +15,8 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 if ($AppOnly -and $SetupOnly) { throw 'AppOnly and SetupOnly cannot be used together.' }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$manifestPath = Join-Path $root (if ($Channel -eq 'staging') { 'release\launcher-staging-version.json' } else { 'release\launcher-version.json' })
+$manifestRelativePath = if ($Channel -eq 'staging') { 'release\launcher-staging-version.json' } else { 'release\launcher-version.json' }
+$manifestPath = Join-Path $root $manifestRelativePath
 $launcherProject = Join-Path $root 'launcher\KINOJO.Meter.Launcher.csproj'
 $setupProject = Join-Path $root 'launcher-setup\KINOJO.Meter.Launcher.Setup.csproj'
 $buildDirectory = Join-Path $root 'build'
@@ -115,7 +116,8 @@ if ($embeddedHash -ne $appHash) { throw 'Embedded Launcher payload does not matc
 
 $size = (Get-Item -LiteralPath $publishedSetup).Length
 $sha256 = (Get-FileHash -LiteralPath $publishedSetup -Algorithm SHA256).Hash.ToLowerInvariant()
-$checksumPath = Join-Path $buildDirectory (if ($Channel -eq 'staging') { "checksums_launcher_staging_${version}.txt" } else { "checksums_launcher_${version}.txt" })
+$checksumName = if ($Channel -eq 'staging') { "checksums_launcher_staging_${version}.txt" } else { "checksums_launcher_${version}.txt" }
+$checksumPath = Join-Path $buildDirectory $checksumName
 @("$artifactName`t$size`t$sha256") | Set-Content -LiteralPath $checksumPath -Encoding ascii
 
 Write-Host "Launcher app   : $stagedApp"
