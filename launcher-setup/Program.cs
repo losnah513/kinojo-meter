@@ -20,7 +20,7 @@ namespace KinojoMeterLauncherSetup
             }
             catch (Exception error)
             {
-                MessageBox.Show(error.Message, "KINOJO Meter Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(error.Message, SetupBuildProfile.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Environment.ExitCode = 1;
             }
         }
