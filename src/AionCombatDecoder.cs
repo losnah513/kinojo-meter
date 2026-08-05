@@ -16,6 +16,8 @@ namespace KinojoMeterPrototype
                 public int RawUnpaired;
                 public int Lz4Unpaired;
                 public DateTime LastSeenUtc;
+                public DateTime LastRawAtUtc;
+                public DateTime LastLz4AtUtc;
             }
             public string ScopeId;
             public readonly Dictionary<long, string> EntityNames = new Dictionary<long, string>();
@@ -218,7 +220,6 @@ namespace KinojoMeterPrototype
         {
             if (buffer == null || buffer.Length == 0) return;
             var incompleteOffsets = new List<int>();
-            var lastCompleteEnd = -1;
             for (var offset = 0; offset + 9 <= buffer.Length; offset++)
             {
                 if (buffer[offset + 2] != 0xFF || buffer[offset + 3] != 0xFF) continue;
@@ -241,17 +242,15 @@ namespace KinojoMeterPrototype
                     envelopeLength += 2;
                 }
                 if (offset + envelopeLength <= minimumEnvelopeEndOffset)
-                {
-                    lastCompleteEnd = Math.Max(lastCompleteEnd, offset + envelopeLength);
-                    offset += envelopeLength - 1;
                     continue;
-                }
                 if (DecodeBuffer(decoded, timestampUtc, state, events, 0, false, "LZ4:" + (direction ?? ""))) found = true;
-                lastCompleteEnd = Math.Max(lastCompleteEnd, offset + envelopeLength);
-                offset += envelopeLength - 1;
             }
 
-            var retainedOffset = incompleteOffsets.Where(value => value >= lastCompleteEnd).DefaultIfEmpty(-1).First();
+            // A valid LZ4 envelope can begin inside the declared byte range of an
+            // earlier decompression candidate. Keep the earliest incomplete header
+            // even when a preceding candidate already completed across it; otherwise
+            // split envelopes (and their identity records) are lost permanently.
+            var retainedOffset = incompleteOffsets.DefaultIfEmpty(-1).Min();
             if (retainedOffset >= 0)
             {
                 var remaining = new byte[buffer.Length - retainedOffset];
@@ -316,20 +315,43 @@ namespace KinojoMeterPrototype
             var cursor = offset + 2;
             if (!TryReadVarUInt(data, ref cursor, out entityId) || entityId <= 0) return false;
 
-            var searchEnd = Math.Min(data.Length - 1, cursor + 14);
-            for (var lengthOffset = cursor; lengthOffset <= searchEnd; lengthOffset++)
+            int lengthOffset;
+            if (marker == 0x33)
             {
-                var byteLength = data[lengthOffset];
-                if (byteLength < 2 || byteLength > 48 || lengthOffset + 1 + byteLength > data.Length) continue;
-                string candidate;
-                try { candidate = StrictUtf8.GetString(data, lengthOffset + 1, byteLength); }
-                catch { continue; }
-                if (!IsPlausibleName(candidate)) continue;
-                name = candidate;
-                recordEnd = lengthOffset + 1 + byteLength;
-                return true;
+                // Local-player identity observed in production fixtures:
+                // 33 36 <entity-varuint> 5F B1 E9 1A 37 <name-length> <utf8-name>
+                if (cursor + 6 > data.Length ||
+                    data[cursor] != 0x5F || data[cursor + 1] != 0xB1 || data[cursor + 2] != 0xE9 ||
+                    data[cursor + 3] != 0x1A || data[cursor + 4] != 0x37) return false;
+                lengthOffset = cursor + 5;
             }
-            return false;
+            else if (marker == 0x41)
+            {
+                // General entity identity:
+                // 41 36 <entity-varuint> (1C|1F) 00 01 <name-length> <utf8-name>
+                if (cursor + 4 > data.Length ||
+                    (data[cursor] != 0x1C && data[cursor] != 0x1F) ||
+                    data[cursor + 1] != 0x00 || data[cursor + 2] != 0x01) return false;
+                lengthOffset = cursor + 3;
+            }
+            else
+            {
+                // Party identity metadata varies by party state, while bytes 3 and 4
+                // and the name position are stable across the captured variants:
+                // 45 36 <entity-varuint> ?? ?? ?? 01 07 <name-length> <utf8-name>
+                if (cursor + 6 > data.Length || data[cursor + 3] != 0x01 || data[cursor + 4] != 0x07) return false;
+                lengthOffset = cursor + 5;
+            }
+
+            var byteLength = data[lengthOffset];
+            if (byteLength < 2 || byteLength > 48 || lengthOffset + 1 + byteLength > data.Length) return false;
+            string candidate;
+            try { candidate = StrictUtf8.GetString(data, lengthOffset + 1, byteLength); }
+            catch { return false; }
+            if (!IsPlausibleName(candidate)) return false;
+            name = candidate;
+            recordEnd = lengthOffset + 1 + byteLength;
+            return true;
         }
 
         private static bool TryReadVarUInt(byte[] data, ref int cursor, out long value)
@@ -387,7 +409,6 @@ namespace KinojoMeterPrototype
                     envelopeLength += 2;
                 }
                 ranges.Add(Tuple.Create(offset, offset + envelopeLength));
-                offset += envelopeLength - 1;
             }
             return ranges;
         }
@@ -406,6 +427,10 @@ namespace KinojoMeterPrototype
             }
             observed.LastSeenUtc = timestampUtc;
             var isLz4 = sourceKind != null && sourceKind.StartsWith("LZ4:", StringComparison.OrdinalIgnoreCase);
+            if (isLz4 && observed.LastLz4AtUtc == timestampUtc) return true;
+            if (!isLz4 && observed.LastRawAtUtc == timestampUtc) return true;
+            if (isLz4) observed.LastLz4AtUtc = timestampUtc;
+            else observed.LastRawAtUtc = timestampUtc;
             if (isLz4 && observed.RawUnpaired > 0) { observed.RawUnpaired--; return true; }
             if (!isLz4 && observed.Lz4Unpaired > 0) { observed.Lz4Unpaired--; return true; }
             if (isLz4) observed.Lz4Unpaired++;

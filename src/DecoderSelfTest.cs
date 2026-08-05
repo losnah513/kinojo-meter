@@ -79,13 +79,35 @@ namespace KinojoMeterPrototype
 
                 decoder = new AionCombatDecoder();
                 events.Clear();
-                var alternateIdentities = Identity33(11640, "청소기").Concat(Identity45(14250, "쉰빵")).ToArray();
+                var repeatedLz4 = Lz4Envelope(single).Concat(Lz4Envelope(single)).ToArray();
+                decoder.TryDecode(new GameFrameEventArgs(repeatedLz4, now, "flow", "repeated-lz4", "B_TO_A"), events);
+                Require(events.Count(value => value.Kind == CombatEventKind.Damage && value.Damage == 739455) == 1, "same-frame repeated lz4 damage deduplicated");
+
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                var overlapping = OverlappingLz4Envelopes(Identity45(6463, "달").Concat(new byte[20]).ToArray());
+                decoder.TryDecode(new GameFrameEventArgs(overlapping.Take(32).ToArray(), now, "flow", "overlapping-lz4", "B_TO_A"), events);
+                Require(!events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 6463), "incomplete overlapping lz4 identity emitted early");
+                decoder.TryDecode(new GameFrameEventArgs(overlapping.Skip(32).ToArray(), now.AddMilliseconds(1), "flow", "overlapping-lz4", "B_TO_A"), events);
+                Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 6463 && value.ActorName == "달"), "overlapping split lz4 identity retained");
+
+                decoder = new AionCombatDecoder();
+                events.Clear();
+                var alternateIdentities = Identity33(11640, "청소기")
+                    .Concat(Identity45(14250, "쉰빵"))
+                    .Concat(Identity45(6463, "달"))
+                    .ToArray();
                 decoder.TryDecode(new GameFrameEventArgs(alternateIdentities, now, "flow", "identity-variants", "B_TO_A"), events);
                 Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 11640 && value.ActorName == "청소기"), "0x3633 self identity");
                 Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 14250 && value.ActorName == "쉰빵"), "0x3645 party identity");
+                Require(events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 6463 && value.ActorName == "달"), "one-character Korean party identity");
                 events.Clear();
                 decoder.TryDecode(new GameFrameEventArgs(Identity33(22001, "V3"), now.AddMilliseconds(1), "flow", "identity-variants", "B_TO_A"), events);
                 Require(!events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorName == "V3"), "protocol fragment is not an identity");
+                decoder.TryDecode(new GameFrameEventArgs(LooseIdentity41(1320779, "청소기"), now.AddMilliseconds(2), "flow", "identity-variants", "B_TO_A"), events);
+                Require(!events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 1320779), "nearby utf8 fragment is not a 0x3641 identity");
+                decoder.TryDecode(new GameFrameEventArgs(LooseIdentity33(16494, "청소기"), now.AddMilliseconds(3), "flow", "identity-variants", "B_TO_A"), events);
+                Require(!events.Any(value => value.Kind == CombatEventKind.EntityIdentity && value.ActorRuntimeId == 16494), "legacy loose 0x3633 layout is rejected");
 
                 decoder = new AionCombatDecoder();
                 events.Clear();
@@ -127,6 +149,28 @@ namespace KinojoMeterPrototype
         {
             var result = new List<byte> { 0x33, 0x36 };
             result.AddRange(VarUInt(entityId));
+            result.AddRange(new byte[] { 0x5F, 0xB1, 0xE9, 0x1A, 0x37 });
+            var nameBytes = Encoding.UTF8.GetBytes(name);
+            result.Add((byte)nameBytes.Length);
+            result.AddRange(nameBytes);
+            return result.ToArray();
+        }
+
+        private static byte[] LooseIdentity41(long entityId, string name)
+        {
+            var result = new List<byte> { 0x41, 0x36 };
+            result.AddRange(VarUInt(entityId));
+            result.Add(0x72);
+            var nameBytes = Encoding.UTF8.GetBytes(name);
+            result.Add((byte)nameBytes.Length);
+            result.AddRange(nameBytes);
+            return result.ToArray();
+        }
+
+        private static byte[] LooseIdentity33(long entityId, string name)
+        {
+            var result = new List<byte> { 0x33, 0x36 };
+            result.AddRange(VarUInt(entityId));
             var nameBytes = Encoding.UTF8.GetBytes(name);
             result.Add((byte)nameBytes.Length);
             result.AddRange(nameBytes);
@@ -160,6 +204,26 @@ namespace KinojoMeterPrototype
             };
             result.AddRange(compressed);
             return result.ToArray();
+        }
+
+        private static byte[] OverlappingLz4Envelopes(byte[] innerPayload)
+        {
+            var inner = Lz4Envelope(innerPayload);
+            const int innerOffset = 18;
+            const int outerLength = 32;
+            var result = new byte[Math.Max(outerLength, innerOffset + inner.Length)];
+            result[0] = outerLength;
+            result[2] = 0xFF;
+            result[3] = 0xFF;
+            result[4] = 5;
+            result[8] = 0x50;
+            result[9] = 1;
+            result[10] = 2;
+            result[11] = 3;
+            result[12] = 4;
+            result[13] = 5;
+            Buffer.BlockCopy(inner, 0, result, innerOffset, inner.Length);
+            return result;
         }
 
         private static byte[] BuildBossThresholdFixture(byte[] single)
