@@ -4,7 +4,7 @@
 
 필수 준비값:
 
-- GitHub Environment `meter-core-production`의 승인자 보호
+- GitHub Environment `meter-core-production`. private 저장소에서 승인자 보호를 지원하지 않는 플랜이면 public 전환 대신 수동 `PUBLISH_CORE_<version>` 확인 Gate를 유지
 - Azure Artifact Signing 계정·인증서 프로필
 - GitHub OIDC와 Azure federated credential
 - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
@@ -18,8 +18,8 @@
 
 workflow 동작:
 
-1. PR과 일반 main 변경은 unsigned Release 빌드까지만 확인합니다.
-2. `core-version.json`이 바뀐 ACTIVE main 또는 승인된 main 수동 재시도만 보호 Environment로 진입합니다.
+1. PR과 일반 main 변경은 unsigned Release 빌드·회귀검사까지만 확인합니다.
+2. `ACTIVE`, `main` 수동 실행, 정확한 `PUBLISH_CORE_<version>` 확인 문자열을 모두 충족한 실행만 Environment로 진입합니다.
 3. Azure OIDC로 전체 EXE/DLL을 서명한 뒤 로컬에서 publisher를 다시 확인합니다.
 4. GitHub OIDC를 Server가 저장소 ID·owner ID·private visibility·main·workflow·commit 단위로 검증합니다.
 5. Server가 불변 Storage object를 다시 내려받아 size/SHA-256을 확인한 뒤 active release로 바꿉니다.

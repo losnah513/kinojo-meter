@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KINOJO.Meter.Setup", "setup
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KINOJO.Meter.Launcher", "launcher\KINOJO.Meter.Launcher.csproj", "{7DD8F4D0-F04E-4E5A-8BDD-C85E6273E4D1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KINOJO.Meter.Launcher.Setup", "launcher-setup\KINOJO.Meter.Launcher.Setup.csproj", "{969DCB3A-7A8A-45D7-AEE8-9E35116C0386}"
+EndProject
 Global
     GlobalSection(SolutionConfigurationPlatforms) = preSolution
         Debug|x64 = Debug|x64
@@ -26,6 +28,10 @@ Global
         {7DD8F4D0-F04E-4E5A-8BDD-C85E6273E4D1}.Debug|x64.Build.0 = Debug|x64
         {7DD8F4D0-F04E-4E5A-8BDD-C85E6273E4D1}.Release|x64.ActiveCfg = Release|x64
         {7DD8F4D0-F04E-4E5A-8BDD-C85E6273E4D1}.Release|x64.Build.0 = Release|x64
+        {969DCB3A-7A8A-45D7-AEE8-9E35116C0386}.Debug|x64.ActiveCfg = Debug|x64
+        {969DCB3A-7A8A-45D7-AEE8-9E35116C0386}.Debug|x64.Build.0 = Debug|x64
+        {969DCB3A-7A8A-45D7-AEE8-9E35116C0386}.Release|x64.ActiveCfg = Release|x64
+        {969DCB3A-7A8A-45D7-AEE8-9E35116C0386}.Release|x64.Build.0 = Release|x64
     EndGlobalSection
     GlobalSection(SolutionProperties) = preSolution
         HideSolutionNode = FALSE

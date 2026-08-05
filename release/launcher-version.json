@@ -6,7 +6,7 @@
   "channel": "stable",
   "minimumVersion": "1.0.0",
   "mandatory": false,
-  "releaseNote": "Launcher/Core 분리 배포 기반",
+  "releaseNote": "런처 설치 후 PASS KEY 인증·Private Core 자동 업데이트·무결성 검증·롤백",
   "publicDistribution": true,
   "artifactName": "KINOJO_Meter_Launcher_1.0.0.exe",
   "codeSignatureRequired": true,

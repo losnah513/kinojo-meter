@@ -188,9 +188,9 @@ namespace KinojoMeterLauncher
                             progress,
                             _cancellation.Token);
 
-                        _version.Text = "Launcher " + LauncherVersion.Current + " · Core " + install.Active.CoreVersion;
                         SetStatus("Core 실행을 확인하는 중입니다.", false);
                         await installer.LaunchAndVerifyAsync(install, login, installationId);
+                        _version.Text = "Launcher " + LauncherVersion.Current + " · Core " + install.Active.CoreVersion;
                         sessionToken = ""; // Core가 stdin으로 세션을 인계받았으므로 Launcher는 폐기한다.
                         SetStatus("KINOJO Meter가 실행되었습니다.", false);
                         _progress.Value = 100;
