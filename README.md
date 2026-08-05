@@ -5,7 +5,7 @@
 Desktop version source: `release/version.json`  
 Latest Meter SQL: `50015`
 Desktop API Contract: `50015`
-Edge API: `50015.2`
+Edge API: `50015.3`
 
 ## KINOJO Meter 개발 분기
 
@@ -22,7 +22,7 @@ Edge API: `50015.2`
 - 기존 350px급 어두운 오버레이 구성을 유지하면서 외곽 바디를 투명하게 하고 상단·보스·참가자 카드 표면만 남깁니다. 클래스 아이콘은 키우고 전투력은 `819.9K`처럼 한 자리 축약 표기합니다.
 - 캐릭터 정보와 피해/DPS/지분을 한 카드에 통합하고 카드 전체를 파티 판독 피해 지분만큼 클래스 색으로 채웁니다. 확인된 보스 피해 순위가 바뀔 때만 450ms 간격으로 부드럽게 재정렬하며 동일 피해 순서는 기존 파티 순서를 유지합니다.
 - 추정 순서 기반 보스명은 화면과 Owner 전용 관측 저장에서 `전투 대상`으로 표시하고 원래 단서는 별도 검토 필드로 보존합니다. `OBSERVED_CURRENT_MAX`는 실제 최대 HP가 아니므로 체력 백분율·완전성 계산에 사용하지 않으며, 검증된 현재/최대 HP 출처에만 붉은 실시간 체력 게이지를 표시합니다.
-- Decoder는 계속 `BINARY_PARTIAL_VALIDATED`, `UploadEligible=false`이며 공개 통계 Gate, Meter SQL `50015`, Edge API `50015.2`는 변경하지 않습니다.
+- Decoder는 계속 `BINARY_PARTIAL_VALIDATED`, `UploadEligible=false`이며 공개 통계 Gate와 Meter SQL `50015`는 변경하지 않습니다. Edge API `50015.3`은 `MAINTENANCE` 중 Desktop 업데이트 전달 차단과 GitHub OIDC 릴리스 동기화만 추가합니다.
 
 ## 0.2.36 파티 탈퇴 수렴·프로필 자동 재시도·CI 회귀검사
 
@@ -152,6 +152,8 @@ Edge API: `50015.2`
 ├─ release/version.json
 ├─ build/
 ├─ scripts/
+│  ├─ publish-github-release.ps1
+│  ├─ sync-server-release.ps1
 │  ├─ prepare-github-release.cmd
 │  ├─ verify-github-release.cmd
 │  └─ test-clean-install-sandbox.cmd
@@ -271,6 +273,7 @@ Edge API: `50015.2`
 - 프로그램 시작 시 로그인 전 `desktopUpdate` action을 호출하고, 로그인 후 Catalog bootstrap에서도 같은 릴리스 계약을 다시 확인합니다.
 - 매니페스트 필드: `version`, `fileVersion`, `minimumVersion`, `fileName`, `downloadUrl`, `sha256`, `fileSize`, `mandatory`, `releaseNote`, `publishedAt`, `channel`.
 - Server에 활성 릴리스가 없으면 업데이트 영역을 표시하지 않고 기존 실행 흐름을 유지합니다.
+- Server 운영 상태가 `MAINTENANCE`이거나 `downloadEnabled=false`이면 WEB은 활성 최신 버전과 점검 상태를 표시하지만, Desktop의 `desktopUpdate`와 bootstrap 업데이트 실행값은 반환하지 않습니다.
 
 
 ## 캐릭터와 공개 프로필
@@ -407,8 +410,9 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 
 
 - Supabase Meter SQL `50009~50015`: 운영 반영 완료
-- `meter-ingest` Edge Function API `50015.2`: 운영 배포 완료
-- Desktop 최신 소스 `0.2.37`, 마지막 Windows 실행 검증 `0.2.23`, Server 활성 stable 릴리스 `0.2.19`
+- `meter-ingest` Edge Function API `50015.3`: `MAINTENANCE` 업데이트 차단 계약 반영
+- `meter-release-sync` Edge Function API `50015.3`: GitHub Actions OIDC·고정 저장소/브랜치/Workflow·원격 설치기 SHA-256 검증 후 Server Master 자동 등록·활성화
+- Desktop 최신 소스·GitHub Release·Server 활성 stable 릴리스: `0.2.37`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
 - AppsScript_MASTER `BRIDGE.gs` 교체·재배포와 Extension 다시 로드는 별도 운영 반영이 필요합니다.
@@ -458,7 +462,18 @@ Before launching an update, the client verifies:
 The installer then validates the embedded Payload `version.json`, application file version, required runtime files, and transactional rollback contract.
 
 
-After a Windows build, prepare the GitHub Release metadata by running:
+Every pull request runs the Windows build and decoder regression tests. A successful merge to `main` performs the complete publication path:
+
+1. Build the application, payload and installer from `release/version.json`.
+2. Create the immutable `v<version>` GitHub Release and upload the installer and checksums.
+3. Download the published installer again and verify its size, SHA-256 and Windows file version.
+4. Request a short-lived GitHub Actions OIDC token with the dedicated audience.
+5. Let `meter-release-sync` independently verify the repository, repository ID, owner ID, `main` ref, push event, workflow ref, commit SHA, release tag, manifest and release assets.
+6. Register and activate the verified release through the Server RPCs, then read the active manifest back.
+
+No long-lived GitHub or Supabase deployment secret is stored in the repository. A repeated run is idempotent only when the active Server metadata exactly matches the immutable GitHub Release.
+
+For local/manual metadata inspection only, run:
 
 
 ```text
@@ -466,7 +481,7 @@ scripts\prepare-github-release.cmd
 ```
 
 
-Upload these two files to the generated `v<version>` GitHub Release:
+The automated publisher uploads these two files to the generated `v<version>` GitHub Release:
 
 
 ```text
@@ -475,7 +490,7 @@ build\checksums_<version>.txt
 ```
 
 
-After upload, run:
+For a manual remote readback, run:
 
 
 ```text
@@ -491,7 +506,7 @@ build\release\KINOJO_Meter_<version>_release-registration.json
 ```
 
 
-This registration JSON is the input used to register the release in the Supabase Server Master. Do not activate a release when `remoteVerified` is false.
+This registration JSON is preserved as both a workflow artifact and a GitHub Release asset. Server registration is performed only after `remoteVerified=true`, and the Edge function re-verifies the remote bytes instead of trusting the workflow JSON.
 
 
 Code signing remains disabled for the internal update test. It must be enabled and verified before public distribution.

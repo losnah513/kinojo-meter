@@ -213,7 +213,7 @@ function Read-VersionManifest {
     }
 
 
-    $required = @('product','version','fileVersion','channel','databaseContract','edgeApiVersion')
+    $required = @('product','version','fileVersion','channel','minimumVersion','releaseNote','databaseContract','edgeApiVersion')
     foreach ($name in $required) {
         $value = $manifest.$name
         if ($null -eq $value -or [String]::IsNullOrWhiteSpace([string]$value)) {
@@ -235,6 +235,19 @@ function Read-VersionManifest {
     }
     if (([string]$manifest.product) -ne 'KINOJO Meter') {
         throw "Unexpected product in release version manifest: $($manifest.product)"
+    }
+    $minimumVersion = [string]$manifest.minimumVersion
+    if ($minimumVersion -notmatch '^\d+\.\d+\.\d+$') {
+        throw "Minimum version must use major.minor.patch: $minimumVersion"
+    }
+    if ([version]$minimumVersion -gt [version]$version) {
+        throw "Minimum version cannot be greater than release version: minimum=$minimumVersion version=$version"
+    }
+    if ($manifest.mandatory -isnot [bool]) {
+        throw 'Release version manifest field must be boolean: mandatory'
+    }
+    if ($null -eq $manifest.releaseAutomation -or $manifest.releaseAutomation.enabled -ne $true -or $manifest.releaseAutomation.serverSync -ne $true) {
+        throw 'Release automation must explicitly enable GitHub Release and Server sync.'
     }
 
 
@@ -420,4 +433,4 @@ Write-Host 'Build completed successfully.'
 Write-Host "Payload : $PayloadZip"
 Write-Host "Setup   : $SetupFinal"
 Write-Host "SHA-256 : $ChecksumFile"
-Write-Host 'Next     : Run scripts\prepare-github-release.cmd before uploading a GitHub Release.'
+Write-Host 'Next     : Merge the verified pull request to main for automated GitHub Release publication.'

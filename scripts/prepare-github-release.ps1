@@ -56,10 +56,16 @@ Assert-Version $version 'version'
 if ($fileVersion -notmatch '^\d+\.\d+\.\d+\.\d+$' -or -not $fileVersion.StartsWith($version + '.', [StringComparison]::Ordinal)) {
     throw "fileVersion does not match version: $fileVersion"
 }
-if ([String]::IsNullOrWhiteSpace($MinimumVersion)) { $MinimumVersion = $version }
+if ([String]::IsNullOrWhiteSpace($MinimumVersion)) { $MinimumVersion = [string]$release.minimumVersion }
+if ([String]::IsNullOrWhiteSpace($ReleaseNote)) { $ReleaseNote = [string]$release.releaseNote }
+if (-not $PSBoundParameters.ContainsKey('Mandatory')) { $Mandatory = [bool]$release.mandatory }
 Assert-Version $MinimumVersion 'minimumVersion'
 if ([version]$MinimumVersion -gt [version]$version) { throw 'minimumVersion cannot be greater than version.' }
 if ($channel -ne 'stable') { throw "Only the stable channel is currently publishable: $channel" }
+if ($release.serverUpdateManifestReady -ne $true) { throw 'serverUpdateManifestReady must be true before publication.' }
+if ($null -eq $release.releaseAutomation -or $release.releaseAutomation.enabled -ne $true -or $release.releaseAutomation.serverSync -ne $true) {
+    throw 'Release automation is not enabled in release/version.json.'
+}
 
 $fileName = "KINOJO_Meter_${version}_Setup.exe"
 $setupPath = Join-Path $BuildDir $fileName
@@ -69,6 +75,26 @@ Assert-File $setupPath
 Assert-File $payloadPath
 Assert-File $checksumPath
 Assert-BinaryVersion $setupPath $fileVersion
+$payloadSha256 = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToUpperInvariant()
+$setupSha256 = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToUpperInvariant()
+$checksumRows = @{}
+foreach ($line in @(Get-Content -LiteralPath $checksumPath)) {
+    $parts = @($line.Trim([char]0xFEFF).Split("`t"))
+    if ($parts.Count -eq 3 -and -not [String]::IsNullOrWhiteSpace($parts[0])) {
+        $checksumRows[$parts[0]] = $parts
+    }
+}
+$expectedChecksumRows = @(
+    [pscustomobject]@{ FileName = "KinojoMeterPayload_${version}.zip"; FileSize = (Get-Item -LiteralPath $payloadPath).Length; Sha256 = $payloadSha256 },
+    [pscustomobject]@{ FileName = $fileName; FileSize = (Get-Item -LiteralPath $setupPath).Length; Sha256 = $setupSha256 }
+)
+foreach ($expected in $expectedChecksumRows) {
+    if (-not $checksumRows.ContainsKey($expected.FileName)) { throw "Checksum row is missing: $($expected.FileName)" }
+    $actual = $checksumRows[$expected.FileName]
+    if ([int64]$actual[1] -ne [int64]$expected.FileSize -or $actual[2].ToUpperInvariant() -ne $expected.Sha256) {
+        throw "Checksum row does not match the release artifact: $($expected.FileName)"
+    }
+}
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($payloadPath)
@@ -98,7 +124,7 @@ try {
 }
 finally { Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue }
 
-$sha256 = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sha256 = $setupSha256.ToLowerInvariant()
 $fileSize = (Get-Item -LiteralPath $setupPath).Length
 if ($fileSize -le 0 -or $fileSize -gt 536870912) { throw "Installer size is outside the allowed range: $fileSize" }
 $tag = "v$version"
@@ -109,7 +135,19 @@ if ($VerifyRemote) {
     Write-Host 'Downloading the GitHub Release asset for remote verification...'
     $remotePath = Join-Path $env:TEMP ("kinojo-remote-" + [Guid]::NewGuid().ToString('N') + '.exe')
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $remotePath -UseBasicParsing -MaximumRedirection 5
+        $downloaded = $false
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $remotePath -UseBasicParsing -MaximumRedirection 5
+                $downloaded = $true
+                break
+            }
+            catch {
+                if ($attempt -ge 2) { throw }
+                Start-Sleep -Seconds 5
+            }
+        }
+        if (-not $downloaded) { throw 'GitHub Release asset download did not complete.' }
         $remoteSize = (Get-Item -LiteralPath $remotePath).Length
         $remoteHash = (Get-FileHash -LiteralPath $remotePath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($remoteSize -ne $fileSize) { throw "Remote file size mismatch. Expected $fileSize, actual $remoteSize" }
