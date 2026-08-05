@@ -462,7 +462,7 @@ Before launching an update, the client verifies:
 The installer then validates the embedded Payload `version.json`, application file version, required runtime files, and transactional rollback contract.
 
 
-Every pull request runs the Windows build and decoder regression tests. A successful merge to `main` performs the complete publication path:
+Every pull request runs the Windows build and decoder regression tests. A successful merge to `main` that changes `release/version.json` performs the complete publication path. Other source or documentation merges still rebuild and test Windows but skip publication for the existing immutable version:
 
 1. Build the application, payload and installer from `release/version.json`.
 2. Create the immutable `v<version>` GitHub Release and upload the installer and checksums.
@@ -471,7 +471,7 @@ Every pull request runs the Windows build and decoder regression tests. A succes
 5. Let `meter-release-sync` independently verify the repository, repository ID, owner ID, `main` ref, push event, workflow ref, commit SHA, release tag, manifest and release assets.
 6. Register and activate the verified release through the Server RPCs, then read the active manifest back.
 
-No long-lived GitHub or Supabase deployment secret is stored in the repository. A repeated run is idempotent only when the active Server metadata exactly matches the immutable GitHub Release.
+No long-lived GitHub or Supabase deployment secret is stored in the repository. A repeated run is idempotent only when the active Server metadata exactly matches the immutable GitHub Release. If Release creation was interrupted, a retry uploads only missing installer/checksum assets and never overwrites an existing published binary.
 
 For local/manual metadata inspection only, run:
 
