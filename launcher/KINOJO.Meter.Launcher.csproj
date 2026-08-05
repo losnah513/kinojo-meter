@@ -14,7 +14,8 @@
     <AssemblyTitle>KINOJO Meter Launcher</AssemblyTitle>
     <Product>KINOJO Meter Launcher</Product>
     <Company>KINOJO INFO</Company>
-    <AssemblyName>KINOJO.Meter.Launcher</AssemblyName>
+    <AssemblyName Condition="'$(LauncherChannel)' != 'staging'">KINOJO.Meter.Launcher</AssemblyName>
+    <AssemblyName Condition="'$(LauncherChannel)' == 'staging'">KINOJO.Meter.Launcher.Staging</AssemblyName>
     <RootNamespace>KinojoMeterLauncher</RootNamespace>
     <LangVersion>7.3</LangVersion>
     <PlatformTarget>x64</PlatformTarget>
@@ -22,9 +23,11 @@
     <ApplicationIcon>..\assets\kinojo-updater-icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Deterministic>true</Deterministic>
+    <DefineConstants Condition="'$(LauncherChannel)' == 'staging'">$(DefineConstants);KINOJO_STAGING</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="LauncherBuildProfile.cs" />
     <Compile Include="LauncherForm.cs" />
     <Compile Include="LauncherApiClient.cs" />
     <Compile Include="CorePackageInstaller.cs" />
