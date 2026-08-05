@@ -101,6 +101,24 @@ namespace KinojoMeterPrototype
             var selfRow = rows.Single(row => row.Name == "청소기");
             var otherRow = rows.Single(row => row.Name == "권트");
             if (Math.Abs(selfRow.Share - 25.0) >= 0.001 || Math.Abs(otherRow.Share - 75.0) >= 0.001) return EngineFailure("damage shares are not party-total based");
+
+            var hpEngine = new CombatSessionEngine(self, 5);
+            hpEngine.Apply(new CombatEvent
+            {
+                Kind = CombatEventKind.BossHp,
+                TimestampUtc = DateTime.UtcNow,
+                TargetId = "boss-hp",
+                TargetRuntimeId = 9,
+                TargetName = "전투 대상",
+                CurrentHp = 680000000,
+                MaxHp = 680000000,
+                BossHpSource = "OBSERVED_CURRENT_MAX",
+                IsBoss = true
+            });
+            var hpSnapshot = hpEngine.Snapshot();
+            if (hpSnapshot.BossHpSource != "OBSERVED_CURRENT_MAX" || hpSnapshot.BossCurrentHp != 680000000 || hpSnapshot.BossMaxHp != 680000000)
+                return EngineFailure("boss HP provenance was not retained by the combat engine");
+
             engine.Tick(DateTime.UtcNow.AddSeconds(20));
             var phaseIdle = engine.Snapshot();
             if (phaseIdle.IsCleared || phaseIdle.IsRunning || phaseIdle.CompletionMode != "PHASE_IDLE_12S") return EngineFailure("idle gap was incorrectly finalized as a clear");

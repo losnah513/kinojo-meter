@@ -124,7 +124,7 @@ namespace KinojoMeterPrototype
                     _bossCurrentHp = value.CurrentHp >= 0 ? value.CurrentHp : _bossMaxHp;
                     _bossOrder = value.BossOrder;
                     _bossIdentityMode = value.BossIdentityMode ?? "";
-                    _bossHpSource = value.MaxHp > 0 ? "OBSERVED_CURRENT_MAX" : "";
+                    _bossHpSource = value.BossHpSource ?? "";
                     _bossConfirmed = value.IsBoss || _bossMaxHp > 0;
                     _running = false;
                     _cleared = false;
@@ -148,7 +148,7 @@ namespace KinojoMeterPrototype
                     if (value.CurrentHp >= 0) _bossCurrentHp = value.CurrentHp;
                     if (value.BossOrder > 0) _bossOrder = value.BossOrder;
                     if (!String.IsNullOrWhiteSpace(value.BossIdentityMode)) _bossIdentityMode = value.BossIdentityMode;
-                    if (_bossMaxHp > 0) _bossHpSource = "OBSERVED_CURRENT_MAX";
+                    if (!String.IsNullOrWhiteSpace(value.BossHpSource)) _bossHpSource = value.BossHpSource;
                     _bossConfirmed = _bossConfirmed || value.IsBoss || _bossMaxHp > 0;
                     if (_bossConfirmed && _bossCurrentHp > 0 && !_cleared) StartIfNeeded(timestamp);
                     if (_bossConfirmed && _bossMaxHp > 0 && _bossCurrentHp == 0 && !_cleared)

@@ -14,6 +14,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using KinojoMeterShared;
 
 namespace KinojoMeterPrototype
 {
@@ -79,6 +80,8 @@ namespace KinojoMeterPrototype
         private DispatcherTimer _characterDiscoveryTimeoutTimer;
         private bool _outboxRetryBusy;
         private bool _profileRetryBusy;
+        private bool _meterConsentKnown;
+        private bool _meterConsentAccepted;
 
         public MainWindow()
         {
@@ -305,6 +308,7 @@ namespace KinojoMeterPrototype
                 _login = await _api.LoginAsync(passKey);
                 if (_passKeyInput != null) _passKeyInput.Clear(false);
                 DiagnosticLog.Info("AUTH", "Login succeeded for role " + (_login.RoleLabel ?? "Member"));
+                await SynchronizeInstallerConsentAsync();
                 ShowCharacterDiscovery();
                 StartAutomaticCharacterDetection();
                 StartGameHudProbe();
@@ -319,6 +323,42 @@ namespace KinojoMeterPrototype
                 DiagnosticLog.Error("AUTH", "Unexpected login failure", ex);
                 ShowError("서버 연결을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             }
+        }
+
+        private async Task SynchronizeInstallerConsentAsync()
+        {
+            _meterConsentKnown = false;
+            _meterConsentAccepted = false;
+            if (_login == null || String.IsNullOrWhiteSpace(_login.SessionToken)) return;
+            try
+            {
+                var status = await _api.GetConsentStatusAsync(_login.SessionToken);
+                MeterConsentReceipt receipt;
+                if (!status.Accepted &&
+                    MeterConsentContract.TryReadCurrentReceipt(out receipt) &&
+                    !String.IsNullOrWhiteSpace(status.DocumentVersion) &&
+                    String.Equals(status.DocumentVersion, receipt.DocumentVersion, StringComparison.Ordinal))
+                {
+                    await _api.RecordInstallerConsentAsync(_login.SessionToken, receipt.DocumentVersion);
+                    status = await _api.GetConsentStatusAsync(_login.SessionToken, receipt.DocumentVersion);
+                    DiagnosticLog.Info("CONSENT", "Installer consent synchronized to Server · document=" + receipt.DocumentVersion);
+                }
+                SetMeterConsentState(true, status.Accepted);
+                if (!status.Accepted)
+                    DiagnosticLog.Info("CONSENT", "Current Server consent is required · document=" + (status.DocumentVersion ?? ""));
+            }
+            catch (Exception ex)
+            {
+                SetMeterConsentState(false, false);
+                DiagnosticLog.Error("CONSENT", "Installer consent synchronization failed", ex);
+            }
+        }
+
+        private void SetMeterConsentState(bool known, bool accepted)
+        {
+            _meterConsentKnown = known;
+            _meterConsentAccepted = accepted;
+            if (_tray != null) _tray.SetConsentRequired(known && !accepted);
         }
 
         private void ShowCharacterDiscovery()
@@ -1015,6 +1055,7 @@ namespace KinojoMeterPrototype
             };
             _overlay.ParticipantDetected += async delegate(object sender, CombatRow row) { await EnrichParticipantAsync(row); };
             _overlay.EncounterCompleted += async delegate(object sender, CombatSnapshot snapshot) { await UploadEncounterAsync(snapshot); };
+            _overlay.ExitRequested += async delegate { await ExitAsync(); };
             _overlay.PartyRosterObserved += delegate(object sender, PartyRosterDetectedEventArgs value)
             {
                 if (_hudProbe != null) _hudProbe.UpdatePartyMembers(value == null ? null : value.Members);
@@ -1097,6 +1138,7 @@ namespace KinojoMeterPrototype
                 ShowLogin();
             };
             _tray.ExitRequested += async delegate { await ExitAsync(); };
+            _tray.SetConsentRequired(_meterConsentKnown && !_meterConsentAccepted);
 
             _overlay.Show();
             _overlay.Hide();
@@ -1364,14 +1406,21 @@ namespace KinojoMeterPrototype
                     PartySize = snapshot.Rows.Count(row => !row.IsEmpty)
                 };
                 CanonicalCatalogSelection canonical = null;
-                try
+                var inferredBossIdentity = String.Equals(snapshot.BossIdentityMode, "TEST_ORDER_INFERRED", StringComparison.OrdinalIgnoreCase);
+                var trustedBossHp = String.Equals(snapshot.BossHpSource, "PACKET_CURRENT_AND_MAX", StringComparison.OrdinalIgnoreCase) ||
+                    String.Equals(snapshot.BossHpSource, "PACKET_VERIFIED_MAX", StringComparison.OrdinalIgnoreCase) ||
+                    String.Equals(snapshot.BossHpSource, "SERVER_CANONICAL_MAX", StringComparison.OrdinalIgnoreCase);
+                if (!inferredBossIdentity)
                 {
-                    canonical = await _api.ResolveEncounterCatalogAsync(context, _selected, snapshot.BossName);
-                }
-                catch (Exception ex)
-                {
-                    if (snapshot.UploadEligible) throw;
-                    DiagnosticLog.Info("UPLOAD", "Observed encounter uses captured catalog hints · " + ex.Message);
+                    try
+                    {
+                        canonical = await _api.ResolveEncounterCatalogAsync(context, _selected, snapshot.BossName);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (snapshot.UploadEligible) throw;
+                        DiagnosticLog.Info("UPLOAD", "Observed encounter uses captured catalog hints · " + ex.Message);
+                    }
                 }
                 var participants = snapshot.Rows.Where(row => !row.IsEmpty).Select(row => (object)new Dictionary<string, object>
                 {
@@ -1393,7 +1442,12 @@ namespace KinojoMeterPrototype
                     { "damageShare", row.Share },
                     { "isSelf", row.IsSelf }
                 }).ToList();
-                var damageCompleteness = snapshot.BossMaxHp > 0 ? Math.Min(1.0, Math.Max(0.0, partyTotalDamage / (double)snapshot.BossMaxHp)) : 0.0;
+                var damageCompleteness = trustedBossHp && snapshot.BossMaxHp > 0
+                    ? Math.Min(1.0, Math.Max(0.0, partyTotalDamage / (double)snapshot.BossMaxHp))
+                    : 0.0;
+                var submittedBossName = canonical != null
+                    ? canonical.BossName
+                    : (inferredBossIdentity ? "전투 대상" : snapshot.BossName);
                 var payload = new Dictionary<string, object>
                 {
                     { "sourceEventId", BuildSourceEventId(snapshot, _selected) },
@@ -1409,12 +1463,17 @@ namespace KinojoMeterPrototype
                     { "difficultyName", snapshot.DifficultyName ?? "" },
                     { "variantKey", canonical == null ? (snapshot.VariantKey ?? "") : canonical.VariantKey },
                     { "bossKey", canonical == null ? "" : canonical.BossKey },
-                    { "bossName", canonical == null ? snapshot.BossName : canonical.BossName },
+                    { "bossName", submittedBossName },
+                    { "observedBossNameHint", inferredBossIdentity ? (snapshot.BossName ?? "") : "" },
+                    { "bossIdentityMode", snapshot.BossIdentityMode ?? "" },
                     { "dungeonName", canonical == null ? (snapshot.DungeonName ?? "") : canonical.DungeonName },
                     { "bossOrder", snapshot.BossOrder },
                     { "bossRuntimeId", snapshot.BossRuntimeId },
                     { "bossScopedId", snapshot.BossId ?? "" },
-                    { "bossMaxHp", snapshot.BossMaxHp },
+                    { "bossCurrentHp", snapshot.BossCurrentHp },
+                    { "bossMaxHp", trustedBossHp ? snapshot.BossMaxHp : 0L },
+                    { "observedBossCurrentMax", trustedBossHp ? 0L : snapshot.BossMaxHp },
+                    { "bossHpSource", snapshot.BossHpSource ?? "" },
                     { "encounterStatus", "CLEARED" },
                     { "status", "CLEARED" },
                     { "totalDamage", self == null ? 0L : self.TotalDamage },
@@ -1431,8 +1490,11 @@ namespace KinojoMeterPrototype
                     { "captureMode", snapshot.CaptureMode ?? "" },
                     { "decoderType", snapshot.DecoderType ?? "" },
                     { "decoderVersion", snapshot.DecoderVersion ?? "" },
+                    { "decoderValidated", snapshot.DecoderValidated },
+                    { "uploadEligible", snapshot.UploadEligible },
+                    { "completionMode", snapshot.CompletionMode ?? "" },
                     { "damageCompleteness", damageCompleteness },
-                    { "catalogResolutionMode", canonical == null ? "CAPTURED_HINT" : "SERVER_CANONICAL" },
+                    { "catalogResolutionMode", canonical == null ? (inferredBossIdentity ? "OBSERVED_HINT" : "CAPTURED_HINT") : "SERVER_CANONICAL" },
                     { "participants", participants }
                 };
                 submissionOutboxPath = DiagnosticLog.SaveSubmissionOutbox(payload, _selected, snapshot.UploadEligible);
@@ -1441,6 +1503,7 @@ namespace KinojoMeterPrototype
                     if (self == null || self.TotalDamage <= 0)
                         throw new MeterApiException("SELF_DAMAGE_REQUIRED", "공개 통계 제출에는 선택 캐릭터 피해량이 필요합니다.");
                     await _api.SubmitEncounterAsync(_login.SessionToken, payload);
+                    SetMeterConsentState(true, true);
                     DiagnosticLog.UpdateSubmissionOutbox(submissionOutboxPath, "STORED", "", "");
                     _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "공개 전투 통계 저장 완료 · 다음 보스 전투 데이터 수집 대기");
                     DiagnosticLog.Info("UPLOAD", "Canonical encounter stored · boss=" + (snapshot.BossName ?? "") + " · damage=" + partyTotalDamage);
@@ -1448,6 +1511,7 @@ namespace KinojoMeterPrototype
                 else
                 {
                     await _api.SubmitObservedEncounterAsync(_login.SessionToken, payload);
+                    SetMeterConsentState(true, true);
                     DiagnosticLog.UpdateSubmissionOutbox(submissionOutboxPath, "STORED", "", "");
                     _overlay?.SetEncounterProcessingState("WAITING_NEXT_BOSS", "검증 전 수집 기록 서버 저장 완료 · 다음 보스 전투 데이터 수집 대기");
                     DiagnosticLog.Info("UPLOAD", "Observed encounter stored · publicStats=false · boss=" + (snapshot.BossName ?? "") + " · damage=" + partyTotalDamage);
@@ -1460,6 +1524,7 @@ namespace KinojoMeterPrototype
                 DiagnosticLog.UpdateSubmissionOutbox(submissionOutboxPath, "PENDING", meterError == null ? ex.GetType().Name : meterError.Code, ex.Message);
                 if (meterError != null && String.Equals(meterError.Code, "METER_CONSENT_REQUIRED", StringComparison.OrdinalIgnoreCase))
                 {
+                    SetMeterConsentState(true, false);
                     _overlay?.SetEncounterProcessingState("CONSENT_REQUIRED", "필수 동의 필요 · 트레이의 ‘웹 미터기’에서 동의 후 자동 재시도");
                     _tray?.SetStatus("전투 로컬 보관 · 웹 미터기 필수 동의 필요");
                 }
@@ -1491,7 +1556,12 @@ namespace KinojoMeterPrototype
                     {
                         if (String.Equals(Convert.ToString(rawAction), "submitEncounter", StringComparison.OrdinalIgnoreCase))
                             await _api.SubmitEncounterAsync(_login.SessionToken, payload);
-                        else await _api.SubmitObservedEncounterAsync(_login.SessionToken, payload);
+                        else
+                        {
+                            PrepareObservedRetryPayload(payload);
+                            await _api.SubmitObservedEncounterAsync(_login.SessionToken, payload);
+                        }
+                        SetMeterConsentState(true, true);
                         DiagnosticLog.UpdateSubmissionOutbox(path, "STORED", "", "");
                         DiagnosticLog.Info("OUTBOX", "Pending encounter stored · " + path);
                     }
@@ -1501,6 +1571,7 @@ namespace KinojoMeterPrototype
                         DiagnosticLog.UpdateSubmissionOutbox(path, "PENDING", meterError == null ? ex.GetType().Name : meterError.Code, ex.Message);
                         if (meterError != null && String.Equals(meterError.Code, "METER_CONSENT_REQUIRED", StringComparison.OrdinalIgnoreCase))
                         {
+                            SetMeterConsentState(true, false);
                             _tray?.SetStatus("전투 로컬 보관 · 웹 미터기 필수 동의 필요");
                             break;
                         }
@@ -1508,6 +1579,32 @@ namespace KinojoMeterPrototype
                 }
             }
             finally { _outboxRetryBusy = false; }
+        }
+
+        private static void PrepareObservedRetryPayload(Dictionary<string, object> payload)
+        {
+            if (payload == null) return;
+            object rawHpSource;
+            var hasHpSource = payload.TryGetValue("bossHpSource", out rawHpSource) &&
+                !String.IsNullOrWhiteSpace(Convert.ToString(rawHpSource));
+            if (hasHpSource) return;
+
+            object rawMaxHp;
+            payload.TryGetValue("bossMaxHp", out rawMaxHp);
+            long observedMax;
+            if (!Int64.TryParse(Convert.ToString(rawMaxHp), out observedMax)) observedMax = 0;
+            payload["bossHpSource"] = "LEGACY_OBSERVED_CURRENT_MAX";
+            payload["observedBossCurrentMax"] = Math.Max(0L, observedMax);
+            payload["bossMaxHp"] = 0L;
+            payload["damageCompleteness"] = 0.0;
+
+            object rawBossName;
+            payload.TryGetValue("bossName", out rawBossName);
+            var observedName = Convert.ToString(rawBossName) ?? "";
+            payload["observedBossNameHint"] = observedName;
+            payload["bossName"] = "전투 대상";
+            payload["bossIdentityMode"] = "LEGACY_UNVERIFIED";
+            payload["catalogResolutionMode"] = "OBSERVED_HINT";
         }
 
         private static void OpenMeterConsentPage()

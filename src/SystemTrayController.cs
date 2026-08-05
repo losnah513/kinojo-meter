@@ -13,6 +13,7 @@ namespace KinojoMeterPrototype
         private readonly ToolStripMenuItem _status;
         private readonly ToolStripMenuItem _showOverlay;
         private readonly ToolStripMenuItem _hideOverlay;
+        private readonly ToolStripMenuItem _consent;
         private readonly ToolStripMenuItem _adminCaptureStatus;
         private readonly ToolStripMenuItem _adminFixtureCapture;
 
@@ -42,7 +43,8 @@ namespace KinojoMeterPrototype
             _hideOverlay = new ToolStripMenuItem("오버레이 숨기기", null, delegate { HideOverlayRequested?.Invoke(this, EventArgs.Empty); });
             _menu.Items.Add(_showOverlay);
             _menu.Items.Add(_hideOverlay);
-            _menu.Items.Add("웹 미터기 · 필수 동의/기록 보기", null, delegate { OpenConsentRequested?.Invoke(this, EventArgs.Empty); });
+            _consent = new ToolStripMenuItem("웹 미터기 · 전투 기록 보기", null, delegate { OpenConsentRequested?.Invoke(this, EventArgs.Empty); });
+            _menu.Items.Add(_consent);
 
             if (administrator)
             {
@@ -78,8 +80,18 @@ namespace KinojoMeterPrototype
                 ContextMenuStrip = _menu,
                 Visible = true
             };
-            _icon.DoubleClick += delegate { ShowOverlayRequested?.Invoke(this, EventArgs.Empty); };
+            _icon.MouseClick += delegate(object sender, MouseEventArgs args)
+            {
+                if (args.Button != MouseButtons.Left || _menu.Visible) return;
+                _menu.Show(Cursor.Position);
+            };
             SetOverlayVisible(false);
+        }
+
+        public void SetConsentRequired(bool required)
+        {
+            _consent.Text = required ? "웹 미터기 · 필수 동의 필요" : "웹 미터기 · 전투 기록 보기";
+            _consent.ForeColor = required ? Color.Firebrick : SystemColors.ControlText;
         }
 
         public void SetStatus(string text)

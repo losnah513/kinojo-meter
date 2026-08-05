@@ -205,6 +205,7 @@ namespace KinojoMeterPrototype
                     TargetName = targetName ?? "",
                     CurrentHp = currentHp,
                     MaxHp = observedMax,
+                    BossHpSource = "OBSERVED_CURRENT_MAX",
                     IsBoss = false,
                     BossIdentityMode = "RUNTIME_HP_TARGET"
                 });

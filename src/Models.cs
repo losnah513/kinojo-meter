@@ -32,6 +32,13 @@ namespace KinojoMeterPrototype
         public List<CharacterProfile> Characters { get; set; }
     }
 
+    internal sealed class MeterConsentStatus
+    {
+        public bool Accepted { get; set; }
+        public string DocumentVersion { get; set; }
+        public string Message { get; set; }
+    }
+
     internal sealed class DetectedPartyMember
     {
         public string EntityId { get; set; }
@@ -224,6 +231,7 @@ namespace KinojoMeterPrototype
         public long HitSequence { get; set; }
         public long CurrentHp { get; set; }
         public long MaxHp { get; set; }
+        public string BossHpSource { get; set; }
         public int BossOrder { get; set; }
         public string BossIdentityMode { get; set; }
         public bool IsBoss { get; set; }
