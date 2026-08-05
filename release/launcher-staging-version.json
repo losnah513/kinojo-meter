@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "product": "KINOJO Meter Launcher STAGING",
+  "version": "1.0.0",
+  "fileVersion": "1.0.0.0",
+  "channel": "staging",
+  "minimumVersion": "1.0.0",
+  "mandatory": false,
+  "releaseNote": "비공개 Windows E2E 전용 · 운영 우회 금지 · Staging PASS KEY · 전용 RSA Core",
+  "publicDistribution": false,
+  "artifactName": "KINOJO_Meter_Launcher_Staging_1.0.0.exe",
+  "codeSignatureRequired": false,
+  "publisherSubject": "",
+  "trustMode": "WINDOWS_UNSIGNED_HOBBY",
+  "smartScreenWarningExpected": true,
+  "coreDelivery": "SERVER_AUTHORIZED_PRIVATE_STORAGE",
+  "coreUpdateAction": "coreUpdateAuthorization",
+  "cutoverState": "STAGING_E2E"
+}
