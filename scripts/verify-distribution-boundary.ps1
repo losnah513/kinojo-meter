@@ -11,6 +11,7 @@ function Require-Text([string]$Path, [string]$Pattern, [string]$Message) {
 }
 
 $launcher = Get-Content -LiteralPath (Join-Path $root 'release\launcher-version.json') -Raw | ConvertFrom-Json
+$stagingLauncher = Get-Content -LiteralPath (Join-Path $root 'release\launcher-staging-version.json') -Raw | ConvertFrom-Json
 $core = Get-Content -LiteralPath (Join-Path $root 'release\core-version.json') -Raw | ConvertFrom-Json
 if ($launcher.publicDistribution -ne $true -or $launcher.coreDelivery -ne 'SERVER_AUTHORIZED_PRIVATE_STORAGE') {
     throw 'Launcher manifest must describe public Launcher/private Core delivery.'
@@ -25,6 +26,10 @@ if ($core.publicDistribution -ne $false -or $core.storageBucket -ne 'meter-core-
     throw 'Core manifest must remain private and require the RSA manifest contract.'
 }
 if ([string]$launcher.cutoverState -ne [string]$core.cutoverState) { throw 'Launcher/Core cutover states must move together.' }
+if ([string]$stagingLauncher.channel -ne 'staging' -or $stagingLauncher.publicDistribution -ne $false -or
+    [string]$stagingLauncher.cutoverState -ne 'STAGING_E2E') {
+    throw 'Staging Launcher must remain private and channel-locked for E2E.'
+}
 
 Require-Text '.github\workflows\launcher-build.yml' 'build-launcher[.]ps1' 'Public workflow does not build the Launcher.'
 $publicWorkflow = Get-Content -LiteralPath (Join-Path $root '.github\workflows\launcher-build.yml') -Raw
@@ -44,6 +49,8 @@ Require-Text 'launcher\CorePackageInstaller.cs' 'WinVerifyTrust' 'Bundled driver
 Require-Text 'launcher\CorePackageInstaller.cs' 'InstallManifestSha256' 'Signed install manifest hash validation is missing.'
 Require-Text 'launcher\CoreReleaseIntegrityVerifier.cs' 'RSA_SHA256_MANIFEST_V1' 'Core RSA manifest verifier is missing.'
 Require-Text 'launcher\CoreReleaseIntegrityVerifier.cs' 'VerifyData' 'Core RSA signature verification is missing.'
+Require-Text 'launcher\LauncherBuildProfile.cs' 'meter-staging-ingest' 'Staging Launcher endpoint binding is missing.'
+Require-Text 'launcher\LauncherBuildProfile.cs' 'KINOJO Meter Staging' 'Staging Launcher data isolation is missing.'
 Require-Text 'launcher\CorePackageInstaller.cs' 'storage/v1/object/sign/meter-core-private' 'Private Storage URL allow-list is missing.'
 Require-Text 'launcher\CorePackageInstaller.cs' 'ValidatePackageRelativePath' 'Core ZIP path hardening is missing.'
 Require-Text 'launcher\CorePackageInstaller.cs' 'maximumArchiveEntries' 'Core ZIP entry count boundary is missing.'

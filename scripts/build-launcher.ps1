@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Release',
+    [ValidateSet('stable','staging')][string]$Channel = 'stable',
     [switch]$AppOnly,
     [switch]$SetupOnly
 )
@@ -14,15 +15,18 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 if ($AppOnly -and $SetupOnly) { throw 'AppOnly and SetupOnly cannot be used together.' }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$manifestPath = Join-Path $root 'release\launcher-version.json'
+$manifestRelativePath = if ($Channel -eq 'staging') { 'release\launcher-staging-version.json' } else { 'release\launcher-version.json' }
+$manifestPath = Join-Path $root $manifestRelativePath
 $launcherProject = Join-Path $root 'launcher\KINOJO.Meter.Launcher.csproj'
 $setupProject = Join-Path $root 'launcher-setup\KINOJO.Meter.Launcher.Setup.csproj'
 $buildDirectory = Join-Path $root 'build'
-$appBuildDirectory = Join-Path $buildDirectory 'launcher-app'
-$artifactDirectory = Join-Path $root 'artifacts\launcher'
+$appBuildDirectory = Join-Path $buildDirectory "launcher-app-$Channel"
+$artifactDirectory = Join-Path $root "artifacts\launcher-$Channel"
 $appOutput = Join-Path $artifactDirectory 'app'
 $setupOutput = Join-Path $artifactDirectory 'setup'
-$stagedApp = Join-Path $appBuildDirectory 'KINOJO.Meter.Launcher.exe'
+$launcherAssemblyName = if ($Channel -eq 'staging') { 'KINOJO.Meter.Launcher.Staging.exe' } else { 'KINOJO.Meter.Launcher.exe' }
+$setupAssemblyName = if ($Channel -eq 'staging') { 'KINOJO.Meter.Launcher.Staging.Setup.exe' } else { 'KINOJO.Meter.Launcher.Setup.exe' }
+$stagedApp = Join-Path $appBuildDirectory $launcherAssemblyName
 
 foreach ($path in @(
     $manifestPath, $launcherProject, $setupProject,
@@ -40,8 +44,11 @@ if ($version -notmatch '^\d+\.\d+\.\d+$' -or $fileVersion -notmatch '^\d+\.\d+\.
     throw 'Launcher version manifest is invalid.'
 }
 if ($artifactName -ne "KINOJO_Meter_Launcher_${version}.exe") {
-    throw 'Launcher artifactName must contain the exact Launcher version.'
+    if ($Channel -ne 'staging' -or $artifactName -ne "KINOJO_Meter_Launcher_Staging_${version}.exe") {
+        throw 'Launcher artifactName must contain the exact Launcher version and channel.'
+    }
 }
+if ([string]$manifest.channel -ne $Channel) { throw 'Launcher manifest channel does not match the requested build channel.' }
 
 $msbuildCommand = Get-Command msbuild.exe -ErrorAction SilentlyContinue
 $msbuild = if ($msbuildCommand) { $msbuildCommand.Source } else { $null }
@@ -66,10 +73,11 @@ if (-not $SetupOnly) {
     Remove-Item $appOutput -Recurse -Force -ErrorAction SilentlyContinue
     New-Item $appOutput -ItemType Directory -Force | Out-Null
     & $msbuild $launcherProject /restore /m /t:Build /p:Configuration=$Configuration /p:Platform=x64 `
-        /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:OutDir="$appOutput\" /nologo
+        /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:OutDir="$appOutput\" `
+        /p:LauncherChannel=$Channel /nologo
     if ($LASTEXITCODE -ne 0) { throw "Launcher application build failed with exit code $LASTEXITCODE." }
 
-    $builtApp = Join-Path $appOutput 'KINOJO.Meter.Launcher.exe'
+    $builtApp = Join-Path $appOutput $launcherAssemblyName
     Assert-FileVersion $builtApp $fileVersion
     Copy-Item -LiteralPath $builtApp -Destination $stagedApp -Force
 }
@@ -83,10 +91,11 @@ if ($AppOnly) {
 Remove-Item $setupOutput -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $setupOutput -ItemType Directory -Force | Out-Null
 & $msbuild $setupProject /restore /m /t:Build /p:Configuration=$Configuration /p:Platform=x64 `
-    /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:LauncherPayloadPath="$stagedApp" /p:OutDir="$setupOutput\" /nologo
+    /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:LauncherPayloadPath="$stagedApp" `
+    /p:OutDir="$setupOutput\" /p:LauncherChannel=$Channel /nologo
 if ($LASTEXITCODE -ne 0) { throw "Launcher setup build failed with exit code $LASTEXITCODE." }
 
-$builtSetup = Join-Path $setupOutput 'KINOJO.Meter.Launcher.Setup.exe'
+$builtSetup = Join-Path $setupOutput $setupAssemblyName
 $publishedSetup = Join-Path $buildDirectory $artifactName
 Assert-FileVersion $builtSetup $fileVersion
 Copy-Item -LiteralPath $builtSetup -Destination $publishedSetup -Force
@@ -107,10 +116,12 @@ if ($embeddedHash -ne $appHash) { throw 'Embedded Launcher payload does not matc
 
 $size = (Get-Item -LiteralPath $publishedSetup).Length
 $sha256 = (Get-FileHash -LiteralPath $publishedSetup -Algorithm SHA256).Hash.ToLowerInvariant()
-$checksumPath = Join-Path $buildDirectory "checksums_launcher_${version}.txt"
+$checksumName = if ($Channel -eq 'staging') { "checksums_launcher_staging_${version}.txt" } else { "checksums_launcher_${version}.txt" }
+$checksumPath = Join-Path $buildDirectory $checksumName
 @("$artifactName`t$size`t$sha256") | Set-Content -LiteralPath $checksumPath -Encoding ascii
 
 Write-Host "Launcher app   : $stagedApp"
 Write-Host "Launcher setup : $publishedSetup"
+Write-Host "Channel        : $Channel"
 Write-Host "Size           : $size"
 Write-Host "SHA-256        : $sha256"

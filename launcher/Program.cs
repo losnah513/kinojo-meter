@@ -8,7 +8,7 @@ namespace KinojoMeterLauncher
 {
     internal static class LauncherVersion
     {
-        public const string Channel = "stable";
+        public const string Channel = LauncherBuildProfile.Channel;
 
         public static string Current
         {
@@ -25,11 +25,11 @@ namespace KinojoMeterLauncher
         [STAThread]
         private static void Main()
         {
-            using (var singleInstance = new Mutex(true, "Local\\KINOJO_Meter_Launcher", out var created))
+            using (var singleInstance = new Mutex(true, LauncherBuildProfile.MutexName, out var created))
             {
                 if (!created)
                 {
-                    MessageBox.Show("KINOJO Meter Launcher가 이미 실행 중입니다.", "KINOJO Meter", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("KINOJO Meter Launcher" + LauncherBuildProfile.DisplaySuffix + "가 이미 실행 중입니다.", "KINOJO Meter" + LauncherBuildProfile.DisplaySuffix, MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 

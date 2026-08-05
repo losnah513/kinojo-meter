@@ -63,7 +63,7 @@ namespace KinojoMeterLauncher
                 }
             }
 
-            if (Process.GetProcessesByName("KINOJO.Meter").Any(process => !process.HasExited))
+            if (Process.GetProcessesByName(LauncherBuildProfile.CoreProcessName).Any(process => !process.HasExited))
                 throw new InvalidOperationException("실행 중인 KINOJO Meter를 종료한 뒤 업데이트해 주세요.");
 
             var transactionId = Guid.NewGuid().ToString("N");
@@ -159,6 +159,8 @@ namespace KinojoMeterLauncher
                 { "installationId", installationId ?? "" },
                 { "launcherVersion", LauncherVersion.Current },
                 { "coreVersion", state.CoreVersion },
+                { "channel", LauncherVersion.Channel },
+                { "apiEndpoint", "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName },
                 { "issuedAtUtc", DateTime.UtcNow.ToString("o") },
                 { "account", login.Account ?? new Dictionary<string, object>() },
                 { "characters", login.Characters ?? new List<Dictionary<string, object>>() }
@@ -437,7 +439,7 @@ namespace KinojoMeterLauncher
                 String.IsNullOrWhiteSpace(state.InstallManifestSha256) || String.IsNullOrWhiteSpace(state.ManifestSignature)) return false;
             try
             {
-                if (!String.Equals(state.EntryPoint, "KINOJO.Meter.exe", StringComparison.OrdinalIgnoreCase)) return false;
+                if (!String.Equals(state.EntryPoint, LauncherBuildProfile.CoreEntryPoint, StringComparison.OrdinalIgnoreCase)) return false;
                 var expected = Path.GetFullPath(LauncherPaths.VersionDirectory(state.CoreVersion) + Path.DirectorySeparatorChar);
                 var installed = Path.GetFullPath(state.InstalledPath + Path.DirectorySeparatorChar);
                 var executable = Path.GetFullPath(Path.Combine(installed, state.EntryPoint));
@@ -466,7 +468,7 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("Core 패키지 파일명이 올바르지 않습니다.");
             if (!String.Equals(release.FileName, "KinojoMeterCore_" + release.CoreVersion + "_x64.zip", StringComparison.Ordinal))
                 throw new InvalidOperationException("Core 패키지 파일명과 Core 버전이 일치하지 않습니다.");
-            if (!String.Equals(release.EntryPoint, "KINOJO.Meter.exe", StringComparison.OrdinalIgnoreCase))
+            if (!String.Equals(release.EntryPoint, LauncherBuildProfile.CoreEntryPoint, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("허용되지 않은 Core 실행 파일입니다.");
             if (release.CodeSignatureRequired || !String.IsNullOrWhiteSpace(release.PublisherSubject))
                 throw new InvalidOperationException("무료 개인 배포 Core는 Windows 게시자 코드서명을 요구하지 않아야 합니다.");
@@ -498,7 +500,7 @@ namespace KinojoMeterLauncher
             Uri uri;
             if (!Uri.TryCreate(value, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps ||
                 String.IsNullOrWhiteSpace(expectedProjectHost) || !String.Equals(uri.Host, expectedProjectHost, StringComparison.OrdinalIgnoreCase) ||
-                !uri.AbsolutePath.StartsWith("/storage/v1/object/sign/meter-core-private/", StringComparison.Ordinal))
+                !uri.AbsolutePath.StartsWith("/storage/v1/object/sign/meter-core-private/" + LauncherVersion.Channel + "/", StringComparison.Ordinal))
                 throw new InvalidOperationException("허용되지 않은 Core 다운로드 주소입니다.");
             return uri;
         }

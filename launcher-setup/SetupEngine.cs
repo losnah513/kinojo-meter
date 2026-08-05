@@ -12,28 +12,25 @@ namespace KinojoMeterLauncherSetup
 {
     internal static class LauncherSetupEngine
     {
-        private const string ProductName = "KINOJO Meter Launcher";
-        private const string LauncherFileName = "KINOJO.Meter.Launcher.exe";
-        private const string SetupFileName = "KINOJO.Meter.Launcher.Setup.exe";
         private const string PayloadResource = "KINOJO.Meter.Launcher.Payload";
-        private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\KINOJO Meter Launcher";
+        private static readonly string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + SetupBuildProfile.UninstallKeyName;
         private const int MoveFileDelayUntilReboot = 0x4;
 
         private static string InstallDirectory
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "KINOJO Meter"); }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", SetupBuildProfile.InstallFolderName); }
         }
 
-        private static string LauncherPath { get { return Path.Combine(InstallDirectory, LauncherFileName); } }
-        private static string SetupPath { get { return Path.Combine(InstallDirectory, SetupFileName); } }
+        private static string LauncherPath { get { return Path.Combine(InstallDirectory, SetupBuildProfile.LauncherFileName); } }
+        private static string SetupPath { get { return Path.Combine(InstallDirectory, SetupBuildProfile.SetupFileName); } }
         private static string StartMenuDirectory
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "KINOJO Meter"); }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", SetupBuildProfile.ShortcutName); }
         }
-        private static string StartMenuShortcut { get { return Path.Combine(StartMenuDirectory, "KINOJO Meter.lnk"); } }
+        private static string StartMenuShortcut { get { return Path.Combine(StartMenuDirectory, SetupBuildProfile.ShortcutName + ".lnk"); } }
         private static string DesktopShortcut
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "KINOJO Meter.lnk"); }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), SetupBuildProfile.ShortcutName + ".lnk"); }
         }
 
         public static void Install(bool silent)
@@ -43,11 +40,11 @@ namespace KinojoMeterLauncherSetup
                 "이 프로그램은 개인 취미 프로젝트라 유료 Windows 게시자 인증서를 사용하지 않습니다. " +
                 "Windows에 '알 수 없는 게시자' 경고가 표시될 수 있습니다.\n\n" +
                 "Core 업데이트는 RSA 전자서명과 SHA-256으로 별도 검증합니다. 계속할까요?",
-                ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                SetupBuildProfile.ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-            StopProcesses("KINOJO.Meter.Launcher");
+            StopProcesses(SetupBuildProfile.ProcessName);
             var transaction = Path.Combine(Path.GetTempPath(), "kinojo-launcher-setup-" + Guid.NewGuid().ToString("N"));
-            var stagedLauncher = Path.Combine(transaction, LauncherFileName);
+            var stagedLauncher = Path.Combine(transaction, SetupBuildProfile.LauncherFileName);
             var backupLauncher = Path.Combine(transaction, "previous-launcher.exe");
             Directory.CreateDirectory(transaction);
             try
@@ -73,7 +70,7 @@ namespace KinojoMeterLauncherSetup
                 ValidatePayloadVersion(LauncherPath);
 
                 Process.Start(new ProcessStartInfo(LauncherPath) { WorkingDirectory = InstallDirectory, UseShellExecute = true });
-                if (!silent) MessageBox.Show("설치가 완료되었습니다.\n\nPASS KEY를 입력하면 최신 Core를 확인한 뒤 미터기가 실행됩니다.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (!silent) MessageBox.Show("설치가 완료되었습니다.\n\nPASS KEY를 입력하면 최신 Core를 확인한 뒤 미터기가 실행됩니다.", SetupBuildProfile.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch
             {
@@ -95,9 +92,9 @@ namespace KinojoMeterLauncherSetup
         {
             if (!silent && MessageBox.Show(
                 "KINOJO Meter Launcher와 설치된 Core를 제거합니다.\n\n계속할까요?",
-                ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                SetupBuildProfile.ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-            StopProcesses("KINOJO.Meter.Launcher", "KINOJO.Meter");
+            StopProcesses(SetupBuildProfile.ProcessName, SetupBuildProfile.CoreProcessName);
             DeleteShortcut(DesktopShortcut);
             DeleteShortcut(StartMenuShortcut);
             try { if (Directory.Exists(StartMenuDirectory) && Directory.GetFileSystemEntries(StartMenuDirectory).Length == 0) Directory.Delete(StartMenuDirectory); }
@@ -105,7 +102,7 @@ namespace KinojoMeterLauncherSetup
             try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); }
             catch { }
 
-            var dataRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KINOJO Meter");
+            var dataRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), SetupBuildProfile.DataFolderName);
             try { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, true); }
             catch { }
             try { if (File.Exists(LauncherPath)) File.Delete(LauncherPath); }
@@ -120,7 +117,7 @@ namespace KinojoMeterLauncherSetup
             try { if (Directory.Exists(InstallDirectory) && Directory.GetFileSystemEntries(InstallDirectory).Length == 0) Directory.Delete(InstallDirectory); }
             catch { }
 
-            if (!silent) MessageBox.Show("KINOJO Meter Launcher 제거를 완료했습니다.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (!silent) MessageBox.Show(SetupBuildProfile.ProductName + " 제거를 완료했습니다.", SetupBuildProfile.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private static void ExtractPayload(string target)
@@ -148,7 +145,7 @@ namespace KinojoMeterLauncherSetup
             {
                 if (key == null) throw new InvalidOperationException("Windows 앱 제거 정보를 등록하지 못했습니다.");
                 var version = FileVersionInfo.GetVersionInfo(LauncherPath).ProductVersion ?? "";
-                key.SetValue("DisplayName", ProductName);
+                key.SetValue("DisplayName", SetupBuildProfile.ProductName);
                 key.SetValue("DisplayVersion", version);
                 key.SetValue("Publisher", "KINOJO INFO");
                 key.SetValue("InstallLocation", InstallDirectory);
@@ -170,7 +167,7 @@ namespace KinojoMeterLauncherSetup
             shortcut.TargetPath = targetPath;
             shortcut.IconLocation = targetPath + ",0";
             shortcut.WorkingDirectory = InstallDirectory;
-            shortcut.Description = ProductName;
+            shortcut.Description = SetupBuildProfile.ProductName;
             shortcut.Save();
         }
 

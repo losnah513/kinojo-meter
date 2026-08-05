@@ -34,6 +34,11 @@ namespace KinojoMeterLauncher
             }
         }
 
+        public string ApiEndpoint
+        {
+            get { return _supabaseUrl + "/functions/v1/" + LauncherBuildProfile.FunctionName; }
+        }
+
         public async Task<LauncherLoginResult> LoginAsync(string passKey)
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -114,7 +119,7 @@ namespace KinojoMeterLauncher
         private async Task<Dictionary<string, object>> PostAsync(Dictionary<string, object> payload)
         {
             await EnsureConfigAsync().ConfigureAwait(false);
-            using (var request = new HttpRequestMessage(HttpMethod.Post, _supabaseUrl + "/functions/v1/meter-ingest"))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, ApiEndpoint))
             {
                 request.Headers.TryAddWithoutValidation("apikey", _publishableKey);
                 request.Content = new StringContent(_json.Serialize(payload), Encoding.UTF8, "application/json");
@@ -150,7 +155,7 @@ namespace KinojoMeterLauncher
                 InstallManifestSha256 = Text(value, "installManifestSha256", "").ToLowerInvariant(),
                 DownloadUrl = Text(value, "downloadUrl", ""),
                 ExpiresAt = expiresAt,
-                EntryPoint = Text(value, "entryPoint", "KINOJO.Meter.exe"),
+                EntryPoint = Text(value, "entryPoint", LauncherBuildProfile.CoreEntryPoint),
                 Mandatory = Bool(value, "mandatory"),
                 ReleaseNote = Text(value, "releaseNote", ""),
                 CodeSignatureRequired = Bool(value, "codeSignatureRequired"),
