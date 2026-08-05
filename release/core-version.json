@@ -13,7 +13,9 @@
   "packageName": "KinojoMeterCore_0.2.38_x64.zip",
   "entryPoint": "KINOJO.Meter.exe",
   "storageBucket": "meter-core-private",
-  "codeSignatureRequired": true,
-  "publisherSubject": "KINOJO INFO",
+  "codeSignatureRequired": false,
+  "publisherSubject": "",
+  "integrityMode": "RSA_SHA256_MANIFEST_V1",
+  "signingKeyId": "kinojo-core-rsa-2026-01",
   "cutoverState": "PREPARE_PRIVATE_PIPELINE"
 }

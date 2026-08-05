@@ -83,21 +83,18 @@ if (-not (Test-Path -LiteralPath $stage -PathType Container)) {
     throw 'Prepared Core staging directory is missing. Run with -PrepareOnly before -PackageOnly.'
 }
 
-if ($manifest.codeSignatureRequired -eq $true) {
-    $publisher = [string]$manifest.publisherSubject
-    if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'publisherSubject is required for a signed Core release.' }
-    foreach ($binary in @(Get-ChildItem -LiteralPath $stage -File | Where-Object { $_.Extension -in @('.exe','.dll') })) {
-        $signature = Get-AuthenticodeSignature -LiteralPath $binary.FullName
-        if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
-            $signature.SignerCertificate.Subject.IndexOf($publisher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-            throw "Core binary must be signed by '$publisher' before packaging: $($binary.Name)"
-        }
-    }
-    foreach ($driver in @(Get-ChildItem -LiteralPath $stage -File | Where-Object { $_.Extension -eq '.sys' })) {
-        $signature = Get-AuthenticodeSignature -LiteralPath $driver.FullName
-        if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
-            throw "Bundled driver must retain a valid vendor Authenticode signature: $($driver.Name)"
-        }
+if ($manifest.codeSignatureRequired -eq $true -or -not [string]::IsNullOrWhiteSpace([string]$manifest.publisherSubject) -or
+    [string]$manifest.integrityMode -cne 'RSA_SHA256_MANIFEST_V1' -or
+    [string]$manifest.signingKeyId -cne 'kinojo-core-rsa-2026-01') {
+    throw 'Core release must use the unsigned hobby RSA manifest contract.'
+}
+
+$drivers = @(Get-ChildItem -LiteralPath $stage -File | Where-Object { $_.Extension -eq '.sys' })
+if ($drivers.Count -eq 0) { throw 'Bundled driver is missing.' }
+foreach ($driver in $drivers) {
+    $signature = Get-AuthenticodeSignature -LiteralPath $driver.FullName
+    if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
+        throw "Bundled driver must retain a valid vendor Authenticode signature: $($driver.Name)"
     }
 }
 

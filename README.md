@@ -9,10 +9,10 @@
 
 ## 목표 구조
 
-WEB에는 공개·코드서명된 Launcher 설치기만 둔다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 서명된 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. Launcher는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core는 버전별 폴더에 검증 설치하고 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
+WEB에는 공개 Launcher 설치기만 둔다. 개인 취미 배포라 Launcher/Setup EXE는 Windows 유료 게시자 코드서명을 사용하지 않으며 SmartScreen의 `알 수 없는 게시자` 경고가 예상된다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. Launcher는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core ZIP과 내부 install manifest는 RSA-3072/SHA-256으로 검증하고 버전별 폴더에 설치한 뒤 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
 
 ```text
-WEB → signed Launcher → meter-ingest → private Storage → signed Core
+WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-signed Core manifest
                          └ operation/session/consent/version gate
 ```
 
@@ -29,9 +29,9 @@ WEB → signed Launcher → meter-ingest → private Storage → signed Core
 
 | Lane | 저장소/배포 위치 | 공개 여부 | 활성 조건 |
 |---|---|---:|---|
-| Launcher | 이 공개 저장소의 `launcher/**` → `launcher-v*` GitHub Release | 공개 | Azure Artifact Signing, 원격 size/SHA-256, GitHub OIDC, Server readback |
-| Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | 전체 EXE/DLL 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
-| Server | SQL `50016`, `meter-ingest`, `meter-release-sync`, `meter-core-release-sync` | 내부 | migration/Edge staging 검증 후 별도 운영 승인 |
+| Launcher | 이 공개 저장소의 `launcher/**` → `launcher-v*` GitHub Release | 공개 | 미서명 취미 배포 명시, 원격 size/SHA-256, GitHub OIDC, Server readback |
+| Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | RSA-3072 manifest 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
+| Server | SQL `50017/50018`, `meter-ingest`, `meter-release-sync`, `meter-core-release-sync` | 내부 | migration/Edge staging 검증 후 별도 운영 승인 |
 | WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher·Core·Server readback 완료 후 마지막 전환 |
 
 Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이나 Supabase service-role key를 클라이언트에 넣지 않는다. Storage object는 `stable/<version>/KinojoMeterCore_<version>_x64.zip`의 불변 경로를 사용한다.
@@ -54,9 +54,9 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 
 1. private Core 저장소와 `meter-core-production` Environment. GitHub Free private 저장소에서 branch protection·required reviewer가 지원되지 않는 동안에는 정확한 `PUBLISH_CORE_<version>` 문자열을 요구하고 일반 `main` push 발행을 금지한다.
 2. private Storage bucket `meter-core-private`와 public access 차단.
-3. Azure Artifact Signing 계정·인증서 profile·GitHub OIDC federation.
-4. SQL `50016` staging 검증과 Edge 세 Function의 소스/health/권한 readback.
-5. 서명 Launcher 설치기와 내부 Launcher 앱, 서명 Core의 clean Windows VM 설치·업데이트·강제 실패·롤백 테스트.
+3. `meter-core-production` Environment의 `KINOJO_CORE_SIGNING_PRIVATE_KEY_B64`와 Launcher에 내장된 대응 공개키 readback.
+4. SQL `50017/50018` staging 검증과 Edge 세 Function의 소스/health/권한 readback.
+5. 미서명 Launcher 경고 안내, RSA 검증 Core의 clean Windows VM 설치·업데이트·강제 실패·롤백 테스트.
 6. WEB가 기존 Desktop URL 대신 Server가 승인한 Launcher URL만 사용하는지 검증.
 7. private Core `0.2.38` 이상을 첫 비공개 버전으로 발행. 공개됐던 `0.2.37` 로직은 노출된 것으로 간주한다.
 8. 마지막 단계에서 WEB 전환 후 기존 Desktop 공개 다운로드를 닫고, 공개 저장소의 Core workflow와 현재 소스를 제거한다.
@@ -72,7 +72,7 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 1. 이 문서의 운영 기준과 전환 준비 기준을 함께 확인한다.
 2. `git diff --check`와 `scripts/verify-distribution-boundary.ps1`을 먼저 실행한다.
 3. Core 변경은 private 저장소에서만 하고 `core-version.json` 버전을 함께 올린다.
-4. Launcher 변경은 공개 저장소 PR CI를 통과시킨다. 버전 manifest가 바뀐 `main`만 서명·Release·Server sync를 실행한다.
+4. Launcher 변경은 공개 저장소 PR CI를 통과시킨다. 버전 manifest가 바뀐 `main`만 Release·Server sync를 실행한다.
 5. GitHub, Server DB/Edge, Storage, WEB, 기준 문서를 각각 독립적으로 readback한다.
 
 ---
@@ -475,7 +475,7 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 - 게임 재접속·채널 이동·TCP 흐름 교체 시 재조립 초기화를 검증합니다.
 - 트레이·오버레이·관리자 권한·드라이버 동작을 실제 Windows에서 확인합니다.
 - Payload와 설치기의 SHA-256·크기를 기록합니다.
-- 실제 배포본에는 코드서명과 업데이트 서명 검증을 적용합니다.
+- 실제 배포본은 Launcher의 미서명 경고를 명시하고, Core에는 RSA release manifest·SHA-256·WinDivert 공급사 서명 검증을 적용합니다.
 
 
 ## 운영 반영 상태

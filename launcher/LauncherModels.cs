@@ -26,10 +26,12 @@ namespace KinojoMeterLauncher
         public string Channel { get; set; }
         public string CoreVersion { get; set; }
         public string MinimumCoreVersion { get; set; }
+        public string MinimumLauncherVersion { get; set; }
         public string PackageId { get; set; }
         public string FileName { get; set; }
         public long FileSize { get; set; }
         public string Sha256 { get; set; }
+        public string InstallManifestSha256 { get; set; }
         public string DownloadUrl { get; set; }
         public DateTimeOffset ExpiresAt { get; set; }
         public string EntryPoint { get; set; }
@@ -37,6 +39,9 @@ namespace KinojoMeterLauncher
         public string ReleaseNote { get; set; }
         public bool CodeSignatureRequired { get; set; }
         public string PublisherSubject { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
     }
 
     internal sealed class CoreInstallManifest
@@ -57,11 +62,22 @@ namespace KinojoMeterLauncher
     internal sealed class ActiveCoreState
     {
         public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
         public string CoreVersion { get; set; }
+        public string MinimumCoreVersion { get; set; }
+        public string MinimumLauncherVersion { get; set; }
+        public string PackageId { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
         public string EntryPoint { get; set; }
         public string InstalledPath { get; set; }
         public string ActivatedAtUtc { get; set; }
         public string PackageSha256 { get; set; }
+        public string InstallManifestSha256 { get; set; }
+        public bool Mandatory { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
     }
 
     internal sealed class CoreInstallResult

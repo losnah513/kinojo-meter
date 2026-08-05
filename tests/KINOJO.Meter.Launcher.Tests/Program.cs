@@ -25,16 +25,24 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(root);
             try
             {
-                Run("valid package", () => VerifyPackage(root, false, false));
-                Run("reject unmanaged file", () => ExpectFailure(() => VerifyPackage(root, true, false)));
-                Run("reject duplicate archive path", () => ExpectFailure(() => VerifyPackage(root, false, true)));
+                Run("valid package", () => VerifyPackage(root, false, false, false));
+                Run("reject unmanaged file", () => ExpectFailure(() => VerifyPackage(root, true, false, false)));
+                Run("reject duplicate archive path", () => ExpectFailure(() => VerifyPackage(root, false, true, false)));
+                Run("reject tampered install manifest hash", () => ExpectFailure(() => VerifyPackage(root, false, false, true)));
                 Run("reject traversal path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("../outside.txt", false)));
                 Run("reject Windows ADS path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("KINOJO.Meter.exe:payload", false)));
                 Run("reject rooted path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("C:\\Windows\\system32.dll", false)));
                 Run("reject reserved device path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("NUL.txt", false)));
-                Run("accept signed release contract", () => VerifyReleaseContract(true, "KINOJO INFO"));
-                Run("reject unsigned release contract", () => ExpectFailure(() => VerifyReleaseContract(false, "KINOJO INFO")));
-                Run("reject wrong release publisher", () => ExpectFailure(() => VerifyReleaseContract(true, "NOT KINOJO INFO")));
+                using (var signingKey = new RSACryptoServiceProvider(3072))
+                {
+                    signingKey.PersistKeyInCsp = false;
+                    Run("accept RSA-signed hobby release", () => VerifyReleaseContract(signingKey, null));
+                    Run("reject tampered package hash", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.Sha256 = new String('b', 64))));
+                    Run("reject tampered install manifest hash", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.InstallManifestSha256 = new String('c', 64))));
+                    Run("reject missing manifest signature", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.ManifestSignature = "")));
+                    Run("reject wrong signing key id", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.SigningKeyId = "wrong-key")));
+                    Run("reject Authenticode-required hobby release", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.CodeSignatureRequired = true)));
+                }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
             }
@@ -50,7 +58,7 @@ namespace KinojoMeterLauncher
             }
         }
 
-        private static void VerifyPackage(string root, bool unmanaged, bool duplicate)
+        private static void VerifyPackage(string root, bool unmanaged, bool duplicate, bool wrongManifestHash)
         {
             var id = Guid.NewGuid().ToString("N");
             var package = Path.Combine(root, id + ".zip");
@@ -73,10 +81,11 @@ namespace KinojoMeterLauncher
                 EntryPoint = "KINOJO.Meter.exe",
                 Files = managed
             };
+            var installManifestBytes = Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(installManifest));
             using (var archive = ZipFile.Open(package, ZipArchiveMode.Create))
             {
                 foreach (var pair in files) WriteEntry(archive, pair.Key, pair.Value);
-                WriteEntry(archive, "install-manifest.json", Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(installManifest)));
+                WriteEntry(archive, "install-manifest.json", installManifestBytes);
                 if (unmanaged) WriteEntry(archive, "unmanaged.dll", new byte[] { 1, 2, 3 });
                 if (duplicate) WriteEntry(archive, "version.json", Encoding.UTF8.GetBytes("duplicate"));
             }
@@ -87,27 +96,46 @@ namespace KinojoMeterLauncher
                 CoreVersion = "0.2.38",
                 FileName = "KinojoMeterCore_0.2.38_x64.zip",
                 EntryPoint = "KINOJO.Meter.exe",
-                CodeSignatureRequired = false
+                InstallManifestSha256 = wrongManifestHash ? new String('0', 64) : Hash(installManifestBytes),
+                CodeSignatureRequired = false,
+                PublisherSubject = ""
             };
             using (var installer = new CorePackageInstaller()) installer.ExtractAndVerifyForTest(package, destination, release);
         }
 
-        private static void VerifyReleaseContract(bool codeSignatureRequired, string publisherSubject)
+        private static void VerifyReleaseContract(RSACryptoServiceProvider signingKey, Action<CoreReleaseManifest> mutateAfterSigning)
         {
-            CorePackageInstaller.ValidateReleaseForTest(new CoreReleaseManifest
+            const string keyId = "launcher-test-key";
+            var release = new CoreReleaseManifest
             {
                 SchemaVersion = 1,
                 Channel = "stable",
                 CoreVersion = "0.2.38",
+                MinimumCoreVersion = "0.2.38",
+                MinimumLauncherVersion = "1.0.0",
+                PackageId = "stable:0.2.38:" + new String('a', 16),
                 FileName = "KinojoMeterCore_0.2.38_x64.zip",
                 FileSize = 1,
                 Sha256 = new String('a', 64),
+                InstallManifestSha256 = new String('d', 64),
                 DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/stable/0.2.38/package?token=test",
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1),
                 EntryPoint = "KINOJO.Meter.exe",
-                CodeSignatureRequired = codeSignatureRequired,
-                PublisherSubject = publisherSubject
-            }, "josvoltpktvwysrasffq.supabase.co");
+                Mandatory = true,
+                CodeSignatureRequired = false,
+                PublisherSubject = "",
+                IntegrityMode = CoreReleaseIntegrityVerifier.IntegrityMode,
+                SigningKeyId = keyId
+            };
+            release.ManifestSignature = Convert.ToBase64String(signingKey.SignData(
+                Encoding.UTF8.GetBytes(CoreReleaseIntegrityVerifier.Canonicalize(release)),
+                CryptoConfig.MapNameToOID("SHA256")));
+            if (mutateAfterSigning != null) mutateAfterSigning(release);
+            CorePackageInstaller.ValidateReleaseForTest(
+                release,
+                "josvoltpktvwysrasffq.supabase.co",
+                signingKey.ExportParameters(false),
+                keyId);
         }
 
         private static void WriteEntry(ZipArchive archive, string name, byte[] content)

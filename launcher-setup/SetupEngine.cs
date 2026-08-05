@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -39,10 +38,12 @@ namespace KinojoMeterLauncherSetup
 
         public static void Install(bool silent)
         {
-            VerifyPublisherSignature(Assembly.GetExecutingAssembly().Location);
             if (!silent && MessageBox.Show(
-                "KINOJO Meter Launcher를 이 Windows 사용자 계정에 설치합니다.\n\n계속할까요?",
-                ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                "KINOJO Meter Launcher를 이 Windows 사용자 계정에 설치합니다.\n\n" +
+                "이 프로그램은 개인 취미 프로젝트라 유료 Windows 게시자 인증서를 사용하지 않습니다. " +
+                "Windows에 '알 수 없는 게시자' 경고가 표시될 수 있습니다.\n\n" +
+                "Core 업데이트는 RSA 전자서명과 SHA-256으로 별도 검증합니다. 계속할까요?",
+                ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
             StopProcesses("KINOJO.Meter.Launcher");
             var transaction = Path.Combine(Path.GetTempPath(), "kinojo-launcher-setup-" + Guid.NewGuid().ToString("N"));
@@ -53,7 +54,6 @@ namespace KinojoMeterLauncherSetup
             {
                 ExtractPayload(stagedLauncher);
                 ValidatePayloadVersion(stagedLauncher);
-                VerifyPublisherSignature(stagedLauncher);
                 Directory.CreateDirectory(InstallDirectory);
 
                 if (File.Exists(LauncherPath))
@@ -228,75 +228,5 @@ namespace KinojoMeterLauncherSetup
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool MoveFileEx(string existingFileName, string newFileName, int flags);
-
-        private static readonly Guid WintrustActionGenericVerifyV2 = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
-
-        private static void VerifyPublisherSignature(string path)
-        {
-            var fileInfo = new WinTrustFileInfo(path);
-            var data = new WinTrustData(fileInfo);
-            try
-            {
-                var result = WinVerifyTrust(new IntPtr(-1), WintrustActionGenericVerifyV2, data);
-                if (result != 0) throw new InvalidOperationException("Launcher 코드 서명을 확인하지 못했습니다. 코드: 0x" + result.ToString("X8"));
-                using (var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path)))
-                {
-                    var signerName = certificate.GetNameInfo(X509NameType.SimpleName, false);
-                    if (!String.Equals(signerName, "KINOJO INFO", StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("Launcher 서명 게시자가 KINOJO INFO와 일치하지 않습니다.");
-                }
-            }
-            finally
-            {
-                data.Dispose();
-                fileInfo.Dispose();
-            }
-        }
-
-        [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
-        private static extern uint WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid actionId, WinTrustData data);
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private sealed class WinTrustFileInfo : IDisposable
-        {
-            private readonly IntPtr _path;
-            public uint StructSize = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo));
-            public IntPtr FilePath;
-            public IntPtr FileHandle = IntPtr.Zero;
-            public IntPtr KnownSubject = IntPtr.Zero;
-
-            public WinTrustFileInfo(string path)
-            {
-                _path = Marshal.StringToCoTaskMemUni(path);
-                FilePath = _path;
-            }
-
-            public void Dispose() { if (_path != IntPtr.Zero) Marshal.FreeCoTaskMem(_path); }
-        }
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private sealed class WinTrustData : IDisposable
-        {
-            public uint StructSize = (uint)Marshal.SizeOf(typeof(WinTrustData));
-            public IntPtr PolicyCallbackData = IntPtr.Zero;
-            public IntPtr SIPClientData = IntPtr.Zero;
-            public uint UIChoice = 2;
-            public uint RevocationChecks = 0;
-            public uint UnionChoice = 1;
-            public IntPtr FileInfoPtr;
-            public uint StateAction = 0;
-            public IntPtr StateData = IntPtr.Zero;
-            public string URLReference = null;
-            public uint ProvFlags = 0x00000020;
-            public uint UIContext = 0;
-
-            public WinTrustData(WinTrustFileInfo fileInfo)
-            {
-                FileInfoPtr = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WinTrustFileInfo)));
-                Marshal.StructureToPtr(fileInfo, FileInfoPtr, false);
-            }
-
-            public void Dispose() { if (FileInfoPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(FileInfoPtr); }
-        }
     }
 }
