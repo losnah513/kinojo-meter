@@ -9,7 +9,7 @@ namespace KinojoMeterLauncher
     {
         public static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "KINOJO Meter");
+            LauncherBuildProfile.DataFolderName);
         public static readonly string LauncherData = Path.Combine(Root, "launcher");
         public static readonly string CoreRoot = Path.Combine(Root, "core");
         public static readonly string CoreVersions = Path.Combine(CoreRoot, "versions");
