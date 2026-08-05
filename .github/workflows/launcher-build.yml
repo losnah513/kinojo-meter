@@ -9,6 +9,8 @@ concurrency:
   pull_request:
     paths:
       - 'launcher/**'
+      - 'launcher-setup/**'
+      - 'tests/KINOJO.Meter.Launcher.Tests/**'
       - 'contracts/**'
       - 'release/launcher-version.json'
       - 'scripts/build-launcher.ps1'
@@ -20,6 +22,8 @@ concurrency:
   push:
     paths:
       - 'launcher/**'
+      - 'launcher-setup/**'
+      - 'tests/KINOJO.Meter.Launcher.Tests/**'
       - 'contracts/**'
       - 'release/launcher-version.json'
       - 'scripts/build-launcher.ps1'
@@ -69,6 +73,13 @@ jobs:
       - name: Build public Launcher only
         shell: pwsh
         run: ./scripts/build-launcher.ps1 -Configuration Release
+      - name: Run Launcher package boundary tests
+        shell: pwsh
+        run: |
+          msbuild ./tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj /restore /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:OutDir="$env:GITHUB_WORKSPACE\artifacts\launcher-tests\" /nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher package test build failed.' }
+          & "$env:GITHUB_WORKSPACE\artifacts\launcher-tests\KINOJO.Meter.Launcher.Tests.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher package tests failed.' }
       - name: Reject embedded Core payload
         shell: pwsh
         run: |
@@ -83,6 +94,7 @@ jobs:
           path: |
             build/KINOJO_Meter_Launcher_${{ steps.release.outputs.version }}.exe
             build/checksums_launcher_${{ steps.release.outputs.version }}.txt
+            build/launcher-app/KINOJO.Meter.Launcher.exe
 
   cutover-gate:
     if: >-
@@ -126,6 +138,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
       - name: Read Launcher release
         id: release
         shell: pwsh
@@ -142,7 +155,22 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Sign public Launcher with Artifact Signing
+      - name: Sign installed Launcher application with Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\build\launcher-app
+          files-folder-filter: exe
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Rebuild setup with the signed Launcher application
+        shell: pwsh
+        run: ./scripts/build-launcher.ps1 -Configuration Release -SetupOnly
+      - name: Sign public Launcher setup with Artifact Signing
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}

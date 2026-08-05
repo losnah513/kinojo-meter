@@ -4,12 +4,12 @@
 기준일: 2026-08-05
 운영 기준: Desktop `0.2.37` / SQL `50015` / Edge `50015.3`
 
-전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.37` / SQL `50016` / Edge `50016.1`
+전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.38` / SQL `50016` / Edge `50016.1`
 전환 상태: `PREPARE_PRIVATE_PIPELINE` — 운영 WEB·Server·공개 Release는 아직 바꾸지 않는다.
 
 ## 목표 구조
 
-WEB에는 공개·코드서명된 Launcher만 둔다. Launcher는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core는 버전별 폴더에 검증 설치하고 `active.json`만 원자적으로 바꾼다. 새 Core가 8초 안에 종료되면 이전 정상 버전으로 되돌린다.
+WEB에는 공개·코드서명된 Launcher 설치기만 둔다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 서명된 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. Launcher는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core는 버전별 폴더에 검증 설치하고 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
 
 ```text
 WEB → signed Launcher → meter-ingest → private Storage → signed Core
@@ -30,7 +30,7 @@ WEB → signed Launcher → meter-ingest → private Storage → signed Core
 | Lane | 저장소/배포 위치 | 공개 여부 | 활성 조건 |
 |---|---|---:|---|
 | Launcher | 이 공개 저장소의 `launcher/**` → `launcher-v*` GitHub Release | 공개 | Azure Artifact Signing, 원격 size/SHA-256, GitHub OIDC, Server readback |
-| Core | 신규 private 저장소 → private `meter-core-private` Storage | 비공개 | 전체 EXE/DLL 서명, Storage readback hash, GitHub OIDC, 보호 Environment 승인 |
+| Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | 전체 EXE/DLL 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
 | Server | SQL `50016`, `meter-ingest`, `meter-release-sync`, `meter-core-release-sync` | 내부 | migration/Edge staging 검증 후 별도 운영 승인 |
 | WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher·Core·Server readback 완료 후 마지막 전환 |
 
@@ -38,7 +38,8 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 
 ## 폴더 기준
 
-- `launcher/`: 공개 Launcher. 인증·업데이트·검증·실행만 담당한다.
+- `launcher/`: 설치 후 실행되는 공개 Launcher 앱. 인증·업데이트·검증·Core 실행만 담당한다.
+- `launcher-setup/`: WEB에서 받는 사용자별 Launcher 설치기. Core와 미터기 연산 코드를 포함하지 않는다.
 - `src/`: 전환 전 Core 작업본. 신규 private 저장소로 옮긴 뒤 공개 저장소에서는 제거한다.
 - `private-core-template/`: private 저장소에 적용할 보호 Environment/OIDC/서명 workflow 기준.
 - `release/launcher-version.json`: 공개 Launcher 단일 버전 기준.
@@ -51,11 +52,11 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 
 다음 항목이 모두 확인되기 전에는 두 manifest의 `cutoverState`를 `ACTIVE`로 바꾸지 않는다.
 
-1. 신규 private Core 저장소와 `main` branch protection, `meter-core-production` 승인자 보호.
+1. private Core 저장소와 `meter-core-production` Environment. GitHub Free private 저장소에서 branch protection·required reviewer가 지원되지 않는 동안에는 정확한 `PUBLISH_CORE_<version>` 문자열을 요구하고 일반 `main` push 발행을 금지한다.
 2. private Storage bucket `meter-core-private`와 public access 차단.
 3. Azure Artifact Signing 계정·인증서 profile·GitHub OIDC federation.
 4. SQL `50016` staging 검증과 Edge 세 Function의 소스/health/권한 readback.
-5. 서명 Launcher와 서명 Core의 clean Windows VM 설치·업데이트·강제 실패·롤백 테스트.
+5. 서명 Launcher 설치기와 내부 Launcher 앱, 서명 Core의 clean Windows VM 설치·업데이트·강제 실패·롤백 테스트.
 6. WEB가 기존 Desktop URL 대신 Server가 승인한 Launcher URL만 사용하는지 검증.
 7. private Core `0.2.38` 이상을 첫 비공개 버전으로 발행. 공개됐던 `0.2.37` 로직은 노출된 것으로 간주한다.
 8. 마지막 단계에서 WEB 전환 후 기존 Desktop 공개 다운로드를 닫고, 공개 저장소의 Core workflow와 현재 소스를 제거한다.

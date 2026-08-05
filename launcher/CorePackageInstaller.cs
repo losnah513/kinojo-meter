@@ -41,18 +41,22 @@ namespace KinojoMeterLauncher
             ValidateRelease(release, expectedProjectHost);
             LauncherPaths.EnsureDirectories();
             var current = ReadActiveState();
-            if (current != null && String.Equals(current.CoreVersion, release.CoreVersion, StringComparison.Ordinal) &&
-                String.Equals(current.PackageSha256, release.Sha256, StringComparison.OrdinalIgnoreCase))
+            if (current != null)
             {
                 try
                 {
-                    VerifyInstalledFiles(current, release);
-                    progress?.Report(100);
-                    return new CoreInstallResult { Active = current, Previous = current, Changed = false };
+                    var matchesRelease = String.Equals(current.CoreVersion, release.CoreVersion, StringComparison.Ordinal) &&
+                        String.Equals(current.PackageSha256, release.Sha256, StringComparison.OrdinalIgnoreCase);
+                    VerifyInstalledFiles(current, matchesRelease ? release : null);
+                    if (matchesRelease)
+                    {
+                        progress?.Report(100);
+                        return new CoreInstallResult { Active = current, Previous = current, Changed = false };
+                    }
                 }
                 catch
                 {
-                    // A damaged slot is replaced from the immutable Server package.
+                    // A damaged or untrusted slot must never be retained as a rollback target.
                     current = null;
                 }
             }
@@ -99,14 +103,46 @@ namespace KinojoMeterLauncher
         {
             if (install == null || !IsActiveStateUsable(install.Active)) throw new InvalidOperationException("실행할 Core가 준비되지 않았습니다.");
             if (login == null || String.IsNullOrWhiteSpace(login.SessionToken)) throw new InvalidOperationException("Core에 전달할 Server 세션이 없습니다.");
-            var executable = Path.Combine(install.Active.InstalledPath, install.Active.EntryPoint);
+            try
+            {
+                await StartCoreAndWaitForReadyAsync(install.Active, login, installationId).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (!install.Changed || install.Previous == null || !IsActiveStateUsable(install.Previous))
+                {
+                    if (install.Changed)
+                    {
+                        try { if (File.Exists(LauncherPaths.ActiveCoreFile)) File.Delete(LauncherPaths.ActiveCoreFile); }
+                        catch { }
+                    }
+                    throw;
+                }
+
+                WriteActiveState(install.Previous);
+                try
+                {
+                    await StartCoreAndWaitForReadyAsync(install.Previous, login, installationId).ConfigureAwait(false);
+                    install.Active = install.Previous;
+                    install.Changed = false;
+                }
+                catch (Exception rollbackError)
+                {
+                    throw new InvalidOperationException("새 Core 시작과 이전 버전 자동 복구가 모두 실패했습니다.", rollbackError);
+                }
+            }
+        }
+
+        private async Task StartCoreAndWaitForReadyAsync(ActiveCoreState state, LauncherLoginResult login, string installationId)
+        {
+            var executable = Path.Combine(state.InstalledPath, state.EntryPoint);
             var envelope = _json.Serialize(new Dictionary<string, object>
             {
                 { "schemaVersion", 1 },
                 { "sessionToken", login.SessionToken },
                 { "installationId", installationId ?? "" },
                 { "launcherVersion", LauncherVersion.Current },
-                { "coreVersion", install.Active.CoreVersion },
+                { "coreVersion", state.CoreVersion },
                 { "issuedAtUtc", DateTime.UtcNow.ToString("o") },
                 { "account", login.Account ?? new Dictionary<string, object>() },
                 { "characters", login.Characters ?? new List<Dictionary<string, object>>() }
@@ -114,9 +150,10 @@ namespace KinojoMeterLauncher
             var encodedEnvelope = Convert.ToBase64String(Encoding.UTF8.GetBytes(envelope));
             var start = new ProcessStartInfo(executable)
             {
-                WorkingDirectory = install.Active.InstalledPath,
+                WorkingDirectory = state.InstalledPath,
                 UseShellExecute = false,
                 RedirectStandardInput = true,
+                RedirectStandardOutput = true,
                 CreateNoWindow = false
             };
             Process process = null;
@@ -126,9 +163,16 @@ namespace KinojoMeterLauncher
                 if (process == null) throw new InvalidOperationException("KINOJO Meter Core를 시작하지 못했습니다.");
                 await process.StandardInput.WriteLineAsync("KINOJO_LAUNCHER_SESSION_V1 " + encodedEnvelope).ConfigureAwait(false);
                 process.StandardInput.Close();
-                var exited = await Task.Run(() => process.WaitForExit(8000)).ConfigureAwait(false);
-                if (exited)
-                    throw new InvalidOperationException("새 Core가 시작 직후 종료되었습니다. 종료 코드: " + process.ExitCode);
+                var readyTask = process.StandardOutput.ReadLineAsync();
+                var completed = await Task.WhenAny(readyTask, Task.Delay(TimeSpan.FromSeconds(12))).ConfigureAwait(false);
+                if (completed != readyTask)
+                    throw new InvalidOperationException("Core가 제한 시간 안에 시작 준비를 완료하지 못했습니다.");
+                var ready = await readyTask.ConfigureAwait(false);
+                if (!String.Equals(ready, "KINOJO_CORE_READY_V1 " + state.CoreVersion, StringComparison.Ordinal))
+                {
+                    var detail = process.HasExited ? " 종료 코드: " + process.ExitCode : "";
+                    throw new InvalidOperationException("Core 시작 준비 신호가 올바르지 않습니다." + detail);
+                }
             }
             catch
             {
@@ -137,12 +181,6 @@ namespace KinojoMeterLauncher
                     if (process != null && !process.HasExited) process.Kill();
                 }
                 catch { }
-                if (install.Changed && install.Previous != null && IsActiveStateUsable(install.Previous)) WriteActiveState(install.Previous);
-                else if (install.Changed)
-                {
-                    try { if (File.Exists(LauncherPaths.ActiveCoreFile)) File.Delete(LauncherPaths.ActiveCoreFile); }
-                    catch { }
-                }
                 throw;
             }
             finally
@@ -189,16 +227,21 @@ namespace KinojoMeterLauncher
 
         private void ExtractAndVerify(string packagePath, string destination, CoreReleaseManifest release)
         {
-            const long maximumExtractedBytes = 1024L * 1024L * 1024L;
+            const long maximumExtractedBytes = 512L * 1024L * 1024L;
+            const int maximumArchiveEntries = 2048;
             Directory.CreateDirectory(destination);
             var destinationRoot = Path.GetFullPath(destination + Path.DirectorySeparatorChar);
             var archivePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             long extractedBytes = 0;
+            var entryCount = 0;
             using (var archive = ZipFile.OpenRead(packagePath))
             {
                 foreach (var entry in archive.Entries)
                 {
-                    var relative = (entry.FullName ?? "").Replace('/', Path.DirectorySeparatorChar);
+                    entryCount += 1;
+                    if (entryCount > maximumArchiveEntries)
+                        throw new InvalidOperationException("Core 패키지 파일 수가 허용 범위를 초과했습니다.");
+                    var relative = ValidatePackageRelativePath(entry.FullName, String.IsNullOrEmpty(entry.Name));
                     if (String.IsNullOrWhiteSpace(relative)) continue;
                     var target = Path.GetFullPath(Path.Combine(destination, relative));
                     if (!target.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
@@ -222,7 +265,8 @@ namespace KinojoMeterLauncher
             if (!File.Exists(installManifestPath)) throw new InvalidOperationException("Core install-manifest.json이 없습니다.");
             var manifest = _json.Deserialize<CoreInstallManifest>(File.ReadAllText(installManifestPath, Encoding.UTF8));
             if (manifest == null || manifest.SchemaVersion != 1 || !String.Equals(manifest.CoreVersion, release.CoreVersion, StringComparison.Ordinal) ||
-                !String.Equals(manifest.EntryPoint, release.EntryPoint, StringComparison.OrdinalIgnoreCase) || manifest.Files == null || manifest.Files.Count == 0)
+                !String.Equals(manifest.EntryPoint, release.EntryPoint, StringComparison.OrdinalIgnoreCase) || manifest.Files == null ||
+                manifest.Files.Count == 0 || manifest.Files.Count > maximumArchiveEntries)
                 throw new InvalidOperationException("Core install manifest 계약이 Server release와 일치하지 않습니다.");
             var duplicates = manifest.Files.GroupBy(item => item.Path ?? "", StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1);
             if (duplicates) throw new InvalidOperationException("Core install manifest에 중복 파일이 있습니다.");
@@ -237,26 +281,44 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("Core 패키지에 manifest로 관리되지 않는 파일이 있습니다.");
             var executable = Path.Combine(destination, release.EntryPoint);
             if (!File.Exists(executable)) throw new InvalidOperationException("Core 실행 파일이 없습니다.");
+            if (!managedPaths.Contains(NormalizeRelativePath(release.EntryPoint)))
+                throw new InvalidOperationException("Core 실행 파일이 install manifest에 등록되지 않았습니다.");
             if (release.CodeSignatureRequired) VerifySignedBinaries(destination, manifest, release.PublisherSubject);
+        }
+
+        internal void ExtractAndVerifyForTest(string packagePath, string destination, CoreReleaseManifest release)
+        {
+            ExtractAndVerify(packagePath, destination, release);
         }
 
         private void VerifyInstalledFiles(ActiveCoreState state, CoreReleaseManifest release)
         {
+            if (!IsActiveStateUsable(state)) throw new InvalidOperationException("설치된 Core 활성 상태가 올바르지 않습니다.");
             var manifestPath = Path.Combine(state.InstalledPath, "install-manifest.json");
             if (!File.Exists(manifestPath)) throw new InvalidOperationException("설치된 Core manifest가 없습니다.");
             var manifest = _json.Deserialize<CoreInstallManifest>(File.ReadAllText(manifestPath, Encoding.UTF8));
-            if (manifest == null || manifest.Files == null || !String.Equals(manifest.CoreVersion, release.CoreVersion, StringComparison.Ordinal))
+            var expectedVersion = release == null ? state.CoreVersion : release.CoreVersion;
+            var expectedEntryPoint = release == null ? state.EntryPoint : release.EntryPoint;
+            if (manifest == null || manifest.SchemaVersion != 1 || manifest.Files == null || manifest.Files.Count == 0 || manifest.Files.Count > 2048 ||
+                !String.Equals(state.CoreVersion, expectedVersion, StringComparison.Ordinal) ||
+                !String.Equals(state.EntryPoint, expectedEntryPoint, StringComparison.OrdinalIgnoreCase) ||
+                !String.Equals(manifest.CoreVersion, expectedVersion, StringComparison.Ordinal) ||
+                !String.Equals(manifest.EntryPoint, expectedEntryPoint, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("설치된 Core 버전 manifest가 일치하지 않습니다.");
+            var duplicates = manifest.Files.GroupBy(item => item == null ? "" : item.Path ?? "", StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1);
+            if (duplicates) throw new InvalidOperationException("설치된 Core manifest에 중복 파일이 있습니다.");
             foreach (var item in manifest.Files) VerifyManagedFile(state.InstalledPath, item);
             var rootPath = Path.GetFullPath(state.InstalledPath + Path.DirectorySeparatorChar);
             var managedPaths = new HashSet<string>(manifest.Files.Select(item => NormalizeRelativePath(item.Path)), StringComparer.OrdinalIgnoreCase)
             {
                 "install-manifest.json"
             };
+            if (!managedPaths.Contains(NormalizeRelativePath(expectedEntryPoint)))
+                throw new InvalidOperationException("설치된 Core 실행 파일이 manifest에 등록되지 않았습니다.");
             var actualPaths = new HashSet<string>(Directory.GetFiles(state.InstalledPath, "*", SearchOption.AllDirectories)
                 .Select(path => NormalizeRelativePath(path.Substring(rootPath.Length))), StringComparer.OrdinalIgnoreCase);
             if (!actualPaths.SetEquals(managedPaths)) throw new InvalidOperationException("설치된 Core에 관리되지 않는 파일이 있습니다.");
-            if (release.CodeSignatureRequired) VerifySignedBinaries(state.InstalledPath, manifest, release.PublisherSubject);
+            VerifySignedBinaries(state.InstalledPath, manifest, release == null ? "KINOJO INFO" : release.PublisherSubject);
         }
 
         private static void VerifyManagedFile(string root, CoreInstallFile item)
@@ -264,7 +326,8 @@ namespace KinojoMeterLauncher
             if (item == null || String.IsNullOrWhiteSpace(item.Path) || item.Size < 0 || String.IsNullOrWhiteSpace(item.Sha256))
                 throw new InvalidOperationException("Core managed file 정보가 올바르지 않습니다.");
             var rootPath = Path.GetFullPath(root + Path.DirectorySeparatorChar);
-            var path = Path.GetFullPath(Path.Combine(root, item.Path.Replace('/', Path.DirectorySeparatorChar)));
+            var relative = ValidatePackageRelativePath(item.Path, false);
+            var path = Path.GetFullPath(Path.Combine(root, relative));
             if (!path.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
                 throw new InvalidOperationException("Core managed file이 없거나 경로가 잘못되었습니다: " + item.Path);
             var file = new FileInfo(path);
@@ -274,7 +337,34 @@ namespace KinojoMeterLauncher
 
         private static string NormalizeRelativePath(string value)
         {
-            return (value ?? "").Replace('\\', '/').TrimStart('/');
+            return ValidatePackageRelativePath(value, false).Replace('\\', '/');
+        }
+
+        internal static string ValidatePackageRelativePath(string value, bool directory)
+        {
+            var raw = value ?? "";
+            if (raw.IndexOf('\0') >= 0 || raw.IndexOf(':') >= 0 || raw.Length > 240 ||
+                raw.StartsWith("/", StringComparison.Ordinal) || raw.StartsWith("\\", StringComparison.Ordinal) ||
+                Path.IsPathRooted(raw))
+                throw new InvalidOperationException("Core 패키지에 허용되지 않은 파일 경로가 있습니다.");
+
+            var normalized = raw.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+            if (directory) normalized = normalized.TrimEnd(Path.DirectorySeparatorChar);
+            if (String.IsNullOrWhiteSpace(normalized)) return "";
+            var parts = normalized.Split(Path.DirectorySeparatorChar);
+            var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+            };
+            foreach (var part in parts)
+            {
+                if (String.IsNullOrWhiteSpace(part) || part == "." || part == ".." || part.Length > 120 ||
+                    part.EndsWith(" ", StringComparison.Ordinal) || part.EndsWith(".", StringComparison.Ordinal) ||
+                    reserved.Contains(Path.GetFileNameWithoutExtension(part)))
+                    throw new InvalidOperationException("Core 패키지에 허용되지 않은 파일 경로가 있습니다.");
+            }
+            return normalized;
         }
 
         private static void VerifySignedBinaries(string root, CoreInstallManifest manifest, string publisherSubject)
@@ -286,6 +376,8 @@ namespace KinojoMeterLauncher
             if (signedFiles.Count == 0) throw new InvalidOperationException("Core 패키지에 서명 검증 대상이 없습니다.");
             foreach (var item in signedFiles)
                 AuthenticodeVerifier.Verify(Path.Combine(root, item.Path.Replace('/', Path.DirectorySeparatorChar)), publisherSubject);
+            foreach (var item in manifest.Files.Where(item => item != null && String.Equals(Path.GetExtension(item.Path), ".sys", StringComparison.OrdinalIgnoreCase)))
+                AuthenticodeVerifier.Verify(Path.Combine(root, item.Path.Replace('/', Path.DirectorySeparatorChar)), "");
         }
 
         private void WriteActiveState(ActiveCoreState state)
@@ -303,9 +395,12 @@ namespace KinojoMeterLauncher
                 String.IsNullOrWhiteSpace(state.EntryPoint) || String.IsNullOrWhiteSpace(state.InstalledPath)) return false;
             try
             {
-                var versionRoot = Path.GetFullPath(LauncherPaths.CoreVersions + Path.DirectorySeparatorChar);
+                if (!String.Equals(state.EntryPoint, "KINOJO.Meter.exe", StringComparison.OrdinalIgnoreCase)) return false;
+                var expected = Path.GetFullPath(LauncherPaths.VersionDirectory(state.CoreVersion) + Path.DirectorySeparatorChar);
                 var installed = Path.GetFullPath(state.InstalledPath + Path.DirectorySeparatorChar);
-                return installed.StartsWith(versionRoot, StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(installed, state.EntryPoint));
+                var executable = Path.GetFullPath(Path.Combine(installed, state.EntryPoint));
+                return String.Equals(installed, expected, StringComparison.OrdinalIgnoreCase) &&
+                    executable.StartsWith(installed, StringComparison.OrdinalIgnoreCase) && File.Exists(executable);
             }
             catch { return false; }
         }
@@ -321,9 +416,18 @@ namespace KinojoMeterLauncher
             if (release.ExpiresAt <= DateTimeOffset.UtcNow.AddSeconds(5)) throw new InvalidOperationException("Core 다운로드 승인이 만료되었습니다. 다시 시도해 주세요.");
             if (!System.Text.RegularExpressions.Regex.IsMatch(release.FileName ?? "", "^KinojoMeterCore_[0-9]+\\.[0-9]+\\.[0-9]+_x64\\.zip$"))
                 throw new InvalidOperationException("Core 패키지 파일명이 올바르지 않습니다.");
+            if (!String.Equals(release.FileName, "KinojoMeterCore_" + release.CoreVersion + "_x64.zip", StringComparison.Ordinal))
+                throw new InvalidOperationException("Core 패키지 파일명과 Core 버전이 일치하지 않습니다.");
             if (!String.Equals(release.EntryPoint, "KINOJO.Meter.exe", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("허용되지 않은 Core 실행 파일입니다.");
+            if (!release.CodeSignatureRequired || !String.Equals(release.PublisherSubject, "KINOJO INFO", StringComparison.Ordinal))
+                throw new InvalidOperationException("Core는 KINOJO INFO 코드 서명을 반드시 요구해야 합니다.");
             RequireApprovedDownloadUri(release.DownloadUrl, expectedProjectHost);
+        }
+
+        internal static void ValidateReleaseForTest(CoreReleaseManifest release, string expectedProjectHost)
+        {
+            ValidateRelease(release, expectedProjectHost);
         }
 
         private static Uri RequireApprovedDownloadUri(string value, string expectedProjectHost)
@@ -362,7 +466,8 @@ namespace KinojoMeterLauncher
                 {
                     using (var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path)))
                     {
-                        if (certificate.Subject.IndexOf(expectedPublisherSubject, StringComparison.OrdinalIgnoreCase) < 0)
+                        var signerName = certificate.GetNameInfo(X509NameType.SimpleName, false);
+                        if (!String.Equals(signerName, expectedPublisherSubject, StringComparison.OrdinalIgnoreCase))
                             throw new InvalidOperationException("Core 서명 게시자가 Server manifest와 일치하지 않습니다.");
                     }
                 }

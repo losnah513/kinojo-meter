@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Release')
+param(
+    [ValidateSet('Debug','Release')][string]$Configuration = 'Release',
+    [switch]$AppOnly,
+    [switch]$SetupOnly
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -7,14 +11,24 @@ Set-StrictMode -Version Latest
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'KINOJO Meter Launcher must be built on Windows.'
 }
+if ($AppOnly -and $SetupOnly) { throw 'AppOnly and SetupOnly cannot be used together.' }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $manifestPath = Join-Path $root 'release\launcher-version.json'
-$projectPath = Join-Path $root 'launcher\KINOJO.Meter.Launcher.csproj'
+$launcherProject = Join-Path $root 'launcher\KINOJO.Meter.Launcher.csproj'
+$setupProject = Join-Path $root 'launcher-setup\KINOJO.Meter.Launcher.Setup.csproj'
 $buildDirectory = Join-Path $root 'build'
-$outputDirectory = Join-Path $root 'artifacts\launcher'
+$appBuildDirectory = Join-Path $buildDirectory 'launcher-app'
+$artifactDirectory = Join-Path $root 'artifacts\launcher'
+$appOutput = Join-Path $artifactDirectory 'app'
+$setupOutput = Join-Path $artifactDirectory 'setup'
+$stagedApp = Join-Path $appBuildDirectory 'KINOJO.Meter.Launcher.exe'
 
-foreach ($path in @($manifestPath, $projectPath, (Join-Path $root 'launcher\app.manifest'))) {
+foreach ($path in @(
+    $manifestPath, $launcherProject, $setupProject,
+    (Join-Path $root 'launcher\app.manifest'),
+    (Join-Path $root 'launcher-setup\app.manifest')
+)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required Launcher input is missing: $path" }
 }
 
@@ -29,7 +43,8 @@ if ($artifactName -ne "KINOJO_Meter_Launcher_${version}.exe") {
     throw 'Launcher artifactName must contain the exact Launcher version.'
 }
 
-$msbuild = (Get-Command msbuild.exe -ErrorAction SilentlyContinue).Source
+$msbuildCommand = Get-Command msbuild.exe -ErrorAction SilentlyContinue
+$msbuild = if ($msbuildCommand) { $msbuildCommand.Source } else { $null }
 if (-not $msbuild) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
@@ -38,26 +53,64 @@ if (-not $msbuild) {
 }
 if (-not $msbuild) { throw 'MSBuild was not found.' }
 
-Remove-Item $outputDirectory -Recurse -Force -ErrorAction SilentlyContinue
-New-Item $outputDirectory -ItemType Directory -Force | Out-Null
+function Assert-FileVersion([string]$Path, [string]$Expected) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Build output is missing: $Path" }
+    $actual = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path).FileVersion
+    if ($actual -ne $Expected) { throw "File version mismatch: $Path expected=$Expected actual=$actual" }
+}
+
 New-Item $buildDirectory -ItemType Directory -Force | Out-Null
+New-Item $appBuildDirectory -ItemType Directory -Force | Out-Null
 
-& $msbuild $projectPath /restore /m /t:Build /p:Configuration=$Configuration /p:Platform=x64 `
-    /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:OutDir="$outputDirectory\" /nologo
-if ($LASTEXITCODE -ne 0) { throw "Launcher build failed with exit code $LASTEXITCODE." }
+if (-not $SetupOnly) {
+    Remove-Item $appOutput -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item $appOutput -ItemType Directory -Force | Out-Null
+    & $msbuild $launcherProject /restore /m /t:Build /p:Configuration=$Configuration /p:Platform=x64 `
+        /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:OutDir="$appOutput\" /nologo
+    if ($LASTEXITCODE -ne 0) { throw "Launcher application build failed with exit code $LASTEXITCODE." }
 
-$built = Join-Path $outputDirectory 'KINOJO.Meter.Launcher.exe'
-$published = Join-Path $buildDirectory $artifactName
-if (-not (Test-Path -LiteralPath $built -PathType Leaf)) { throw 'Launcher executable was not produced.' }
-$actualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($built).FileVersion
-if ($actualVersion -ne $fileVersion) { throw "Launcher file version mismatch: $actualVersion" }
-Copy-Item -LiteralPath $built -Destination $published -Force
+    $builtApp = Join-Path $appOutput 'KINOJO.Meter.Launcher.exe'
+    Assert-FileVersion $builtApp $fileVersion
+    Copy-Item -LiteralPath $builtApp -Destination $stagedApp -Force
+}
 
-$size = (Get-Item -LiteralPath $published).Length
-$sha256 = (Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash.ToLowerInvariant()
+Assert-FileVersion $stagedApp $fileVersion
+if ($AppOnly) {
+    Write-Host "Launcher application: $stagedApp"
+    return
+}
+
+Remove-Item $setupOutput -Recurse -Force -ErrorAction SilentlyContinue
+New-Item $setupOutput -ItemType Directory -Force | Out-Null
+& $msbuild $setupProject /restore /m /t:Build /p:Configuration=$Configuration /p:Platform=x64 `
+    /p:LauncherVersion=$version /p:LauncherFileVersion=$fileVersion /p:LauncherPayloadPath="$stagedApp" /p:OutDir="$setupOutput\" /nologo
+if ($LASTEXITCODE -ne 0) { throw "Launcher setup build failed with exit code $LASTEXITCODE." }
+
+$builtSetup = Join-Path $setupOutput 'KINOJO.Meter.Launcher.Setup.exe'
+$publishedSetup = Join-Path $buildDirectory $artifactName
+Assert-FileVersion $builtSetup $fileVersion
+Copy-Item -LiteralPath $builtSetup -Destination $publishedSetup -Force
+Assert-FileVersion $publishedSetup $fileVersion
+
+$assembly = [Reflection.Assembly]::LoadFile($publishedSetup)
+$resourceName = 'KINOJO.Meter.Launcher.Payload'
+if ($assembly.GetManifestResourceNames() -notcontains $resourceName) { throw 'Launcher setup does not contain the Launcher payload.' }
+$stream = $assembly.GetManifestResourceStream($resourceName)
+try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $embeddedHash = ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+finally { $stream.Dispose() }
+$appHash = (Get-FileHash -LiteralPath $stagedApp -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($embeddedHash -ne $appHash) { throw 'Embedded Launcher payload does not match the staged application.' }
+
+$size = (Get-Item -LiteralPath $publishedSetup).Length
+$sha256 = (Get-FileHash -LiteralPath $publishedSetup -Algorithm SHA256).Hash.ToLowerInvariant()
 $checksumPath = Join-Path $buildDirectory "checksums_launcher_${version}.txt"
 @("$artifactName`t$size`t$sha256") | Set-Content -LiteralPath $checksumPath -Encoding ascii
 
-Write-Host "Launcher : $published"
-Write-Host "Size     : $size"
-Write-Host "SHA-256  : $sha256"
+Write-Host "Launcher app   : $stagedApp"
+Write-Host "Launcher setup : $publishedSetup"
+Write-Host "Size           : $size"
+Write-Host "SHA-256        : $sha256"

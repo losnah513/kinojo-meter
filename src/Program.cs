@@ -28,7 +28,16 @@ namespace KinojoMeterPrototype
                     KinojoVersion.ValidateInstalledManifest();
                     var app = new Application();
                     app.ShutdownMode = ShutdownMode.OnMainWindowClose;
-                    app.Run(new MainWindow(launcherLogin));
+                    var mainWindow = new MainWindow(launcherLogin);
+                    var readySent = false;
+                    mainWindow.LauncherSessionReady += delegate
+                    {
+                        if (readySent || !Console.IsOutputRedirected) return;
+                        readySent = true;
+                        Console.Out.WriteLine("KINOJO_CORE_READY_V1 " + KinojoVersion.Current);
+                        Console.Out.Flush();
+                    };
+                    app.Run(mainWindow);
                 }
                 catch (Exception ex)
                 {

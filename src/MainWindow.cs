@@ -20,6 +20,8 @@ namespace KinojoMeterPrototype
 {
     internal sealed class MainWindow : Window
     {
+        internal event EventHandler LauncherSessionReady;
+
         private static readonly Color Accent = Color.FromRgb(37, 99, 235);
         private static readonly Color AccentDeep = Color.FromRgb(79, 70, 229);
         private static readonly Color AccentViolet = Color.FromRgb(124, 58, 237);
@@ -137,6 +139,8 @@ namespace KinojoMeterPrototype
             ShowCharacterDiscovery();
             StartAutomaticCharacterDetection();
             StartGameHudProbe();
+            var ready = LauncherSessionReady;
+            if (ready != null) ready(this, EventArgs.Empty);
         }
 
         private void InitializeChrome()

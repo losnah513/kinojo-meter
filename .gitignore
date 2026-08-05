@@ -3,10 +3,16 @@ src/obj/
 src/bin/
 setup/obj/
 setup/bin/
+launcher/obj/
+launcher/bin/
+launcher-setup/obj/
+launcher-setup/bin/
 tests/**/bin/
 tests/**/obj/
 build/KINOJO_Meter_*_Setup.exe
+build/KINOJO_Meter_Launcher_*.exe
 build/KinojoMeterPayload_*.zip
 build/checksums_*.txt
 build/release/
 build/sandbox-clean-install-*/
+build/launcher-app/

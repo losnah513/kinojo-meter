@@ -31,7 +31,25 @@ if ($manifest.publicDistribution -ne $false -or $packageName -ne "KinojoMeterCor
     throw 'Core private release manifest is invalid.'
 }
 
-$msbuild = (Get-Command msbuild.exe -ErrorAction SilentlyContinue).Source
+$runtimeChecksumContract = Join-Path $runtime 'third-party-checksums.txt'
+if (-not (Test-Path -LiteralPath $runtimeChecksumContract -PathType Leaf)) { throw 'Third-party runtime checksum contract is missing.' }
+$runtimeContractRows = @(Get-Content -LiteralPath $runtimeChecksumContract | Where-Object { $_ -and -not $_.TrimStart().StartsWith('#') })
+if ($runtimeContractRows.Count -lt 2) { throw 'Third-party runtime checksum contract is incomplete.' }
+foreach ($row in $runtimeContractRows) {
+    $cells = @($row -split "`t")
+    if ($cells.Count -ne 3 -or $cells[0] -notmatch '^WinDivert(?:64[.]sys|[.]dll)$' -or $cells[1] -notmatch '^\d+$' -or $cells[2] -notmatch '^[0-9a-f]{64}$') {
+        throw "Invalid third-party runtime checksum row: $row"
+    }
+    $runtimeFile = Join-Path $runtime $cells[0]
+    if (-not (Test-Path -LiteralPath $runtimeFile -PathType Leaf) -or
+        (Get-Item -LiteralPath $runtimeFile).Length -ne [long]$cells[1] -or
+        (Get-FileHash -LiteralPath $runtimeFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $cells[2]) {
+        throw "Third-party runtime checksum mismatch: $($cells[0])"
+    }
+}
+
+$msbuildCommand = Get-Command msbuild.exe -ErrorAction SilentlyContinue
+$msbuild = if ($msbuildCommand) { $msbuildCommand.Source } else { $null }
 if (-not $msbuild) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
@@ -73,6 +91,12 @@ if ($manifest.codeSignatureRequired -eq $true) {
         if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
             $signature.SignerCertificate.Subject.IndexOf($publisher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
             throw "Core binary must be signed by '$publisher' before packaging: $($binary.Name)"
+        }
+    }
+    foreach ($driver in @(Get-ChildItem -LiteralPath $stage -File | Where-Object { $_.Extension -eq '.sys' })) {
+        $signature = Get-AuthenticodeSignature -LiteralPath $driver.FullName
+        if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
+            throw "Bundled driver must retain a valid vendor Authenticode signature: $($driver.Name)"
         }
     }
 }

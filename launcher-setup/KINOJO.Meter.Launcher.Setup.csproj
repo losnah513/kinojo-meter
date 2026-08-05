@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <LauncherVersion Condition="'$(LauncherVersion)' == ''">0.0.0</LauncherVersion>
+    <LauncherFileVersion Condition="'$(LauncherFileVersion)' == ''">0.0.0.0</LauncherFileVersion>
+    <LauncherPayloadPath Condition="'$(LauncherPayloadPath)' == ''">..\build\launcher-app\KINOJO.Meter.Launcher.exe</LauncherPayloadPath>
+    <Version>$(LauncherVersion)</Version>
+    <AssemblyVersion>$(LauncherFileVersion)</AssemblyVersion>
+    <FileVersion>$(LauncherFileVersion)</FileVersion>
+    <InformationalVersion>$(LauncherVersion)</InformationalVersion>
+    <AssemblyTitle>KINOJO Meter Launcher Setup</AssemblyTitle>
+    <Product>KINOJO Meter Launcher</Product>
+    <Company>KINOJO INFO</Company>
+    <AssemblyName>KINOJO.Meter.Launcher.Setup</AssemblyName>
+    <RootNamespace>KinojoMeterLauncherSetup</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationIcon>..\assets\kinojo-updater-icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="SetupEngine.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(LauncherPayloadPath)" LogicalName="KINOJO.Meter.Launcher.Payload" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+</Project>

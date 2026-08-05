@@ -21,16 +21,45 @@ $checksumPath = Join-Path $root "build\checksums_launcher_${version}.txt"
 $repository = "$GitHubOwner/$GitHubRepository"
 $tag = "launcher-v$version"
 
+function Assert-PublisherSignature([string]$Path, [string]$Publisher, [string]$Label) {
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    $signerName = if ($signature.SignerCertificate) {
+        $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+    } else { '' }
+    if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
+        -not [String]::Equals($signerName, $Publisher, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label must have a valid Authenticode signature from '$Publisher'."
+    }
+}
+
+function Assert-EmbeddedLauncher([string]$SetupPath, [string]$Publisher, [string]$ExpectedFileVersion) {
+    $assembly = [Reflection.Assembly]::LoadFile($SetupPath)
+    $resourceName = 'KINOJO.Meter.Launcher.Payload'
+    if ($assembly.GetManifestResourceNames() -notcontains $resourceName) { throw 'Launcher setup payload resource is missing.' }
+    $temporary = Join-Path $env:RUNNER_TEMP ("kinojo-embedded-launcher-" + [Guid]::NewGuid().ToString('N') + '.exe')
+    $stream = $assembly.GetManifestResourceStream($resourceName)
+    try {
+        $output = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $stream.CopyTo($output) }
+        finally { $output.Dispose() }
+        $actualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($temporary).FileVersion
+        if ($actualVersion -ne $ExpectedFileVersion) { throw "Embedded Launcher file version mismatch: $actualVersion" }
+        Assert-PublisherSignature $temporary $Publisher 'Installed Launcher application'
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if ($manifest.cutoverState -ne 'ACTIVE' -or $manifest.publicDistribution -ne $true -or $manifest.codeSignatureRequired -ne $true) {
     throw 'Launcher publication requires ACTIVE, publicDistribution=true and codeSignatureRequired=true.'
 }
 if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Launcher artifact is missing: $artifactPath" }
-$signature = Get-AuthenticodeSignature -LiteralPath $artifactPath
 $publisher = [string]$manifest.publisherSubject
-if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
-    $signature.SignerCertificate.Subject.IndexOf($publisher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-    throw "Launcher must have a valid Authenticode signature from '$publisher'."
-}
+if ($publisher -cne 'KINOJO INFO') { throw 'Launcher publisherSubject must be exactly KINOJO INFO.' }
+Assert-PublisherSignature $artifactPath $publisher 'Launcher setup'
+Assert-EmbeddedLauncher $artifactPath $publisher ([string]$manifest.fileVersion)
 
 function Resolve-TagCommit([string]$Repository, [string]$Tag) {
     $raw = & gh api "repos/$Repository/git/ref/tags/$Tag" 2>$null
@@ -69,11 +98,8 @@ try {
     & gh release download $tag --repo $repository --dir $downloadRoot --pattern $artifactName
     if ($LASTEXITCODE -ne 0) { throw 'Launcher remote executable download failed.' }
     $remoteArtifact = Join-Path $downloadRoot $artifactName
-    $remoteSignature = Get-AuthenticodeSignature -LiteralPath $remoteArtifact
-    if ($remoteSignature.Status -ne 'Valid' -or -not $remoteSignature.SignerCertificate -or
-        $remoteSignature.SignerCertificate.Subject.IndexOf($publisher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-        throw 'Published Launcher signature readback failed.'
-    }
+    Assert-PublisherSignature $remoteArtifact $publisher 'Published Launcher setup'
+    Assert-EmbeddedLauncher $remoteArtifact $publisher ([string]$manifest.fileVersion)
     $size = (Get-Item -LiteralPath $remoteArtifact).Length
     $sha256 = (Get-FileHash -LiteralPath $remoteArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
     $checksumLine = "$artifactName`t$size`t$sha256"
