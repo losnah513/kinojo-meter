@@ -60,11 +60,13 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 
 남은 Gate:
 
-1. clean Windows에서 미서명 Launcher 최초 설치·PASS KEY 인증·RSA Core 설치와 업데이트·변조 차단·ready handshake·강제 실패 자동 롤백을 검증한다.
-2. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한다.
-3. 검증 통과 후 private Core `0.2.38` → Launcher `1.0.0` 순서로 ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
-4. `MAINTENANCE`와 `downloadEnabled=false`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환하고 smoke test를 수행한다.
-5. smoke test 통과 후 다운로드를 개방하고 신규 사용자 전체 흐름을 확인한 뒤 기존 Desktop 공개 다운로드와 공개 저장소의 Core workflow·현재 소스를 정리한다.
+1. 운영과 분리된 staging E2E 경로를 구현한다. 현재 Launcher는 운영 WEB·Supabase host를 고정 사용하고, PREPARE Core workflow는 package/RSA sign/publish를 실행하지 않으며, Server는 `downloadEnabled=true`와 active Core를 모두 요구하므로 clean Windows 전체 흐름을 아직 시작할 수 없다.
+2. staging 경로는 테스트 전용 endpoint·서명키·PASS KEY/fixture만 사용하고 production build에서는 활성화할 수 없도록 fail-closed 검증한다.
+3. 위 경로로 clean Windows에서 미서명 Launcher 최초 설치·PASS KEY 인증·RSA Core 설치와 업데이트·변조 차단·ready handshake·강제 실패 자동 롤백을 검증한다.
+4. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한다.
+5. 검증 통과 후 private Core `0.2.38` → Launcher `1.0.0` 순서로 ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
+6. `MAINTENANCE`와 `downloadEnabled=false`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환하고 실제 tester PASS KEY smoke test를 수행한다.
+7. smoke test 통과 후 다운로드를 개방하고 신규 사용자 전체 흐름을 확인한 뒤 기존 Desktop 공개 다운로드와 공개 저장소의 Core workflow·현재 소스를 정리한다.
 
 운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.
 
