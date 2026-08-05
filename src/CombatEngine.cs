@@ -458,9 +458,23 @@ namespace KinojoMeterPrototype
             CombatRow row;
             if (!String.IsNullOrWhiteSpace(value.ActorId) && _participants.TryGetValue(value.ActorId, out row))
             {
-                if (!String.IsNullOrWhiteSpace(value.ActorName)) row.Name = value.ActorName;
-                row.IsSelf = row.IsSelf || IsSelf(value);
-                return row;
+                var identityMatch = FindIdentityMergeCandidateLocked(value, row);
+                if (identityMatch != null)
+                    return MergeIdentityRowsLocked(value.ActorId, identityMatch, row, value);
+
+                var changed = false;
+                if (!String.IsNullOrWhiteSpace(value.ActorName) &&
+                    !String.Equals(row.Name, value.ActorName, StringComparison.OrdinalIgnoreCase))
+                {
+                    row.Name = value.ActorName;
+                    changed = true;
+                }
+                if (!row.IsSelf && IsSelf(value))
+                {
+                    row.IsSelf = true;
+                    changed = true;
+                }
+                return changed ? row : null;
             }
             row = FindParticipantLocked(value);
             if (row == null && IsSelf(value)) return UpsertParticipant(value);
@@ -474,6 +488,50 @@ namespace KinojoMeterPrototype
                 ReplaceRosterKeyLocked(oldKey, value.ActorId);
             }
             return row;
+        }
+
+        private CombatRow FindIdentityMergeCandidateLocked(CombatEvent value, CombatRow actorRow)
+        {
+            if (value == null || String.IsNullOrWhiteSpace(value.ActorName)) return null;
+            var candidates = _participants.Values.Where(candidate => !Object.ReferenceEquals(candidate, actorRow) && !candidate.IsEmpty &&
+                String.Equals(candidate.Name, value.ActorName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!String.IsNullOrWhiteSpace(value.PlatformCharacterId))
+                return candidates.FirstOrDefault(candidate => String.Equals(candidate.PlatformCharacterId, value.PlatformCharacterId, StringComparison.OrdinalIgnoreCase));
+            if (!String.IsNullOrWhiteSpace(value.ActorServerId))
+                return candidates.FirstOrDefault(candidate => String.Equals(candidate.ServerId, value.ActorServerId, StringComparison.OrdinalIgnoreCase));
+            if (value.ActorServerRaw > 0)
+                return candidates.FirstOrDefault(candidate => candidate.ServerRaw == value.ActorServerRaw);
+            if (!String.IsNullOrWhiteSpace(value.ActorServer))
+                return candidates.FirstOrDefault(candidate => String.Equals(candidate.ServerName, value.ActorServer, StringComparison.OrdinalIgnoreCase));
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+
+        private CombatRow MergeIdentityRowsLocked(string actorKey, CombatRow rosterRow, CombatRow actorRow, CombatEvent value)
+        {
+            var rosterKey = _participants.First(pair => Object.ReferenceEquals(pair.Value, rosterRow)).Key;
+            var actorWasRoster = _rosterParticipantKeys.Remove(actorKey);
+            var rosterWasRoster = _rosterParticipantKeys.Remove(rosterKey);
+
+            rosterRow.TotalDamage += actorRow.TotalDamage;
+            rosterRow.IsSelf = rosterRow.IsSelf || actorRow.IsSelf || IsSelf(value);
+            if (String.IsNullOrWhiteSpace(rosterRow.PlatformCharacterId)) rosterRow.PlatformCharacterId = actorRow.PlatformCharacterId;
+            if (String.IsNullOrWhiteSpace(rosterRow.ServerId)) rosterRow.ServerId = actorRow.ServerId;
+            if (String.IsNullOrWhiteSpace(rosterRow.ServerName)) rosterRow.ServerName = actorRow.ServerName;
+            if (rosterRow.ServerRaw <= 0) rosterRow.ServerRaw = actorRow.ServerRaw;
+            if (String.IsNullOrWhiteSpace(rosterRow.ClassKey)) rosterRow.ClassKey = actorRow.ClassKey;
+            if (String.IsNullOrWhiteSpace(rosterRow.ClassName)) rosterRow.ClassName = actorRow.ClassName;
+            if (rosterRow.ClassRaw <= 0) rosterRow.ClassRaw = actorRow.ClassRaw;
+            if (String.IsNullOrWhiteSpace(rosterRow.ProfileImageUrl)) rosterRow.ProfileImageUrl = actorRow.ProfileImageUrl;
+            if (rosterRow.CombatPower <= 0) rosterRow.CombatPower = actorRow.CombatPower;
+            if (rosterRow.ItemLevel <= 0) rosterRow.ItemLevel = actorRow.ItemLevel;
+            if (!String.IsNullOrWhiteSpace(value.ActorName)) rosterRow.Name = value.ActorName;
+
+            _participants.Remove(actorKey);
+            _participants.Remove(rosterKey);
+            rosterRow.ParticipantKey = actorKey;
+            _participants[actorKey] = rosterRow;
+            if (actorWasRoster || rosterWasRoster) _rosterParticipantKeys.Add(actorKey);
+            return rosterRow;
         }
 
         private CombatRow FindParticipantLocked(CombatEvent value)

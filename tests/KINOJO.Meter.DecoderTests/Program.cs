@@ -94,6 +94,20 @@ namespace KinojoMeterPrototype
             if (sameName.Snapshot().Rows.Count(row => !row.IsEmpty) != 2) return EngineFailure("same-name characters on different servers were merged");
             sameName.ApplyProfile(new PartyProfileResult { ParticipantKey = "missing", CharacterName = "없는사람", ServerId = "999" });
 
+            var lateIdentity = new CombatSessionEngine(self, 5);
+            lateIdentity.ReplaceObservedParty(new[]
+            {
+                new CombatEvent { Kind = CombatEventKind.PartyMember, ActorId = "party-probe:978:청소기", ActorName = "청소기", ActorServerRaw = 978, PartyNumber = 1, PartySlot = 1 },
+                new CombatEvent { Kind = CombatEventKind.PartyMember, ActorId = "party-probe:997:달", ActorName = "달", ActorServerRaw = 997, PartyNumber = 1, PartySlot = 2 }
+            }, "PACKET_SMALL_ROSTER_CONFIRMED");
+            lateIdentity.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow, ActorId = "flow-015:entity:6463", ActorName = "알 수 없음", TargetId = "boss", Damage = 1234, IsBoss = true });
+            lateIdentity.Apply(new CombatEvent { Kind = CombatEventKind.EntityIdentity, TimestampUtc = DateTime.UtcNow.AddMilliseconds(1), ActorId = "flow-015:entity:6463", ActorName = "달" });
+            var lateRows = lateIdentity.Snapshot().Rows.Where(row => !row.IsEmpty).ToList();
+            if (lateRows.Count(row => row.Name == "달") != 1) return EngineFailure("late entity identity left a duplicate roster row");
+            var lateRow = lateRows.Single(row => row.Name == "달");
+            if (lateRow.TotalDamage != 1234 || lateRow.PartySlot != 2 || lateRow.ServerRaw != 997)
+                return EngineFailure("late entity identity merge lost damage or roster metadata");
+
             engine = new CombatSessionEngine(self, 5);
             engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow, ActorId = "a", ActorName = "청소기", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", BossOrder = 1, Damage = 100, IsBoss = true });
             engine.Apply(new CombatEvent { Kind = CombatEventKind.Damage, TimestampUtc = DateTime.UtcNow.AddSeconds(1), ActorId = "b", ActorName = "권트", TargetId = "boss", TargetRuntimeId = 1, TargetName = "1보스", BossOrder = 1, Damage = 300, IsBoss = true });
