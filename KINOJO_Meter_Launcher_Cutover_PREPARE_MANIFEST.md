@@ -1,9 +1,10 @@
 # KINOJO Meter Launcher Cutover PREPARE
 
 - Public repository: `losnah513/kinojo-meter`
-- Archive base commit: `f4490c23d2fd79b3a7e9e2af160c9fd18f71b32f`
-- Integration base commit: `9bde94b15960313df02cf110bf61217f31384cd9`
-- Working branch: `agent/launcher-cutover-prepare`
+- Archive base commit: `c8afe9ec8092c8e430bff810d94948558ce80914`
+- Integration base commit: `c8afe9ec8092c8e430bff810d94948558ce80914`
+- Working branch: `agent/unsigned-hobby-rsa`
+- Review: public PR `#9`
 - Target Launcher version: `1.0.0`
 - Target private Core version: `0.2.38`
 - Cutover state: `PREPARE_PRIVATE_PIPELINE`
