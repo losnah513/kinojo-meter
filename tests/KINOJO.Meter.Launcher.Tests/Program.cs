@@ -11,7 +11,7 @@ namespace KinojoMeterLauncher
 {
     internal static class LauncherVersion
     {
-        public const string Channel = "stable";
+        public const string Channel = LauncherBuildProfile.Channel;
         public const string Current = "1.0.0";
     }
 
@@ -25,6 +25,7 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(root);
             try
             {
+                Run("channel profile is compile-time bound", VerifyChannelProfile);
                 Run("valid package", () => VerifyPackage(root, false, false, false));
                 Run("reject unmanaged file", () => ExpectFailure(() => VerifyPackage(root, true, false, false)));
                 Run("reject duplicate archive path", () => ExpectFailure(() => VerifyPackage(root, false, true, false)));
@@ -42,6 +43,7 @@ namespace KinojoMeterLauncher
                     Run("reject missing manifest signature", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.ManifestSignature = "")));
                     Run("reject wrong signing key id", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.SigningKeyId = "wrong-key")));
                     Run("reject Authenticode-required hobby release", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.CodeSignatureRequired = true)));
+                    Run("reject cross-channel signed URL", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.DownloadUrl = value.DownloadUrl.Replace("/" + LauncherVersion.Channel + "/", "/" + (LauncherVersion.Channel == "staging" ? "stable" : "staging") + "/"))));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -58,6 +60,15 @@ namespace KinojoMeterLauncher
             }
         }
 
+        private static void VerifyChannelProfile()
+        {
+            var expectedFunction = LauncherVersion.Channel == "staging" ? "meter-staging-ingest" : "meter-ingest";
+            var expectedFolder = LauncherVersion.Channel == "staging" ? "KINOJO Meter Staging" : "KINOJO Meter";
+            if (!String.Equals(LauncherBuildProfile.FunctionName, expectedFunction, StringComparison.Ordinal) ||
+                !String.Equals(LauncherBuildProfile.DataFolderName, expectedFolder, StringComparison.Ordinal))
+                throw new InvalidOperationException("Launcher channel profile is not compile-time bound.");
+        }
+
         private static void VerifyPackage(string root, bool unmanaged, bool duplicate, bool wrongManifestHash)
         {
             var id = Guid.NewGuid().ToString("N");
@@ -65,7 +76,7 @@ namespace KinojoMeterLauncher
             var destination = Path.Combine(root, id);
             var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
             {
-                { "KINOJO.Meter.exe", Encoding.UTF8.GetBytes("test-core") },
+                { LauncherBuildProfile.CoreEntryPoint, Encoding.UTF8.GetBytes("test-core") },
                 { "version.json", Encoding.UTF8.GetBytes("{\"version\":\"0.2.38\"}") }
             };
             var managed = files.Select(pair => new CoreInstallFile
@@ -78,7 +89,7 @@ namespace KinojoMeterLauncher
             {
                 SchemaVersion = 1,
                 CoreVersion = "0.2.38",
-                EntryPoint = "KINOJO.Meter.exe",
+                EntryPoint = LauncherBuildProfile.CoreEntryPoint,
                 Files = managed
             };
             var installManifestBytes = Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(installManifest));
@@ -92,10 +103,10 @@ namespace KinojoMeterLauncher
             var release = new CoreReleaseManifest
             {
                 SchemaVersion = 1,
-                Channel = "stable",
+                Channel = LauncherVersion.Channel,
                 CoreVersion = "0.2.38",
                 FileName = "KinojoMeterCore_0.2.38_x64.zip",
-                EntryPoint = "KINOJO.Meter.exe",
+                EntryPoint = LauncherBuildProfile.CoreEntryPoint,
                 InstallManifestSha256 = wrongManifestHash ? new String('0', 64) : Hash(installManifestBytes),
                 CodeSignatureRequired = false,
                 PublisherSubject = ""
@@ -109,18 +120,18 @@ namespace KinojoMeterLauncher
             var release = new CoreReleaseManifest
             {
                 SchemaVersion = 1,
-                Channel = "stable",
+                Channel = LauncherVersion.Channel,
                 CoreVersion = "0.2.38",
                 MinimumCoreVersion = "0.2.38",
                 MinimumLauncherVersion = "1.0.0",
-                PackageId = "stable:0.2.38:" + new String('a', 16),
+                PackageId = LauncherVersion.Channel + ":0.2.38:" + new String('a', 16),
                 FileName = "KinojoMeterCore_0.2.38_x64.zip",
                 FileSize = 1,
                 Sha256 = new String('a', 64),
                 InstallManifestSha256 = new String('d', 64),
-                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/stable/0.2.38/package?token=test",
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/" + LauncherVersion.Channel + "/0.2.38/package?token=test",
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1),
-                EntryPoint = "KINOJO.Meter.exe",
+                EntryPoint = LauncherBuildProfile.CoreEntryPoint,
                 Mandatory = true,
                 CodeSignatureRequired = false,
                 PublisherSubject = "",
