@@ -9,17 +9,14 @@ namespace KinojoMeterLauncher
     internal static class CoreReleaseIntegrityVerifier
     {
         public const string IntegrityMode = "RSA_SHA256_MANIFEST_V1";
-        public const string SigningKeyId = "kinojo-core-rsa-2026-01";
-
-        private const string PublicModulusBase64 = "ybj1cE8V1GiCTUF83fSfBcf/lKYPNvtlYREmfnfjvP9aJ/791Gu4WKpqVPxwWAl/U99t9BHJJJXcSSMoCP/ay8uxlmNO3efIaS7nwZhmKuYAyUAZNFI181LK9laUnA20zbd7dmlH+YuiGhfW9x0d47ynJNzPR9vp80hBsIKqQEJ+xHEvQWJCapC/EAzRyMBoHeyy1Ff/ej713Z0+6GDNwVdBDh36M3SzHMbvVGGVh1xfQSkGXrQGitubrsJrUZDCZSNQgcJOBnxN3OuEoRxCX/LOzT/VzT28mL7suU+S///yMmwbwLMhUvoVGnVJ1vQ0L6jpUOo5YJ0OW9efMf4zc36LnhMFVT8w9kS3LDWFSPezAkhERlAbnp6FTZ8ZKTM/cgqTeB5FH316RL/xgescWFJYdNJSOZd1nXo0EzgqkGPy76PnDZlP2ObsQbtkVzD5Rxp+iJiBAeXEhG+VxoYw5NGiGPqrHVm/088T6NtKS/4aaDGhtH6Yz1hewTl/mGIV";
-        private const string PublicExponentBase64 = "AQAB";
+        public const string SigningKeyId = LauncherBuildProfile.CoreSigningKeyId;
 
         public static void Verify(CoreReleaseManifest release)
         {
             Verify(release, new RSAParameters
             {
-                Modulus = Convert.FromBase64String(PublicModulusBase64),
-                Exponent = Convert.FromBase64String(PublicExponentBase64)
+                Modulus = Convert.FromBase64String(LauncherBuildProfile.CoreSigningPublicModulusBase64),
+                Exponent = Convert.FromBase64String(LauncherBuildProfile.CoreSigningPublicExponentBase64)
             }, SigningKeyId);
         }
 
