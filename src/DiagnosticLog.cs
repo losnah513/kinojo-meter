@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -12,10 +13,26 @@ namespace KinojoMeterPrototype
     internal static class DiagnosticLog
     {
         private static readonly object Gate = new object();
+        private static readonly ConcurrentQueue<string> PendingLines = new ConcurrentQueue<string>();
+        private static readonly System.Threading.AutoResetEvent PendingSignal = new System.Threading.AutoResetEvent(false);
+        private static readonly System.Threading.Thread WriterThread;
+        private static int PendingLineCount;
+        private static int DroppedLineCount;
         private static readonly string DirectoryPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "KINOJO Meter",
             "logs");
+
+        static DiagnosticLog()
+        {
+            WriterThread = new System.Threading.Thread(WriteLoop)
+            {
+                IsBackground = true,
+                Name = "KINOJO-Diagnostic-Writer",
+                Priority = System.Threading.ThreadPriority.BelowNormal
+            };
+            WriterThread.Start();
+        }
 
         public static string CurrentFilePath
         {
@@ -285,13 +302,46 @@ namespace KinojoMeterPrototype
                 builder.Append(" · ").Append(String.IsNullOrWhiteSpace(message) ? "-" : message.Replace("\r", " ").Replace("\n", " "));
                 if (exception != null) builder.AppendLine().Append(exception);
                 builder.AppendLine();
-                lock (Gate)
+                if (System.Threading.Interlocked.Increment(ref PendingLineCount) > 20000)
                 {
-                    Directory.CreateDirectory(DirectoryPath);
-                    File.AppendAllText(CurrentFilePath, builder.ToString(), Encoding.UTF8);
+                    System.Threading.Interlocked.Decrement(ref PendingLineCount);
+                    System.Threading.Interlocked.Increment(ref DroppedLineCount);
+                    return;
                 }
+                PendingLines.Enqueue(builder.ToString());
+                PendingSignal.Set();
             }
             catch { }
+        }
+
+        private static void WriteLoop()
+        {
+            while (true)
+            {
+                PendingSignal.WaitOne(500);
+                try
+                {
+                    var builder = new StringBuilder();
+                    string line;
+                    var batch = 0;
+                    while (batch < 4096 && PendingLines.TryDequeue(out line))
+                    {
+                        batch++;
+                        builder.Append(line);
+                        System.Threading.Interlocked.Decrement(ref PendingLineCount);
+                    }
+                    var dropped = System.Threading.Interlocked.Exchange(ref DroppedLineCount, 0);
+                    if (dropped > 0) builder.Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"))
+                        .Append(" [WARN] LOG · dropped background lines=").Append(dropped).AppendLine();
+                    if (builder.Length == 0) continue;
+                    lock (Gate)
+                    {
+                        Directory.CreateDirectory(DirectoryPath);
+                        File.AppendAllText(CurrentFilePath, builder.ToString(), Encoding.UTF8);
+                    }
+                }
+                catch { }
+            }
         }
     }
 
@@ -302,25 +352,49 @@ namespace KinojoMeterPrototype
         private static readonly TimeSpan MaximumDuration = TimeSpan.FromMinutes(20);
         private readonly object _gate = new object();
         private readonly Dictionary<string, string> _connectionAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentQueue<CapturedTcpPayloadEventArgs> _pending = new ConcurrentQueue<CapturedTcpPayloadEventArgs>();
+        private readonly ConcurrentQueue<Tuple<DateTime, string, string>> _pendingMarkers = new ConcurrentQueue<Tuple<DateTime, string, string>>();
+        private readonly System.Threading.AutoResetEvent _pendingSignal = new System.Threading.AutoResetEvent(false);
+        private readonly System.Threading.Thread _writer;
         private FileStream _payload;
         private StreamWriter _index;
         private StreamWriter _markers;
         private DateTime _startedAtUtc;
         private long _writtenBytes;
         private int _chunkCount;
+        private int _pendingCount;
+        private int _pendingMarkerCount;
+        private int _droppedCount;
+        private volatile bool _disposeRequested;
+        private bool _accepting;
         private string _sessionDirectory = "";
+
+        public DiagnosticFrameCollector()
+        {
+            _writer = new System.Threading.Thread(WriterLoop)
+            {
+                IsBackground = true,
+                Name = "KINOJO-Fixture-Writer",
+                Priority = System.Threading.ThreadPriority.BelowNormal
+            };
+            _writer.Start();
+        }
 
         public bool IsActive { get { lock (_gate) return _payload != null; } }
         public string SessionDirectory { get { lock (_gate) return _sessionDirectory; } }
 
         public string Start()
         {
+            lock (_gate) _accepting = false;
+            FlushPending(TimeSpan.FromSeconds(2));
             lock (_gate)
             {
+                ClearPending();
                 StopLocked("RESTARTED");
                 _startedAtUtc = DateTime.UtcNow;
                 _writtenBytes = 0;
                 _chunkCount = 0;
+                _droppedCount = 0;
                 _connectionAliases.Clear();
                 _sessionDirectory = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -343,6 +417,7 @@ namespace KinojoMeterPrototype
                     "수집 시작 전 최근 최대 2분/8MiB의 순환 버퍼가 먼저 기록될 수 있습니다.\r\n" +
                     "수집 제한은 최대 20분/64MiB/100,000조각입니다.\r\n",
                     new UTF8Encoding(false));
+                _accepting = true;
                 return _sessionDirectory;
             }
         }
@@ -350,6 +425,22 @@ namespace KinojoMeterPrototype
         public void Append(CapturedTcpPayloadEventArgs segment)
         {
             if (segment == null || segment.Payload == null || segment.Payload.Length == 0) return;
+            lock (_gate)
+            {
+                if (_payload == null || !_accepting) return;
+            }
+            if (System.Threading.Interlocked.Increment(ref _pendingCount) > 20000)
+            {
+                System.Threading.Interlocked.Decrement(ref _pendingCount);
+                System.Threading.Interlocked.Increment(ref _droppedCount);
+                return;
+            }
+            _pending.Enqueue(segment);
+            _pendingSignal.Set();
+        }
+
+        private void AppendCore(CapturedTcpPayloadEventArgs segment)
+        {
             lock (_gate)
             {
                 if (_payload == null) return;
@@ -384,21 +475,61 @@ namespace KinojoMeterPrototype
             }
         }
 
+        private void WriterLoop()
+        {
+            while (!_disposeRequested)
+            {
+                CapturedTcpPayloadEventArgs segment;
+                var wrote = false;
+                var batch = 0;
+                while (batch < 2048 && _pending.TryDequeue(out segment))
+                {
+                    batch++;
+                    wrote = true;
+                    try { AppendCore(segment); }
+                    catch { }
+                    finally { System.Threading.Interlocked.Decrement(ref _pendingCount); }
+                }
+                Tuple<DateTime, string, string> marker;
+                while (_pendingMarkers.TryDequeue(out marker))
+                {
+                    wrote = true;
+                    try
+                    {
+                        lock (_gate)
+                        {
+                            if (_markers != null) _markers.WriteLine(marker.Item1.ToString("o") + "\t" + marker.Item2 + "\t" + marker.Item3);
+                        }
+                    }
+                    finally { System.Threading.Interlocked.Decrement(ref _pendingMarkerCount); }
+                }
+                if (!wrote) _pendingSignal.WaitOne(250);
+            }
+        }
+
         public bool AddMarker(string marker, string detail)
         {
+            var safeMarker = SanitizeTsv(marker);
+            if (String.IsNullOrWhiteSpace(safeMarker)) return false;
             lock (_gate)
             {
-                if (_markers == null) return false;
-                var safeMarker = SanitizeTsv(marker);
-                if (String.IsNullOrWhiteSpace(safeMarker)) return false;
-                _markers.WriteLine(DateTime.UtcNow.ToString("o") + "\t" + safeMarker + "\t" + SanitizeTsv(detail));
-                _markers.Flush();
-                return true;
+                if (_markers == null || !_accepting) return false;
             }
+            if (System.Threading.Interlocked.Increment(ref _pendingMarkerCount) > 1000)
+            {
+                System.Threading.Interlocked.Decrement(ref _pendingMarkerCount);
+                System.Threading.Interlocked.Increment(ref _droppedCount);
+                return false;
+            }
+            _pendingMarkers.Enqueue(Tuple.Create(DateTime.UtcNow, safeMarker, SanitizeTsv(detail)));
+            _pendingSignal.Set();
+            return true;
         }
 
         public string Stop()
         {
+            lock (_gate) _accepting = false;
+            FlushPending(TimeSpan.FromSeconds(2));
             lock (_gate)
             {
                 var directory = _sessionDirectory;
@@ -409,6 +540,7 @@ namespace KinojoMeterPrototype
 
         private void StopLocked(string reason)
         {
+            _accepting = false;
             if (_payload == null && _index == null) return;
             try
             {
@@ -424,7 +556,7 @@ namespace KinojoMeterPrototype
             {
                 if (_index != null)
                 {
-                    _index.WriteLine("# result\t" + reason + "\tchunks=" + _chunkCount + "\tbytes=" + _writtenBytes);
+                    _index.WriteLine("# result\t" + reason + "\tchunks=" + _chunkCount + "\tbytes=" + _writtenBytes + "\tdropped=" + _droppedCount);
                     _index.Flush();
                     _index.Dispose();
                 }
@@ -449,6 +581,24 @@ namespace KinojoMeterPrototype
             return (value ?? "").Replace("\t", " ").Replace("\r", " ").Replace("\n", " ").Trim();
         }
 
+        private void FlushPending(TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while ((System.Threading.Volatile.Read(ref _pendingCount) > 0 || System.Threading.Volatile.Read(ref _pendingMarkerCount) > 0) && DateTime.UtcNow < deadline)
+            {
+                _pendingSignal.Set();
+                System.Threading.Thread.Yield();
+            }
+        }
+
+        private void ClearPending()
+        {
+            CapturedTcpPayloadEventArgs ignored;
+            while (_pending.TryDequeue(out ignored)) System.Threading.Interlocked.Decrement(ref _pendingCount);
+            Tuple<DateTime, string, string> ignoredMarker;
+            while (_pendingMarkers.TryDequeue(out ignoredMarker)) System.Threading.Interlocked.Decrement(ref _pendingMarkerCount);
+        }
+
         private static string ShortHash(string value)
         {
             using (var sha = SHA256.Create())
@@ -462,7 +612,14 @@ namespace KinojoMeterPrototype
 
         public void Dispose()
         {
+            lock (_gate) _accepting = false;
+            FlushPending(TimeSpan.FromSeconds(2));
             lock (_gate) StopLocked("DISPOSED");
+            _disposeRequested = true;
+            _pendingSignal.Set();
+            try { if (_writer.IsAlive) _writer.Join(1000); }
+            catch { }
+            _pendingSignal.Dispose();
         }
     }
 }

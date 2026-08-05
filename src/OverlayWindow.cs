@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -51,7 +52,14 @@ namespace KinojoMeterPrototype
         private readonly ScaleTransform _bossHpScale;
         private readonly Button _lockButton;
         private readonly DispatcherTimer _timer;
+        private readonly DispatcherTimer _realtimeRenderTimer;
         private readonly CombatSessionEngine _engine;
+        private readonly ConcurrentQueue<CombatEvent> _realtimeEvents = new ConcurrentQueue<CombatEvent>();
+        private readonly System.Threading.AutoResetEvent _realtimeSignal = new System.Threading.AutoResetEvent(false);
+        private readonly System.Threading.Thread _realtimeWorker;
+        private readonly object _realtimeStateGate = new object();
+        private volatile bool _realtimeStopping;
+        private volatile bool _realtimeRenderPending;
         private CombatCaptureCoordinator _capture;
         private bool _running;
         private bool _partyObserved;
@@ -108,12 +116,25 @@ namespace KinojoMeterPrototype
             _engine.EncounterCompleted += delegate
             {
                 var completed = _engine.Snapshot();
-                _encounterProcessingState = "FINALIZING";
-                _encounterProcessingText = "보스 전투 종료 · 결과 고정 및 가상 처리 중";
-                Render(completed);
-                EncounterCompleted?.Invoke(this, completed);
+                DispatchUi(delegate
+                {
+                    _encounterProcessingState = "FINALIZING";
+                    _encounterProcessingText = "보스 전투 종료 · 결과 고정 및 가상 처리 중";
+                    Render(completed);
+                    EncounterCompleted?.Invoke(this, completed);
+                }, DispatcherPriority.Send);
             };
-            _engine.ParticipantChanged += delegate(object sender, CombatRow row) { ParticipantDetected?.Invoke(this, row); };
+            _engine.ParticipantChanged += delegate(object sender, CombatRow row)
+            {
+                DispatchUi(delegate { ParticipantDetected?.Invoke(this, row); }, DispatcherPriority.Send);
+            };
+            _realtimeWorker = new System.Threading.Thread(ProcessRealtimeEvents)
+            {
+                IsBackground = true,
+                Name = "KINOJO-Realtime-DPS",
+                Priority = System.Threading.ThreadPriority.AboveNormal
+            };
+            _realtimeWorker.Start();
 
             Title = "KINOJO Meter Overlay " + KinojoVersion.Current;
             WindowStyle = WindowStyle.None;
@@ -282,6 +303,26 @@ namespace KinojoMeterPrototype
             }
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _timer.Tick += Tick;
+            _realtimeRenderTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(50)
+            };
+            _realtimeRenderTimer.Tick += delegate
+            {
+                if (!_realtimeRenderPending) return;
+                _realtimeRenderPending = false;
+                Render(_engine.Snapshot());
+            };
+            _realtimeRenderTimer.Start();
+            Closed += delegate
+            {
+                _realtimeRenderTimer.Stop();
+                _realtimeStopping = true;
+                _realtimeSignal.Set();
+                try { if (_realtimeWorker.IsAlive) _realtimeWorker.Join(1500); }
+                catch { }
+                _realtimeSignal.Dispose();
+            };
             LocationChanged += delegate { SaveGeometry(); };
             SizeChanged += delegate { SaveGeometry(); };
             SourceInitialized += delegate { InitializeWindowHooks(); };
@@ -362,7 +403,7 @@ namespace KinojoMeterPrototype
             _engine.SetRuntimeInfo(_capture.RuntimeInfo);
             _capture.CombatEventReceived += delegate(object sender, CombatEvent value)
             {
-                Dispatcher.BeginInvoke(new Action(delegate { ApplyCombatEvent(value); }));
+                ApplyCombatEvent(value);
             };
             _capture.PartyRosterDetected += delegate(object sender, PartyRosterDetectedEventArgs value)
             {
@@ -470,15 +511,18 @@ namespace KinojoMeterPrototype
             if (!String.IsNullOrWhiteSpace(observation.DungeonName))
             {
                 var observedDungeon = observation.DungeonName.Trim();
-                if (!String.Equals(_hudDungeonName, observedDungeon, StringComparison.OrdinalIgnoreCase))
-                {
-                    _bossOrderByTarget.Clear();
-                    _pendingDamageByTarget.Clear();
-                    _currentBossTarget = "";
-                }
-                _hudDungeonName = observedDungeon;
                 var dungeon = _catalogDungeons.FirstOrDefault(value => String.Equals((value.DungeonName ?? "").Trim(), observedDungeon, StringComparison.OrdinalIgnoreCase));
-                _hudDungeonKey = dungeon == null ? "" : dungeon.DungeonKey ?? "";
+                lock (_realtimeStateGate)
+                {
+                    if (!String.Equals(_hudDungeonName, observedDungeon, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _bossOrderByTarget.Clear();
+                        _pendingDamageByTarget.Clear();
+                        _currentBossTarget = "";
+                    }
+                    _hudDungeonName = observedDungeon;
+                    _hudDungeonKey = dungeon == null ? "" : dungeon.DungeonKey ?? "";
+                }
             }
 
             foreach (var pair in observation.PartyServers ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
@@ -559,8 +603,31 @@ namespace KinojoMeterPrototype
 
         public void ApplyCombatEvent(CombatEvent value)
         {
+            if (value == null || _realtimeStopping) return;
+            _realtimeEvents.Enqueue(value);
+            _realtimeSignal.Set();
+        }
+
+        private void ProcessRealtimeEvents()
+        {
+            while (!_realtimeStopping)
+            {
+                CombatEvent value;
+                var processed = false;
+                while (_realtimeEvents.TryDequeue(out value))
+                {
+                    processed = true;
+                    lock (_realtimeStateGate) ApplyCombatEventCore(value);
+                }
+                if (processed) _realtimeRenderPending = true;
+                else _realtimeSignal.WaitOne(100);
+            }
+        }
+
+        private void ApplyCombatEventCore(CombatEvent value)
+        {
             if (value != null && value.Kind == CombatEventKind.EntityIdentity && !String.IsNullOrWhiteSpace(value.ActorName))
-                CharacterIdentityObserved?.Invoke(this, value);
+                DispatchUi(delegate { CharacterIdentityObserved?.Invoke(this, value); }, DispatcherPriority.Send);
             if (value != null && value.Kind == CombatEventKind.BossHp)
             {
                 ApplyTestBossIdentity(value);
@@ -583,7 +650,7 @@ namespace KinojoMeterPrototype
                 {
                     BufferPendingDamage(value);
                     if (!String.IsNullOrWhiteSpace(_hudDungeonKey))
-                        SetActivityStatus("보스 전투 신호 확인 중 · 파티 구성원 실시간 확인 중");
+                        DispatchUi(delegate { SetActivityStatus("보스 전투 신호 확인 중 · 파티 구성원 실시간 확인 중"); }, DispatcherPriority.Background);
                     return;
                 }
                 if (String.IsNullOrWhiteSpace(value.ActorName) && !_engine.Snapshot().Rows.Any(row => !row.IsEmpty && String.Equals(row.ParticipantKey, value.ActorId, StringComparison.OrdinalIgnoreCase)))
@@ -599,14 +666,20 @@ namespace KinojoMeterPrototype
                 _encounterProcessingState = "";
                 _encounterProcessingText = "";
                 _running = true;
-                _timer.Start();
+                DispatchUi(delegate { _timer.Start(); }, DispatcherPriority.Send);
             }
             if (snapshot.IsCleared)
             {
                 _running = false;
-                _timer.Stop();
+                DispatchUi(delegate { _timer.Stop(); }, DispatcherPriority.Send);
             }
-            Render(snapshot);
+        }
+
+        private void DispatchUi(Action action, DispatcherPriority priority)
+        {
+            if (action == null || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            if (Dispatcher.CheckAccess()) action();
+            else Dispatcher.BeginInvoke(action, priority);
         }
 
         private void BufferPendingDamage(CombatEvent value)

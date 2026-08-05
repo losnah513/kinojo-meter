@@ -25,7 +25,7 @@
     <Deterministic>true</Deterministic>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="*.cs" />
+    <Compile Include="*.cs" Exclude="DecoderSelfTest.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SharpPcap" Version="6.3.1" />

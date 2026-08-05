@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "product": "KINOJO Meter Core",
+  "version": "0.2.37",
+  "fileVersion": "0.2.37.0",
+  "channel": "stable",
+  "minimumVersion": "0.2.37",
+  "minimumCoreVersion": "0.2.37",
+  "minimumLauncherVersion": "1.0.0",
+  "mandatory": true,
+  "releaseNote": "기존 0.2.37 Core의 비공개 배포 전환 기준",
+  "publicDistribution": false,
+  "packageName": "KinojoMeterCore_0.2.37_x64.zip",
+  "entryPoint": "KINOJO.Meter.exe",
+  "storageBucket": "meter-core-private",
+  "codeSignatureRequired": true,
+  "publisherSubject": "KINOJO INFO",
+  "cutoverState": "PREPARE_PRIVATE_PIPELINE"
+}

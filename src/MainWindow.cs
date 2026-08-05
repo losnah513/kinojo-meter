@@ -36,6 +36,7 @@ namespace KinojoMeterPrototype
         private readonly PartyProfileRetryQueue _profileRetryQueue = new PartyProfileRetryQueue(TimeSpan.FromSeconds(25));
         private readonly Dictionary<Button, CharacterProfile> _characterCards = new Dictionary<Button, CharacterProfile>();
         private readonly Border _updateHost = new Border();
+        private readonly bool _launcherManaged;
 
         private LoginResult _login;
         private MeterCatalog _catalog;
@@ -83,8 +84,10 @@ namespace KinojoMeterPrototype
         private bool _meterConsentKnown;
         private bool _meterConsentAccepted;
 
-        public MainWindow()
+        public MainWindow(LoginResult launcherLogin)
         {
+            _launcherManaged = launcherLogin != null;
+            _login = launcherLogin;
             Title = "KINOJO Meter " + KinojoVersion.Current;
             Width = 520;
             Height = 430;
@@ -97,9 +100,43 @@ namespace KinojoMeterPrototype
             Foreground = Brushes.White;
             Content = _root;
             Closing += OnClosing;
-            Loaded += async delegate { await CheckStartupUpdateAsync(); };
+            Loaded += async delegate
+            {
+                if (_launcherManaged) await StartLauncherSessionAsync();
+                else await CheckStartupUpdateAsync();
+            };
             InitializeChrome();
-            ShowLogin();
+            if (_launcherManaged) ShowLauncherSessionLoading();
+            else ShowLogin();
+        }
+
+        private void ShowLauncherSessionLoading()
+        {
+            _contentHost.Child = new TextBlock
+            {
+                Text = "Launcher 인증을 이어받는 중입니다...",
+                Foreground = new SolidColorBrush(Accent),
+                FontSize = 14,
+                FontWeight = FontWeights.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+
+        private async Task StartLauncherSessionAsync()
+        {
+            if (_login == null || String.IsNullOrWhiteSpace(_login.SessionToken))
+            {
+                MessageBox.Show(this, "Launcher 세션이 없습니다. Launcher에서 다시 실행해 주세요.", "KINOJO Meter", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _closing = true;
+                Application.Current.Shutdown();
+                return;
+            }
+            DiagnosticLog.Info("AUTH", "Launcher session accepted for role " + (_login.RoleLabel ?? "Member"));
+            await SynchronizeInstallerConsentAsync();
+            ShowCharacterDiscovery();
+            StartAutomaticCharacterDetection();
+            StartGameHudProbe();
         }
 
         private void InitializeChrome()
@@ -809,8 +846,11 @@ namespace KinojoMeterPrototype
                 _catalog = await _api.DesktopBootstrapAsync(_catalog == null ? null : _catalog.CatalogVersion);
                 if (_hudProbe != null) _hudProbe.UpdateDungeons(_catalog == null ? null : _catalog.Dungeons);
                 if (_hudProbe != null) _hudProbe.UpdateDifficulties(_catalog == null ? null : _catalog.Difficulties);
-                _serverUpdateManifest = _catalog.DesktopUpdate ?? _serverUpdateManifest;
-                PresentUpdateIfAvailable(_serverUpdateManifest, false);
+                if (!_launcherManaged)
+                {
+                    _serverUpdateManifest = _catalog.DesktopUpdate ?? _serverUpdateManifest;
+                    PresentUpdateIfAvailable(_serverUpdateManifest, false);
+                }
                 if (_pendingUpdateMandatory)
                 {
                     if (_message != null) _message.Text = "필수 업데이트 후 미터를 실행할 수 있습니다.";
@@ -1132,10 +1172,14 @@ namespace KinojoMeterPrototype
             _tray.CheckUpdateRequested += async delegate { await CheckForUpdatesFromTrayAsync(); };
             _tray.LogoutRequested += async delegate
             {
-                await LogoutAsync(false);
-                Show();
-                Activate();
-                ShowLogin();
+                if (_launcherManaged) await LogoutAsync(true);
+                else
+                {
+                    await LogoutAsync(false);
+                    Show();
+                    Activate();
+                    ShowLogin();
+                }
             };
             _tray.ExitRequested += async delegate { await ExitAsync(); };
             _tray.SetConsentRequired(_meterConsentKnown && !_meterConsentAccepted);
@@ -1188,6 +1232,7 @@ namespace KinojoMeterPrototype
 
         private async Task CheckStartupUpdateAsync()
         {
+            if (_launcherManaged) return;
             if (_startupUpdateChecked) return;
             _startupUpdateChecked = true;
             try
@@ -1287,6 +1332,11 @@ namespace KinojoMeterPrototype
 
         private async Task CheckForUpdatesFromTrayAsync()
         {
+            if (_launcherManaged)
+            {
+                MessageBox.Show("업데이트는 다음 실행 시 KINOJO Meter Launcher가 자동으로 확인합니다.", "KINOJO Meter", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
             try
             {
                 var check = await _api.GetDesktopUpdateAsync();

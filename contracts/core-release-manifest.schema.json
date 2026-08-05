@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kinojo.info/contracts/core-release-manifest.schema.json",
+  "title": "KINOJO Meter Core Release Authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "channel",
+    "coreVersion",
+    "minimumCoreVersion",
+    "packageId",
+    "fileName",
+    "fileSize",
+    "sha256",
+    "downloadUrl",
+    "expiresAt",
+    "entryPoint",
+    "mandatory",
+    "codeSignatureRequired"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "channel": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,30}$" },
+    "coreVersion": { "type": "string", "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$" },
+    "minimumCoreVersion": { "type": "string", "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$" },
+    "packageId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "fileName": { "type": "string", "pattern": "^KinojoMeterCore_[0-9]+\\.[0-9]+\\.[0-9]+_x64\\.zip$" },
+    "fileSize": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "downloadUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "entryPoint": { "const": "KINOJO.Meter.exe" },
+    "mandatory": { "type": "boolean" },
+    "releaseNote": { "type": "string", "maxLength": 1000 },
+    "codeSignatureRequired": { "type": "boolean" },
+    "publisherSubject": { "type": "string", "maxLength": 300 }
+  }
+}

@@ -1,0 +1,133 @@
+name: Build and publish private KINOJO Meter Core
+
+concurrency:
+  group: kinojo-meter-core-${{ github.ref }}
+  cancel-in-progress: false
+
+'on':
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'assets/runtime/**'
+      - 'release/core-version.json'
+      - 'scripts/build-core-private.ps1'
+      - '.github/workflows/core-private-release.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    if: github.event.repository.visibility == 'private'
+    runs-on: windows-2025
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+      version: ${{ steps.release.outputs.version }}
+      package: ${{ steps.release.outputs.package }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - uses: microsoft/setup-msbuild@v2
+      - name: Read Core release and calculate publication gate
+        id: release
+        shell: pwsh
+        run: |
+          $manifest = Get-Content ./release/core-version.json -Raw | ConvertFrom-Json
+          if ($manifest.publicDistribution -ne $false) { throw 'Core publicDistribution must remain false.' }
+          "version=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "package=$($manifest.packageName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $publish = $manifest.cutoverState -eq 'ACTIVE' -and '${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ github.ref }}' -eq 'refs/heads/main'
+          if ($manifest.cutoverState -eq 'ACTIVE' -and '${{ github.event_name }}' -eq 'push' -and '${{ github.ref }}' -eq 'refs/heads/main') {
+            $before = '${{ github.event.before }}'
+            if ($before -match '^[0-9a-f]{40}$') {
+              git cat-file -e "$before^{commit}" 2>$null
+              if ($LASTEXITCODE -eq 0) {
+                git diff --quiet $before '${{ github.sha }}' -- release/core-version.json
+                if ($LASTEXITCODE -ne 0) { $publish = $true }
+              }
+            }
+          }
+          "publish=$($publish.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Build unsigned private Core staging
+        shell: pwsh
+        env:
+          GITHUB_REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: ./scripts/build-core-private.ps1 -Configuration Release -PrepareOnly
+
+  publish:
+    if: needs.verify.outputs.publish == 'true'
+    needs: verify
+    runs-on: windows-2025
+    environment: meter-core-production
+    steps:
+      - uses: actions/checkout@v5
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build unsigned private Core staging
+        shell: pwsh
+        env:
+          GITHUB_REPOSITORY_VISIBILITY: private
+        run: ./scripts/build-core-private.ps1 -Configuration Release -PrepareOnly
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign Core PE files with Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\artifacts\core-private\package
+          files-folder-filter: exe,dll
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify signatures and package private Core
+        shell: pwsh
+        env:
+          GITHUB_REPOSITORY_VISIBILITY: private
+        run: ./scripts/build-core-private.ps1 -Configuration Release -PackageOnly
+      - name: Request GitHub OIDC token for KINOJO Core publisher
+        id: oidc
+        shell: pwsh
+        run: |
+          $audience = [uri]::EscapeDataString('kinojo-meter-core-release-sync')
+          $separator = if ($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')) { '&' } else { '?' }
+          $tokenUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL$separator" + "audience=$audience"
+          $response = Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" } -Uri $tokenUrl
+          Write-Output "::add-mask::$($response.value)"
+          "token=$($response.value)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Upload immutable Core package and activate Server release
+        shell: pwsh
+        env:
+          CORE_SYNC_ENDPOINT: ${{ vars.KINOJO_CORE_SYNC_ENDPOINT }}
+          CORE_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: |
+          $version = '${{ needs.verify.outputs.version }}'
+          $package = '${{ needs.verify.outputs.package }}'
+          $manifest = Get-Content ./release/core-version.json -Raw | ConvertFrom-Json
+          $packagePath = Join-Path $PWD "build-private\$package"
+          $file = Get-Item -LiteralPath $packagePath
+          $sha = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $headers = @{ Authorization = "Bearer $env:CORE_OIDC_TOKEN" }
+          $prepareBody = @{ action='prepare'; version=$version; commitSha='${{ github.sha }}'; fileName=$package; fileSize=$file.Length; sha256=$sha } | ConvertTo-Json
+          $prepare = Invoke-RestMethod -Method Post -Uri $env:CORE_SYNC_ENDPOINT -Headers $headers -ContentType 'application/json' -Body $prepareBody
+          if ($prepare.uploadRequired -eq $true) {
+            Invoke-WebRequest -Method Put -Uri $prepare.uploadUrl -ContentType 'application/zip' -InFile $packagePath | Out-Null
+          }
+          $finalBody = @{
+            action='finalize'; version=$version; commitSha='${{ github.sha }}'; fileName=$package
+            fileSize=$file.Length; sha256=$sha; fileVersion=[string]$manifest.fileVersion
+            minimumCoreVersion=[string]$manifest.minimumCoreVersion; minimumLauncherVersion=[string]$manifest.minimumLauncherVersion
+            mandatory=[bool]$manifest.mandatory; releaseNote=[string]$manifest.releaseNote; publisherSubject=[string]$manifest.publisherSubject
+          } | ConvertTo-Json
+          $final = Invoke-RestMethod -Method Post -Uri $env:CORE_SYNC_ENDPOINT -Headers $headers -ContentType 'application/json' -Body $finalBody
+          if ($final.ok -ne $true -or $final.activatedVersion -ne $version) { throw 'Server Core release activation readback failed.' }

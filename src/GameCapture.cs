@@ -2,6 +2,7 @@ using PacketDotNet;
 using SharpPcap;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -847,6 +848,10 @@ namespace KinojoMeterPrototype
         private readonly DiagnosticFrameCollector _fixtureCollector = new DiagnosticFrameCollector();
         private readonly object _gate = new object();
         private readonly Queue<CapturedTcpPayloadEventArgs> _prebuffer = new Queue<CapturedTcpPayloadEventArgs>();
+        private readonly ConcurrentQueue<CapturedTcpPayloadEventArgs> _segmentQueue = new ConcurrentQueue<CapturedTcpPayloadEventArgs>();
+        private readonly System.Threading.AutoResetEvent _segmentSignal = new System.Threading.AutoResetEvent(false);
+        private readonly System.Threading.Thread _segmentWorker;
+        private volatile bool _segmentWorkerStopping;
         private long _prebufferBytes;
         private System.Threading.Timer _retryTimer;
         private bool _desiredRunning;
@@ -875,14 +880,18 @@ namespace KinojoMeterPrototype
                 DecoderValidated = _decoder.IsValidated,
                 UploadEligible = false
             };
+            _segmentWorker = new System.Threading.Thread(ProcessSegments)
+            {
+                IsBackground = true,
+                Name = "KINOJO-Realtime-Decoder",
+                Priority = System.Threading.ThreadPriority.AboveNormal
+            };
+            _segmentWorker.Start();
             _capture.PayloadReceived += delegate(object sender, CapturedTcpPayloadEventArgs e)
             {
-                lock (_gate)
-                {
-                    BufferRecentPayload(e);
-                    _fixtureCollector.Append(e);
-                }
-                _reassembly.Push(e);
+                if (e == null || _segmentWorkerStopping) return;
+                _segmentQueue.Enqueue(e);
+                _segmentSignal.Set();
             };
             _capture.StatusChanged += delegate(object sender, string text) { RaiseDiagnostic(text); };
             _reassembly.StreamData += OnStreamData;
@@ -1074,6 +1083,32 @@ namespace KinojoMeterPrototype
             foreach (var value in events) CombatEventReceived?.Invoke(this, value);
         }
 
+        private void ProcessSegments()
+        {
+            while (!_segmentWorkerStopping)
+            {
+                CapturedTcpPayloadEventArgs segment;
+                var processed = false;
+                while (_segmentQueue.TryDequeue(out segment))
+                {
+                    processed = true;
+                    try
+                    {
+                        _reassembly.Push(segment);
+                        // Prebuffer and fixture work are intentionally performed only after
+                        // the realtime decoder path has consumed this segment.
+                        BufferRecentPayload(segment);
+                        _fixtureCollector.Append(segment);
+                    }
+                    catch (Exception ex)
+                    {
+                        RaiseDiagnostic("Realtime decoder worker skipped one segment: " + ex.Message);
+                    }
+                }
+                if (!processed) _segmentSignal.WaitOne(100);
+            }
+        }
+
         private void RaiseStatus(string text)
         {
             StatusChanged?.Invoke(this, text);
@@ -1096,6 +1131,11 @@ namespace KinojoMeterPrototype
             try { _capture.Stop(); }
             catch { }
             _capture.Dispose();
+            _segmentWorkerStopping = true;
+            _segmentSignal.Set();
+            try { if (_segmentWorker.IsAlive) _segmentWorker.Join(1500); }
+            catch { }
+            _segmentSignal.Dispose();
             _fixtureCollector.Dispose();
         }
     }
