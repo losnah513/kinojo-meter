@@ -2,10 +2,10 @@
 
 
 기준일: 2026-08-06
-운영 기준: Stable Launcher `1.1.0` / Stable Private Core `0.2.39` / 공개 통계·관측 SQL `50015` / `RANK_ALLOWLIST [3,4,5]`
+운영 기준: Stable Launcher `1.1.0` / Stable Private Core `0.2.41` / 공개 통계·관측 SQL `50015` / `RANK_ALLOWLIST [3,4,5]`
 
-전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
-전환 상태: Stable Launcher `1.1.0`과 Core `0.2.39`를 Core → Launcher 순서로 발행했고 Server `downloadReady=true`를 확인했다. 운영 모드는 관리자 설정 `RANK_ALLOWLIST [3,4,5]`다. Staging은 같은 버전을 유지하되 실제 Windows E2E를 보류하고 `CLOSED`로 닫았다.
+전환 준비 기준: Launcher `1.1.0` / Stable Private Core `0.2.41` / Staging Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
+전환 상태: Stable Launcher `1.1.0`과 Core `0.2.41`이 발행됐고 Server `downloadReady=true` 및 실제 Windows 설치·업데이트·실행 E2E를 확인했다. 운영 모드는 관리자 설정 `RANK_ALLOWLIST [3,4,5]`다. Staging은 Core `0.2.39`를 유지하고 `CLOSED`로 닫았다.
 
 ## 사용자 기준 기본 흐름
 
@@ -44,7 +44,7 @@ WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-sig
 | Launcher | 이 공개 저장소의 `launcher/**` → Stable `launcher-v*` / E2E `launcher-staging-v*` GitHub Release | Stable 공개 / Staging 사전 릴리스 | 미서명 취미 배포 명시, 원격 size/SHA-256, GitHub OIDC, Server readback |
 | Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | RSA-3072 manifest 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
 | Server | SQL `50016~50022`, `meter-ingest`, `meter-staging-ingest`, release sync | 내부 | Stable/채널 결합·PASS KEY/RSA·Edge health·ACTIVE release readback 완료 |
-| WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher `1.1.0`·Core `0.2.39`·합산 `1.5 MB` 운영 표시 확인 |
+| WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher `1.1.0`·Core `0.2.41`·합산 `1.5 MB` 운영 표시 확인 |
 
 Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이나 Supabase service-role key를 클라이언트에 넣지 않는다. Storage object는 `<channel>/<version>/KinojoMeterCore_<version>_x64.zip`의 불변 경로를 사용한다.
 
@@ -75,15 +75,16 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 - 공개 PR `#22`와 비공개 PR `#11`에서 Stable manifest를 `ACTIVE`로 전환했고 각각 main `f04338032b0cbedfb3ac09eb3824cbe8119ed5fc`, `951991aeb428d401f4ea35bca0ac600d4464c498`로 병합했다.
 - Stable Core workflow run `31097916177`은 Production Environment endpoint 누락을 보완한 attempt 2에서 RSA 서명·Private Storage 업로드·Server ACTIVE 전환을 완료했다.
 - Stable Launcher workflow run `31097904569`은 Production Environment 승인 후 GitHub Release `launcher-v1.1.0` 생성·SHA-256 검증·Server ACTIVE 전환을 완료했다.
-- 운영 WEB `/meter/`에서 Launcher `1.1.0`, Core `0.2.39`, Launcher `0.4 MB`, 설치 후 합산 `1.5 MB`, 정확한 두 파일명을 확인했다.
+- 운영 WEB `/meter/`에서 Launcher `1.1.0`, Core `0.2.41`, Launcher `0.4 MB`, 설치 후 합산 `1.5 MB`, 정확한 두 파일명을 확인했다.
+- 실제 Windows에서 Launcher 설치, PASS KEY 로그인, Stable Core `0.2.39 → 0.2.40 → 0.2.41` 자동 업데이트, RSA/파일 무결성 검증, ready handshake, 실행과 NPCAP 캡처를 확인했다.
 
-남은 Gate:
+남은 수동 관찰:
 
-1. 사용자가 Windows를 직접 조작할 수 있을 때 PASS KEY 로그인 → Launcher 자체 업데이트·재실행 → Core `0.2.39` 자동 설치·RSA 검증 → 미터기 실행을 실제 E2E로 확인한다.
-2. 수동 캐릭터 선택창 중앙 배치, 변조 차단·이전 Core rollback, 제거 후 잔여 상태를 확인한다.
-3. E2E가 실패하면 Stable 다운로드를 즉시 `CLOSED`로 바꾸고 활성 release는 보존한 채 원인을 수정한다.
+1. 자동 캐릭터 선택이 실패하는 환경에서 수동 선택창의 실제 중앙 표시를 확인한다.
+2. 다음 실제 전투에서 HUD OCR 오독 파티원이 새 0 DPS 행으로 누적되지 않는지 UI로 확인한다.
+3. 사용자 데이터 삭제 위험이 있는 실제 제거와 의도적 패키지 변조·강제 rollback은 필요 시 별도 점검한다. 해당 경계는 자동 회귀검사로 통과했다.
 
-운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.
+운영 장애 시 Stable 다운로드를 `CLOSED`로 전환하고 Server의 Launcher/Core active row와 이미 설치된 정상 Core slot은 삭제하지 않는다.
 
 ## 코드 보호 경계
 
