@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$GitHubOwner,
     [Parameter(Mandatory=$true)][string]$GitHubRepository,
-    [Parameter(Mandatory=$true)][string]$ExpectedCommit
+    [Parameter(Mandatory=$true)][string]$ExpectedCommit,
+    [ValidateSet('stable','staging')][string]$Channel = 'stable'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,13 +14,15 @@ if ($ExpectedCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'ExpectedCommit must 
 if ([String]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw 'GH_TOKEN is required.' }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$manifest = Get-Content -LiteralPath (Join-Path $root 'release\launcher-version.json') -Raw | ConvertFrom-Json
+$manifestName = if ($Channel -eq 'staging') { 'launcher-staging-version.json' } else { 'launcher-version.json' }
+$manifest = Get-Content -LiteralPath (Join-Path $root "release\$manifestName") -Raw | ConvertFrom-Json
 $version = [string]$manifest.version
 $artifactName = [string]$manifest.artifactName
 $artifactPath = Join-Path $root "build\$artifactName"
-$checksumPath = Join-Path $root "build\checksums_launcher_${version}.txt"
+$checksumName = if ($Channel -eq 'staging') { "checksums_launcher_staging_${version}.txt" } else { "checksums_launcher_${version}.txt" }
+$checksumPath = Join-Path $root "build\$checksumName"
 $repository = "$GitHubOwner/$GitHubRepository"
-$tag = "launcher-v$version"
+$tag = if ($Channel -eq 'staging') { "launcher-staging-v$version" } else { "launcher-v$version" }
 
 function Assert-EmbeddedLauncher([string]$SetupPath, [string]$ExpectedFileVersion) {
     $assembly = [Reflection.Assembly]::LoadFile($SetupPath)
@@ -40,10 +43,13 @@ function Assert-EmbeddedLauncher([string]$SetupPath, [string]$ExpectedFileVersio
     }
 }
 
-if ($manifest.cutoverState -ne 'ACTIVE' -or $manifest.publicDistribution -ne $true -or
+$expectedState = if ($Channel -eq 'staging') { 'STAGING_E2E' } else { 'ACTIVE' }
+$expectedPublicDistribution = $Channel -eq 'stable'
+if ([string]$manifest.channel -cne $Channel -or [string]$manifest.cutoverState -cne $expectedState -or
+    [bool]$manifest.publicDistribution -ne $expectedPublicDistribution -or
     $manifest.codeSignatureRequired -ne $false -or [string]$manifest.publisherSubject -cne '' -or
     [string]$manifest.trustMode -cne 'WINDOWS_UNSIGNED_HOBBY' -or $manifest.smartScreenWarningExpected -ne $true) {
-    throw 'Launcher publication requires ACTIVE and the explicit unsigned hobby trust contract.'
+    throw 'Launcher publication channel, cutover state, or unsigned hobby trust contract is invalid.'
 }
 if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Launcher artifact is missing: $artifactPath" }
 Assert-EmbeddedLauncher $artifactPath ([string]$manifest.fileVersion)
@@ -65,8 +71,11 @@ if ($tagCommit -and $tagCommit.ToLowerInvariant() -ne $ExpectedCommit.ToLowerInv
     throw "$tag is immutable and already points to $tagCommit. Bump launcher-version.json."
 }
 if (-not $tagCommit) {
-    & gh release create $tag $artifactPath --repo $repository --target $ExpectedCommit `
-        --title "KINOJO Meter Launcher $version" --notes ([string]$manifest.releaseNote)
+    $releaseArguments = @('release', 'create', $tag, $artifactPath, '--repo', $repository, '--target', $ExpectedCommit,
+        '--title', $(if ($Channel -eq 'staging') { "KINOJO Meter Launcher STAGING $version" } else { "KINOJO Meter Launcher $version" }),
+        '--notes', [string]$manifest.releaseNote)
+    if ($Channel -eq 'staging') { $releaseArguments += '--prerelease' }
+    & gh @releaseArguments
     if ($LASTEXITCODE -ne 0) { throw 'Launcher GitHub Release creation failed.' }
     $tagCommit = Resolve-TagCommit $repository $tag
 }
@@ -76,7 +85,10 @@ $downloadRoot = Join-Path $env:RUNNER_TEMP ("kinojo-launcher-verify-" + [Guid]::
 New-Item -ItemType Directory -Path $downloadRoot | Out-Null
 try {
     $release = ((& gh release view $tag --repo $repository --json isDraft,isPrerelease,assets) -join "`n") | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or $release.isDraft -eq $true -or $release.isPrerelease -eq $true) { throw 'Launcher stable Release readback failed.' }
+    $expectedPrerelease = $Channel -eq 'staging'
+    if ($LASTEXITCODE -ne 0 -or $release.isDraft -eq $true -or [bool]$release.isPrerelease -ne $expectedPrerelease) {
+        throw 'Launcher Release channel readback failed.'
+    }
     $assetNames = @($release.assets | ForEach-Object { [string]$_.name })
     if ($assetNames -notcontains $artifactName) {
         & gh release upload $tag $artifactPath --repo $repository
@@ -91,7 +103,6 @@ try {
     $checksumLine = "$artifactName`t$size`t$sha256"
     @($checksumLine) | Set-Content -LiteralPath $checksumPath -Encoding ascii
 
-    $checksumName = Split-Path -Leaf $checksumPath
     if ($assetNames -contains $checksumName) {
         & gh release download $tag --repo $repository --dir $downloadRoot --pattern $checksumName
         if ($LASTEXITCODE -ne 0) { throw 'Launcher remote checksum download failed.' }
@@ -105,4 +116,4 @@ try {
     Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Launcher release verified: $repository $tag @ $ExpectedCommit size=$size sha256=$sha256"
+Write-Host "Launcher release verified: channel=$Channel $repository $tag @ $ExpectedCommit size=$size sha256=$sha256"
