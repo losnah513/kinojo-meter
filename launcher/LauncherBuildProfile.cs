@@ -10,8 +10,8 @@ namespace KinojoMeterLauncher
         public const string DisplaySuffix = " STAGING";
         public const string CoreEntryPoint = "KINOJO.Meter.Staging.exe";
         public const string CoreProcessName = "KINOJO.Meter.Staging";
-        public const string CoreSigningKeyId = "kinojo-core-staging-rsa-2026-01";
-        public const string CoreSigningPublicModulusBase64 = "jm468uMxskTyjjk4pkhJi6RcwAiwsKjPQABHmH5MHTx5nw/ClClexRu73rJA05ykG0KZeRJ4wF2WHwMk5k/E/uEXKzBSCnm+y4u8y8RPNnoqgaSC9vKGh9y1Gf3yRD1cfrEp6g+LSE0nKQlUeqpw1JQzk7tvxNo2KCgpenV7WzIPyEKzPb4wHfngPkfDiMC5SQsOmGsrA5eMOh4NWKZG+0XNhs3mAOCo8jO1ID6RlqmD4tnG7HsttcxQboRncLEGgUV7A88lj4nCXaNPjsBSPttfLto0E1E8NWksxMkqD+1Wz85Ckmuemw06p7Xn0djVtx1A2IWu+lnUAQXd++vo8Mux8iN4dmXfvJfRM6Y+7BM4a1splJIpwhmla/VE2PAcjfjnQulnTZTvWaK7SwSM5qyJewVW01d4s0ysGQ/ovFWRMZhl6zauH8GdL3Ul4oUHBXJPe9GHWBLaE9YtWYRMN5d3NFJaIGYpoxDscV0Rhq1uYRePI03T4Xy1zXnmZWfF";
+        public const string CoreSigningKeyId = "kinojo-core-staging-rsa-2026-02";
+        public const string CoreSigningPublicModulusBase64 = "o6JysL9y80mftGWs6zXjur7Tu3iypUdbFQAOS8aUeVyusOAD05i3AWD0lBPRNYkaQNzAUXBWkEKecqdTsUW9X8xkTQePRNDRKp4MzxoyfmKQmAoV/M2lFGSQF9q5dFLP8dx7ShZGnK0lWb3yKgtxSqZj/K+HVuf0IcOumlBdiRaL7hOb182L9Ph9cpAxigzQ+VzXsXlW6Bdu16rIqu1RIulaifnhGzmuggHo31W1CmUGKy+ukDtRAMvmvks84F77fabpMjO/up+EbAEpAR32HSMACUBsuqnBq6UjdQMpG0tmqWd6hWS1AQ0KEZw/acPBcPg+HnBdUiP3pCIs4w5CgfHu9s4ga/7SVrVYD7K7SJcJ3y6PVzUwoDZVQLbeMHpEVGScrwfgA4fLhrbJ1IyAp72b+vbMVDZ7UTYPpUgXVm52rd+6wXxTyfCZ+ld0x0yOuJE5e5B8Z6ACFn3nUSsjuubCH6hW+vJ9xsl2JmnfnljEN5XK+BszoO8/l/GYq5zt";
 #else
         public const string Channel = "stable";
         public const string FunctionName = "meter-ingest";

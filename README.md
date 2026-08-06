@@ -5,7 +5,19 @@
 운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / `MAINTENANCE` / `downloadEnabled=false`
 
 전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.38` / Database `50019` / `meter-ingest` `50019.1` v21 / `meter-staging-ingest` `50019.1` v1 / Core release sync `50019.2` v8
-전환 상태: Stable은 계속 `PREPARE_PRIVATE_PIPELINE`·`MAINTENANCE`다. 별도 `STAGING_E2E` 빌드와 Server 채널 계약은 구현됐지만 Staging Core 발행·Windows 실기기 검증 전이므로 운영 WEB·Server stable active release·공개 Release는 바꾸지 않는다.
+전환 상태: Stable은 계속 `PREPARE_PRIVATE_PIPELINE`·`MAINTENANCE`다. fail-closed Staging 코드와 Server 채널 계약은 공개 PR `#12` main `62b4c255832d7b3ab457a777c05e51b50092877e`, 비공개 PR `#6` main `0db69a1a51d227e7d0ea7b3b22e79301031a6391`로 병합됐고 Stable/Staging Windows CI를 통과했다. Stable/Staging active Core는 모두 0건이며 Staging RSA key 회전·Core 발행·Windows E2E를 순서대로 완료한 뒤에만 운영 전환한다.
+
+## 사용자 기준 기본 흐름
+
+사용자가 접하는 업데이트 구조는 단순하게 유지한다.
+
+1. WEB에서 공개 Launcher 설치 파일을 한 번 다운로드한다.
+2. Launcher를 설치하고 6자리 PASS KEY를 입력한다.
+3. Launcher가 최신 Core 버전을 확인한다.
+4. 업데이트가 있으면 확인 후 또는 필수 업데이트 정책에 따라 자동으로 다운로드한다.
+5. 검증된 Core를 설치하고 미터기를 실행한다.
+
+GitHub Release의 Launcher 설치 파일, 최신 버전 확인, Core 다운로드·교체가 기본 기반이다. 현재 구조가 더 복잡해 보이는 이유는 사용자 기능을 늘렸기 때문이 아니라 `PASS KEY 사용자만 Core 다운로드`, `Core 비공개 보관`, `RSA 변조 차단`, `실패 시 rollback`, `Stable/Staging 분리`, `Server 다운로드 승인`을 추가했기 때문이다. 이 안전장치는 사용자 화면에 노출되는 단계를 늘리지 않으며, 새 배포 계층은 더 추가하지 않는다.
 
 ## 목표 구조
 
@@ -55,20 +67,21 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 
 - private Core 저장소·`meter-core-production` Environment·수동 `PUBLISH_CORE_<version>` 발행 Gate를 구성했다.
 - private Storage `meter-core-private`는 `public=false`이며 public policy가 없다.
-- RSA-3072 개인키는 private Environment secret에만 두고 Launcher·Core workflow·release sync Edge의 공개키 일치를 확인했다.
+- RSA-3072 개인키는 private Environment secret에만 두며 Launcher·Core workflow·release sync Edge의 공개키 일치를 강제한다. 최초 Staging 공개키의 대응 개인키가 보존되지 않은 사실을 확인해 `kinojo-core-staging-rsa-2026-02`로 회전한다.
 - SQL `50016~50019` 운영 Migration과 `meter-ingest` v21·`meter-staging-ingest` v1·`meter-core-release-sync` v8 source/health readback을 완료했다.
 - Staging Launcher는 컴파일 시 채널·함수명·데이터/설치/로그 폴더·뮤텍스·Core RSA 공개키가 고정된다. Staging 장애 시 Stable endpoint로 우회하지 않는다.
 - Staging PASS KEY는 평문을 DB에 저장하지 않고 SHA-256 hash와 만료/해제 상태만 보관한다. 세션은 채널에 결합돼 교차 endpoint 사용이 차단된다.
-- 공개 PR `#9`와 비공개 PR `#3`은 사전 CI를 통과했고 각각 main `bacf8d60a79178a8ee3012bd53de2d5c422967b6`, `6483979f80dc45fefe03f96f53c30ab266c9268f`로 병합됐다. PREPARE 상태라 publish는 계속 차단된다.
+- 공개 PR `#12`와 비공개 PR `#6`은 Stable/Staging CI를 통과했고 각각 main `62b4c255832d7b3ab457a777c05e51b50092877e`, `0db69a1a51d227e7d0ea7b3b22e79301031a6391`로 병합됐다. PREPARE 상태라 Stable publish는 계속 차단된다.
 
 남은 Gate:
 
-1. private GitHub Environment `meter-core-staging`에 전용 RSA 개인키 Secret을 등록한다. 개인키는 저장소·Drive·artifact에 넣지 않는다.
-2. `PUBLISH_STAGING_CORE_0.2.38` 수동 Gate로 Staging Core를 서명·업로드하고 Staging active row와 Storage hash를 readback한다.
-3. Staging `downloadEnabled`만 열고 CI의 `KINOJO_Meter_Launcher_Staging_1.0.0.exe`로 clean Windows에서 최초 설치·PASS KEY·RSA Core 설치/업데이트·변조 차단·ready handshake·강제 실패 롤백을 검증한다.
-4. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한 뒤 Staging 다운로드를 다시 닫는다.
-5. 검증 통과 후 private Core `0.2.38` → Launcher `1.0.0` 순서로 Stable ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
-6. Stable `MAINTENANCE`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환해 smoke test하고, 마지막에만 운영 다운로드를 개방한다.
+1. Staging RSA key를 `kinojo-core-staging-rsa-2026-02`로 회전하고 공개 Launcher·Private Core·release sync Edge의 공개키 계약을 같은 회차에 병합·배포한다.
+2. private GitHub Environment `meter-core-staging`에 회전한 전용 RSA 개인키 Secret과 Core sync endpoint Variable을 등록한다. 개인키는 저장소·Drive·artifact에 넣지 않는다.
+3. `PUBLISH_STAGING_CORE_0.2.38` 수동 Gate로 Staging Core를 서명·업로드하고 Staging active row와 Storage hash를 readback한다.
+4. Staging `downloadEnabled`만 열고 CI의 `KINOJO_Meter_Launcher_Staging_1.0.0.exe`로 clean Windows에서 최초 설치·PASS KEY·RSA Core 설치/업데이트·변조 차단·ready handshake·강제 실패 롤백을 검증한다.
+5. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한 뒤 Staging 다운로드를 다시 닫는다.
+6. 검증 통과 후 private Core `0.2.38` → Launcher `1.0.0` 순서로 Stable ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
+7. Stable `MAINTENANCE`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환해 smoke test하고, 마지막에만 운영 다운로드를 개방한다.
 
 운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.
 
