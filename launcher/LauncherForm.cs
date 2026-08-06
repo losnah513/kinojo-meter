@@ -50,6 +50,9 @@ namespace KinojoMeterLauncher
         private string _contentStatus = "공지를 불러오는 중";
         private readonly CancellationTokenSource _contentCancellation = new CancellationTokenSource();
         private CancellationTokenSource _cancellation;
+        private CoreInstallResult _preparedCore;
+        private string _installationId;
+        private bool _operationBusy;
 
         public LauncherForm(LauncherLoginResult login)
         {
@@ -171,7 +174,7 @@ namespace KinojoMeterLauncher
             _launchCard.Controls.Add(_statusTitle);
 
             _status = CreateLabel(
-                "로그인되었습니다. 약관 동의 후 미터기를 실행할 수 있습니다.",
+                "로그인되었습니다. 최신 Core를 자동으로 확인합니다.",
                 new Font("Segoe UI", 9F, FontStyle.Regular),
                 LauncherPalette.Muted,
                 new Point(27, 86),
@@ -262,9 +265,9 @@ namespace KinojoMeterLauncher
             };
             _terms.CheckedChanged += delegate
             {
-                if (_start.Text == "미터기 실행") _start.Enabled = _terms.Checked;
+                RefreshStartButton();
                 if (_terms.Checked && _progress.Value == 0)
-                    SetOperationState("실행 준비", "미터기 실행을 누르면 최신 버전을 확인합니다.", false, 0);
+                    SetOperationState("실행 준비", "최신 Core 확인이 끝나면 미터기를 실행할 수 있습니다.", false, 0);
             };
             _launchCard.Controls.Add(_terms);
 
@@ -310,7 +313,12 @@ namespace KinojoMeterLauncher
                 _contentCancellation.Cancel();
                 if (_cancellation != null) _cancellation.Cancel();
             };
-            Shown += async delegate { await LoadContentAsync(); };
+            Shown += async delegate
+            {
+                var contentTask = LoadContentAsync();
+                await PrepareCoreAsync();
+                await contentTask;
+            };
             ResumeLayout(true);
         }
 
@@ -332,22 +340,19 @@ namespace KinojoMeterLauncher
                 BackColor = LauncherPalette.Sidebar
             };
             AttachTitleBar(brandBar);
-            brandBar.Controls.Add(new Label
-            {
-                Text = "K",
-                BackColor = LauncherPalette.Accent,
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(20, 18),
-                Size = new Size(28, 28)
-            });
+            brandBar.Controls.Add(CreateBrandIcon(new Point(20, 18), new Size(28, 28)));
             brandBar.Controls.Add(CreateLabel(
                 "KINOJO",
                 new Font("Segoe UI", 12F, FontStyle.Bold),
                 LauncherPalette.Text,
                 new Point(57, 19),
-                new Size(104, 28)));
+                new Size(76, 28)));
+            brandBar.Controls.Add(CreateLabel(
+                "v" + LauncherVersion.Current,
+                new Font("Segoe UI", 7F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(134, 24),
+                new Size(64, 20)));
             sidebar.Controls.Add(brandBar);
 
             if (LauncherVersion.IsStaging)
@@ -370,16 +375,31 @@ namespace KinojoMeterLauncher
             meterWeb.Click += delegate { OpenExternalLink(KinojoMeterWebUrl); };
             sidebar.Controls.Add(meterWeb);
 
+            var bottomStatus = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 136,
+                BackColor = LauncherPalette.Sidebar
+            };
+            sidebar.Controls.Add(bottomStatus);
+
+            var ready = CreateLabel(
+                "●  런처 준비됨",
+                new Font("Segoe UI", 8F, FontStyle.Bold),
+                LauncherPalette.Success,
+                new Point(20, 1),
+                new Size(174, 22));
+            bottomStatus.Controls.Add(ready);
+
             var coreCard = new LauncherCard
             {
                 BackColor = Color.FromArgb(18, 23, 33),
                 BorderColor = Color.FromArgb(40, 49, 65),
                 CornerRadius = 12,
-                Location = new Point(16, 603),
-                Size = new Size(182, 92),
-                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
+                Location = new Point(16, 32),
+                Size = new Size(182, 92)
             };
-            sidebar.Controls.Add(coreCard);
+            bottomStatus.Controls.Add(coreCard);
             coreCard.Controls.Add(CreateLabel(
                 "설치된 버전",
                 new Font("Segoe UI", 8F, FontStyle.Regular),
@@ -421,28 +441,13 @@ namespace KinojoMeterLauncher
             var rightHost = new Panel
             {
                 Dock = DockStyle.Right,
-                Width = 410,
+                Width = 138,
                 BackColor = LauncherPalette.Topbar
             };
             topbar.Controls.Add(rightHost);
             var windowControls = CreateWindowControls(true);
-            windowControls.Dock = DockStyle.None;
-            windowControls.Location = new Point(272, 0);
+            windowControls.Dock = DockStyle.Fill;
             rightHost.Controls.Add(windowControls);
-            rightHost.Controls.Add(CreateLabel(
-                "●  런처 준비됨",
-                new Font("Segoe UI", 8F, FontStyle.Bold),
-                LauncherPalette.Success,
-                new Point(0, 21),
-                new Size(135, 22)));
-            var launcherVersion = CreateLabel(
-                "Launcher " + LauncherVersion.Current,
-                new Font("Segoe UI", 8F, FontStyle.Regular),
-                LauncherPalette.Muted,
-                new Point(137, 21),
-                new Size(122, 22));
-            launcherVersion.TextAlign = ContentAlignment.TopRight;
-            rightHost.Controls.Add(launcherVersion);
             return topbar;
         }
 
@@ -858,7 +863,7 @@ namespace KinojoMeterLauncher
             {
                 var active = installer.ReadActiveState();
                 var channel = LauncherVersion.IsStaging ? "  ·  테스트 버전" : "";
-                return "Launcher " + LauncherVersion.Current + channel + "  ·  Core " + (active == null ? "설치 전" : active.CoreVersion);
+                return "Core " + (active == null ? "설치 전" : active.CoreVersion) + channel;
             }
         }
 
@@ -878,58 +883,28 @@ namespace KinojoMeterLauncher
                 SetOperationState("약관 동의 필요", "모든 약관에 동의한 뒤 미터기를 실행해 주세요.", true, _progress.Value);
                 return;
             }
-            if (!_start.Enabled) return;
             if (String.IsNullOrWhiteSpace(_login.SessionToken))
             {
                 SetOperationState("로그인 만료", "런처를 다시 실행해 PASS KEY로 로그인해 주세요.", true, 0);
                 return;
             }
+            if (_operationBusy) return;
 
+            if (_preparedCore == null && !await PrepareCoreAsync()) return;
+
+            _operationBusy = true;
             _start.Enabled = false;
-            _start.Text = "KINOJO Meter 준비 중...";
+            _start.Text = "KINOJO Meter 실행 중...";
             _terms.Enabled = false;
             _progress.Error = false;
-            _progress.Value = 0;
-            _cancellation = new CancellationTokenSource();
             try
             {
-                using (var api = new LauncherApiClient())
                 using (var installer = new CorePackageInstaller())
                 {
-                    var installationId = LauncherPaths.GetOrCreateInstallationId();
-                    var current = installer.ReadActiveState();
-                    SetOperationState("최신 버전 확인 중", "설치된 Core와 최신 배포 버전을 비교하고 있습니다.", false, 16);
-                    var authorization = await api.AuthorizeCoreUpdateAsync(
-                        _login.SessionToken,
-                        installationId,
-                        current == null ? "" : current.CoreVersion);
-                    if (!authorization.Authorized || authorization.Release == null)
-                        throw new InvalidOperationException(String.IsNullOrWhiteSpace(authorization.Message)
-                            ? "현재 Core 다운로드가 허용되지 않았습니다."
-                            : authorization.Message);
-
-                    var sameVersion = current != null && String.Equals(current.CoreVersion, authorization.Release.CoreVersion, StringComparison.Ordinal);
-                    SetOperationState(
-                        sameVersion ? "설치 상태 확인 중" : "업데이트 다운로드 중",
-                        sameVersion ? "설치된 Core의 무결성을 확인하고 있습니다." : "최신 Core를 안전하게 내려받고 있습니다.",
-                        false,
-                        28);
-                    var progress = new Progress<int>(value =>
-                    {
-                        var mapped = 28 + (int)Math.Round(Math.Max(0, Math.Min(100, value)) * 0.57D);
-                        _progress.Value = Math.Max(0, Math.Min(85, mapped));
-                        _progressText.Text = _progress.Value + "%";
-                    });
-                    var install = await installer.EnsureInstalledAsync(
-                        authorization.Release,
-                        api.ProjectHost,
-                        progress,
-                        _cancellation.Token);
-
                     SetOperationState("미터기 실행 확인 중", "Core 실행과 준비 신호를 확인하고 있습니다.", false, 92);
-                    await installer.LaunchAndVerifyAsync(install, _login, installationId);
-                    _version.Text = "Launcher " + LauncherVersion.Current + "  ·  Core " + install.Active.CoreVersion;
-                    _sidebarCore.Text = "Core " + install.Active.CoreVersion;
+                    await installer.LaunchAndVerifyAsync(_preparedCore, _login, _installationId);
+                    _version.Text = "Core " + _preparedCore.Active.CoreVersion;
+                    _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SessionHandedOff = true;
                     _login.SessionToken = "";
                     SetOperationState("실행 완료", "KINOJO Meter가 정상적으로 실행되었습니다.", false, 100);
@@ -947,13 +922,94 @@ namespace KinojoMeterLauncher
             }
             finally
             {
+                _operationBusy = false;
                 if (!IsDisposed)
                 {
                     _start.Text = "미터기 실행";
-                    _start.Enabled = _terms.Checked && !String.IsNullOrWhiteSpace(_login.SessionToken);
                     _terms.Enabled = true;
+                    RefreshStartButton();
                 }
             }
+        }
+
+        private async Task<bool> PrepareCoreAsync()
+        {
+            if (_operationBusy) return _preparedCore != null;
+            if (String.IsNullOrWhiteSpace(_login.SessionToken)) return false;
+
+            _operationBusy = true;
+            _preparedCore = null;
+            RefreshStartButton();
+            if (_cancellation == null || _cancellation.IsCancellationRequested)
+            {
+                if (_cancellation != null) _cancellation.Dispose();
+                _cancellation = new CancellationTokenSource();
+            }
+            try
+            {
+                using (var api = new LauncherApiClient())
+                using (var installer = new CorePackageInstaller())
+                {
+                    _installationId = LauncherPaths.GetOrCreateInstallationId();
+                    var current = installer.ReadActiveState();
+                    SetOperationState("최신 Core 확인 중", "설치된 Core와 최신 배포 버전을 자동으로 비교하고 있습니다.", false, 12);
+                    var authorization = await api.AuthorizeCoreUpdateAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        current == null ? "" : current.CoreVersion);
+                    if (!authorization.Authorized || authorization.Release == null)
+                        throw new InvalidOperationException(String.IsNullOrWhiteSpace(authorization.Message)
+                            ? "현재 Core 다운로드가 허용되지 않았습니다."
+                            : authorization.Message);
+
+                    var sameVersion = current != null && String.Equals(current.CoreVersion, authorization.Release.CoreVersion, StringComparison.Ordinal);
+                    SetOperationState(
+                        sameVersion ? "설치 상태 확인 중" : "Core 업데이트 중",
+                        sameVersion ? "설치된 Core의 무결성을 확인하고 있습니다." : "최신 Core를 안전하게 내려받고 있습니다.",
+                        false,
+                        24);
+                    var progress = new Progress<int>(value =>
+                    {
+                        var mapped = 24 + (int)Math.Round(Math.Max(0, Math.Min(100, value)) * 0.70D);
+                        _progress.Value = Math.Max(0, Math.Min(94, mapped));
+                        _progressText.Text = _progress.Value + "%";
+                    });
+                    _preparedCore = await installer.EnsureInstalledAsync(
+                        authorization.Release,
+                        api.ProjectHost,
+                        progress,
+                        _cancellation.Token);
+                    _version.Text = "Core " + _preparedCore.Active.CoreVersion;
+                    _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
+                    SetOperationState(
+                        "미터기 준비 완료",
+                        _preparedCore.Changed ? "최신 Core 업데이트와 무결성 검증을 완료했습니다." : "최신 Core와 파일 무결성을 확인했습니다.",
+                        false,
+                        100);
+                    return true;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                SetOperationState("작업 취소됨", "Core 확인 작업이 취소되었습니다.", true, _progress.Value);
+                return false;
+            }
+            catch (Exception error)
+            {
+                SetOperationState("확인이 필요합니다", error.Message, true, _progress.Value);
+                return false;
+            }
+            finally
+            {
+                _operationBusy = false;
+                if (!IsDisposed) RefreshStartButton();
+            }
+        }
+
+        private void RefreshStartButton()
+        {
+            if (_start == null) return;
+            _start.Enabled = _terms.Checked && !_operationBusy && !String.IsNullOrWhiteSpace(_login.SessionToken);
         }
 
         private void SetOperationState(string title, string text, bool error, int progress)

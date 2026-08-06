@@ -4,24 +4,24 @@
 기준일: 2026-08-06
 운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / `MAINTENANCE` / `downloadEnabled=false`
 
-전환 준비 기준: Launcher `1.0.0` / Private Core `0.2.38` / Database `50019` / `meter-ingest` `50019.1` v21 / `meter-staging-ingest` `50019.1` v1 / Core release sync `50019.2` v8
-전환 상태: Stable은 계속 `PREPARE_PRIVATE_PIPELINE`·`MAINTENANCE`다. fail-closed Staging 코드와 Server 채널 계약은 공개 PR `#12` main `62b4c255832d7b3ab457a777c05e51b50092877e`, 비공개 PR `#6` main `0db69a1a51d227e7d0ea7b3b22e79301031a6391`로 병합됐고 Stable/Staging Windows CI를 통과했다. Stable/Staging active Core는 모두 0건이며 Staging RSA key 회전·Core 발행·Windows E2E를 순서대로 완료한 뒤에만 운영 전환한다.
+전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50021` / `meter-ingest` `50021.1` v23 / `meter-staging-ingest` `50021.1` v3 / Launcher release sync v7 / Core release sync v15
+전환 상태: Stable/Staging 다운로드는 모두 `CLOSED`다. Stable active Launcher/Core는 없고 Staging에는 검증된 Core `0.2.38`만 유지한다. Launcher `1.1.0`과 Core `0.2.39`는 소스·로컬 검증 단계이며, 실제 Staging Windows E2E와 승인 전에는 발행하거나 다운로드를 열지 않는다.
 
 ## 사용자 기준 기본 흐름
 
 사용자가 접하는 업데이트 구조는 단순하게 유지한다.
 
 1. WEB에서 공개 Launcher 설치 파일을 한 번 다운로드한다.
-2. Launcher를 설치하고 6자리 PASS KEY를 입력한다.
-3. Launcher가 최신 Core 버전을 확인한다.
-4. 업데이트가 있으면 확인 후 또는 필수 업데이트 정책에 따라 자동으로 다운로드한다.
-5. 검증된 Core를 설치하고 미터기를 실행한다.
+2. Launcher가 자기 최신 버전을 먼저 확인하고, 필요하면 설치기를 검증·실행한 뒤 자동 재실행한다.
+3. 6자리 PASS KEY를 입력한다.
+4. MAIN 화면이 최신 Core를 자동으로 확인·다운로드·검증한다.
+5. 약관 동의 후 `미터기 실행`을 누른다.
 
 GitHub Release의 Launcher 설치 파일, 최신 버전 확인, Core 다운로드·교체가 기본 기반이다. 현재 구조가 더 복잡해 보이는 이유는 사용자 기능을 늘렸기 때문이 아니라 `PASS KEY 사용자만 Core 다운로드`, `Core 비공개 보관`, `RSA 변조 차단`, `실패 시 rollback`, `Stable/Staging 분리`, `Server 다운로드 승인`을 추가했기 때문이다. 이 안전장치는 사용자 화면에 노출되는 단계를 늘리지 않으며, 새 배포 계층은 더 추가하지 않는다.
 
 ## 목표 구조
 
-WEB에는 공개 Launcher 설치기만 둔다. 개인 취미 배포라 Launcher/Setup EXE는 Windows 유료 게시자 코드서명을 사용하지 않으며 SmartScreen의 `알 수 없는 게시자` 경고가 예상된다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. Launcher는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core ZIP과 내부 install manifest는 RSA-3072/SHA-256으로 검증하고 버전별 폴더에 설치한 뒤 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
+WEB에는 공개 Launcher 설치기만 둔다. 개인 취미 배포라 Launcher/Setup EXE는 Windows 유료 게시자 코드서명을 사용하지 않으며 SmartScreen의 `알 수 없는 게시자` 경고가 예상된다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. 실행된 Launcher는 Server의 공개 release manifest와 GitHub 설치 파일의 크기·SHA-256을 확인해 기존 설치기로 자신을 교체하고 자동 재실행한다. 로그인 뒤에는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core ZIP과 내부 install manifest는 RSA-3072/SHA-256으로 검증하고 버전별 폴더에 설치한 뒤 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
 
 ```text
 WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-signed Core manifest
@@ -76,10 +76,10 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 남은 Gate:
 
 1. Staging RSA key `kinojo-core-staging-rsa-2026-03` 공개 계약을 공개 Launcher·Private Core·release sync Edge에 같은 회차로 병합·배포한다.
-2. `PUBLISH_STAGING_CORE_0.2.38` 수동 Gate로 Staging Core를 서명·업로드하고 Staging active row와 Storage hash를 readback한다.
-3. Staging `downloadEnabled`만 열고 CI의 `KINOJO_Meter_Launcher_Staging_1.0.0.exe`로 clean Windows에서 최초 설치·PASS KEY·RSA Core 설치/업데이트·변조 차단·ready handshake·강제 실패 롤백을 검증한다.
+2. `PUBLISH_STAGING_CORE_0.2.39` 수동 Gate로 Staging Core를 서명·업로드하고 Staging active row와 Storage hash를 readback한다.
+3. Staging `downloadEnabled`만 열고 CI의 `KINOJO_Meter_Launcher_Staging_1.1.0.exe`로 clean Windows에서 Launcher 자체 교체·자동 재실행과 PASS KEY 후 RSA Core 자동 설치/업데이트·변조 차단·ready handshake·강제 실패 롤백을 검증한다.
 4. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한 뒤 Staging 다운로드를 다시 닫는다.
-5. 검증 통과 후 private Core `0.2.38` → Launcher `1.0.0` 순서로 Stable ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
+5. 검증 통과 후 private Core `0.2.39` → Launcher `1.1.0` 순서로 Stable ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
 6. Stable `MAINTENANCE`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환해 smoke test하고, 마지막에만 운영 다운로드를 개방한다.
 
 운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.

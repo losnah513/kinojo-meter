@@ -34,6 +34,7 @@
     <Compile Include="LauncherVisualControls.cs" />
     <Compile Include="LauncherApiClient.cs" />
     <Compile Include="LauncherContentClient.cs" />
+    <Compile Include="LauncherUpdateService.cs" />
     <Compile Include="CorePackageInstaller.cs" />
     <Compile Include="CoreReleaseIntegrityVerifier.cs" />
     <Compile Include="LauncherModels.cs" />
