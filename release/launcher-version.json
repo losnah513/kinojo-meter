@@ -15,5 +15,5 @@
   "smartScreenWarningExpected": true,
   "coreDelivery": "SERVER_AUTHORIZED_PRIVATE_STORAGE",
   "coreUpdateAction": "coreUpdateAuthorization",
-  "cutoverState": "PREPARE_PRIVATE_PIPELINE"
+  "cutoverState": "ACTIVE"
 }

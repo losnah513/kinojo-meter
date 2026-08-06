@@ -17,5 +17,5 @@
   "publisherSubject": "",
   "integrityMode": "RSA_SHA256_MANIFEST_V1",
   "signingKeyId": "kinojo-core-rsa-2026-01",
-  "cutoverState": "PREPARE_PRIVATE_PIPELINE"
+  "cutoverState": "ACTIVE"
 }
