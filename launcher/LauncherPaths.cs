@@ -16,6 +16,8 @@ namespace KinojoMeterLauncher
         public static readonly string CoreStaging = Path.Combine(CoreRoot, "staging");
         public static readonly string ActiveCoreFile = Path.Combine(CoreRoot, "active.json");
         public static readonly string DeviceIdFile = Path.Combine(LauncherData, "device.dat");
+        public static readonly string LauncherContentCacheFile = Path.Combine(LauncherData, "content-cache.json");
+        public static readonly string LauncherContentReadFile = Path.Combine(LauncherData, "content-read.json");
 
         public static void EnsureDirectories()
         {

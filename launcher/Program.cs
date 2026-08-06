@@ -10,6 +10,11 @@ namespace KinojoMeterLauncher
     {
         public const string Channel = LauncherBuildProfile.Channel;
 
+        public static bool IsStaging
+        {
+            get { return String.Equals(Channel, "staging", StringComparison.Ordinal); }
+        }
+
         public static string Current
         {
             get
@@ -39,7 +44,33 @@ namespace KinojoMeterLauncher
                 };
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new LauncherForm());
+
+                LauncherLoginResult login;
+                using (var loginForm = new LauncherLoginForm())
+                {
+                    if (loginForm.ShowDialog() != DialogResult.OK || loginForm.LoginResult == null) return;
+                    login = loginForm.LoginResult;
+                }
+
+                var sessionHandedOff = false;
+                try
+                {
+                    using (var launcherForm = new LauncherForm(login))
+                    {
+                        Application.Run(launcherForm);
+                        sessionHandedOff = launcherForm.SessionHandedOff;
+                    }
+                }
+                finally
+                {
+                    if (!sessionHandedOff && login != null && !String.IsNullOrWhiteSpace(login.SessionToken))
+                    {
+                        using (var api = new LauncherApiClient())
+                        {
+                            api.LogoutAsync(login.SessionToken).GetAwaiter().GetResult();
+                        }
+                    }
+                }
             }
         }
     }

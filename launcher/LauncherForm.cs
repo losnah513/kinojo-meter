@@ -1,128 +1,860 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace KinojoMeterLauncher
 {
-    internal sealed class LauncherForm : Form
+    internal sealed class LauncherForm : LauncherWindowForm
     {
-        private readonly TextBox _passKey;
-        private readonly Button _start;
+        private const string KinojoInfoUrl = "https://kinojo.info/";
+        private const string KinojoMeterWebUrl = "https://kinojo.info/meter/";
+        private const string PrivacyUrl = "https://kinojo.info/pages/privacy.html";
+
+        private readonly LauncherLoginResult _login;
+        private readonly LauncherActionButton _start;
+        private readonly CheckBox _terms;
         private readonly Label _status;
+        private readonly Label _statusTitle;
+        private readonly Label _progressText;
         private readonly Label _version;
-        private readonly ProgressBar _progress;
+        private Label _sidebarCore;
+        private readonly LauncherProgressBar _progress;
+        private readonly LauncherCard _launchCard;
+        private readonly LauncherCard _noticeCard;
+        private readonly Label _heroTitle;
+        private readonly Label _heroDescription;
+        private readonly Panel _viewHost;
+        private readonly LauncherBackdrop _mainView;
+        private readonly LauncherBackdrop _feedView;
+        private FlowLayoutPanel _feedList;
+        private Label _feedTitle;
+        private Label _feedStatus;
+        private Label _newsState;
+        private Label _latestUpdateTitle;
+        private Label _latestUpdateSummary;
+        private Label _latestNoticeTitle;
+        private Label _latestNoticeSummary;
+        private Panel _latestUpdateRow;
+        private Panel _latestNoticeRow;
+        private Button _mainTab;
+        private Button _updateTab;
+        private Button _noticeTab;
+        private List<LauncherContentItem> _contentItems = new List<LauncherContentItem>();
+        private HashSet<string> _seenContentIds = new HashSet<string>(StringComparer.Ordinal);
+        private string _activeView = "main";
+        private string _contentStatus = "공지를 불러오는 중";
+        private readonly CancellationTokenSource _contentCancellation = new CancellationTokenSource();
         private CancellationTokenSource _cancellation;
 
-        public LauncherForm()
+        public LauncherForm(LauncherLoginResult login)
         {
+            if (login == null || String.IsNullOrWhiteSpace(login.SessionToken))
+                throw new ArgumentException("로그인 세션이 필요합니다.", "login");
+            _login = login;
+
+            SuspendLayout();
             Text = "KINOJO Meter Launcher" + LauncherBuildProfile.DisplaySuffix + " " + LauncherVersion.Current;
-            ClientSize = new Size(520, 350);
-            MinimumSize = new Size(520, 390);
-            MaximumSize = new Size(520, 390);
+            ClientSize = new Size(1180, 720);
+            MinimumSize = new Size(1120, 680);
             StartPosition = FormStartPosition.CenterScreen;
-            BackColor = Color.FromArgb(248, 250, 252);
+            ForeColor = LauncherPalette.Text;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
+            MaximizeBox = true;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            KeyPreview = true;
 
-            Controls.Add(new Label
+            var root = new TableLayoutPanel
             {
-                Text = "KINOJO METER" + LauncherBuildProfile.DisplaySuffix,
-                ForeColor = Color.FromArgb(37, 99, 235),
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(36, 29)
-            });
-            Controls.Add(new Label
-            {
-                Text = "런처에서 최신 미터기를 준비합니다.",
-                ForeColor = Color.FromArgb(15, 23, 42),
-                Font = new Font("Segoe UI", 18F, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(32, 53)
-            });
-            Controls.Add(new Label
-            {
-                Text = "PASS KEY 인증 후 비공개 Core를 검증·업데이트하고 실행합니다.\r\n업데이트 작업은 미터기 실행 전에 끝나므로 실시간 DPS 연산에는 참여하지 않습니다.",
-                ForeColor = Color.FromArgb(71, 85, 105),
-                Location = new Point(36, 99),
-                Size = new Size(448, 52)
-            });
-            Controls.Add(new Label
-            {
-                Text = "6자리 PASS KEY",
-                ForeColor = Color.FromArgb(71, 85, 105),
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(36, 164)
-            });
-
-            _passKey = new TextBox
-            {
-                Location = new Point(36, 188),
-                Size = new Size(448, 38),
-                MaxLength = 6,
-                CharacterCasing = CharacterCasing.Upper,
-                UseSystemPasswordChar = true,
-                TextAlign = HorizontalAlignment.Center,
-                Font = new Font("Segoe UI", 15F, FontStyle.Bold),
-                BorderStyle = BorderStyle.FixedSingle
+                Dock = DockStyle.Fill,
+                BackColor = LauncherPalette.Window,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
             };
-            _passKey.KeyDown += async delegate(object sender, KeyEventArgs args)
-            {
-                if (args.KeyCode != Keys.Enter) return;
-                args.SuppressKeyPress = true;
-                await StartMeterAsync();
-            };
-            Controls.Add(_passKey);
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 214F));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            Controls.Add(root);
 
-            _progress = new ProgressBar
-            {
-                Location = new Point(36, 241),
-                Size = new Size(448, 8),
-                Minimum = 0,
-                Maximum = 100,
-                Value = 0,
-                Style = ProgressBarStyle.Continuous
-            };
-            Controls.Add(_progress);
+            var sidebar = BuildSidebar();
+            root.Controls.Add(sidebar, 0, 0);
 
-            _status = new Label
+            var workspace = new TableLayoutPanel
             {
-                Text = "PASS KEY를 입력해 주세요.",
-                ForeColor = Color.FromArgb(71, 85, 105),
-                Location = new Point(36, 260),
-                Size = new Size(320, 44)
+                Dock = DockStyle.Fill,
+                BackColor = LauncherPalette.Window,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
             };
-            Controls.Add(_status);
+            workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+            workspace.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            root.Controls.Add(workspace, 1, 0);
+            workspace.Controls.Add(BuildTopbar(), 0, 0);
 
-            _start = new Button
+            _viewHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                BackColor = LauncherPalette.Window
+            };
+            workspace.Controls.Add(_viewHost, 0, 1);
+
+            _mainView = new LauncherBackdrop
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            _viewHost.Controls.Add(_mainView);
+            var content = _mainView;
+
+            var eyebrowText = "KINOJO METER" + (LauncherVersion.IsStaging ? " · 테스트 버전" : "");
+            content.Controls.Add(CreateLabel(
+                eyebrowText,
+                new Font("Segoe UI", 9F, FontStyle.Bold),
+                LauncherPalette.AccentBright,
+                new Point(48, 43),
+                new Size(380, 22)));
+
+            _heroTitle = CreateLabel(
+                "정확한 데미지 연산 엔진으로\r\n정확하게.",
+                new Font("Segoe UI", 24F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(43, 75),
+                new Size(445, 106));
+            content.Controls.Add(_heroTitle);
+
+            _heroDescription = CreateLabel(
+                "레기온을 위한, 레기온만의 미터기.",
+                new Font("Segoe UI", 11F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(48, 191),
+                new Size(455, 40));
+            content.Controls.Add(_heroDescription);
+
+            _noticeCard = BuildNoticeCard();
+            content.Controls.Add(_noticeCard);
+
+            _launchCard = new LauncherCard
+            {
+                Size = new Size(430, 440),
+                BackColor = Color.FromArgb(23, 28, 40),
+                BorderColor = Color.FromArgb(62, 71, 92),
+                CornerRadius = 18,
+                Anchor = AnchorStyles.Right | AnchorStyles.Bottom
+            };
+            content.Controls.Add(_launchCard);
+
+            _launchCard.Controls.Add(CreateLabel(
+                "런처 상태",
+                new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                LauncherPalette.AccentBright,
+                new Point(27, 23),
+                new Size(150, 20)));
+
+            _statusTitle = CreateLabel(
+                "실행 준비",
+                new Font("Segoe UI", 17F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(24, 49),
+                new Size(350, 34));
+            _launchCard.Controls.Add(_statusTitle);
+
+            _status = CreateLabel(
+                "로그인되었습니다. 약관 동의 후 미터기를 실행할 수 있습니다.",
+                new Font("Segoe UI", 9F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(27, 86),
+                new Size(376, 44));
+            _launchCard.Controls.Add(_status);
+
+            _launchCard.Controls.Add(new Panel
+            {
+                BackColor = LauncherPalette.Border,
+                Location = new Point(27, 137),
+                Size = new Size(376, 1)
+            });
+
+            _launchCard.Controls.Add(CreateLabel(
+                "로그인 계정",
+                new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                LauncherPalette.Muted,
+                new Point(27, 154),
+                new Size(210, 20)));
+
+            var accountCard = new Panel
+            {
+                BackColor = Color.FromArgb(17, 21, 31),
+                Location = new Point(27, 178),
+                Size = new Size(376, 56)
+            };
+            accountCard.Controls.Add(CreateLabel(
+                String.IsNullOrWhiteSpace(_login.DisplayName) ? "KINOJO 사용자" : _login.DisplayName,
+                new Font("Segoe UI", 10F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(13, 8),
+                new Size(250, 22)));
+            accountCard.Controls.Add(CreateLabel(
+                "●  PASS KEY 로그인 완료",
+                new Font("Segoe UI", 7.8F, FontStyle.Regular),
+                LauncherPalette.Success,
+                new Point(13, 31),
+                new Size(220, 18)));
+            _launchCard.Controls.Add(accountCard);
+
+            _launchCard.Controls.Add(CreateLabel(
+                "업데이트 진행률",
+                new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                LauncherPalette.Muted,
+                new Point(27, 249),
+                new Size(190, 20)));
+
+            _progressText = CreateLabel(
+                "대기",
+                new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                LauncherPalette.Muted,
+                new Point(325, 249),
+                new Size(78, 20));
+            _progressText.TextAlign = ContentAlignment.TopRight;
+            _launchCard.Controls.Add(_progressText);
+
+            _progress = new LauncherProgressBar
+            {
+                Location = new Point(27, 274),
+                Size = new Size(376, 8),
+                Value = 0
+            };
+            _launchCard.Controls.Add(_progress);
+
+            _version = CreateLabel(
+                CurrentVersionText(),
+                new Font("Segoe UI", 8F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(27, 294),
+                new Size(376, 19));
+            _launchCard.Controls.Add(_version);
+
+            _start = new LauncherActionButton
             {
                 Text = "미터기 실행",
-                Location = new Point(354, 263),
-                Size = new Size(130, 42),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(37, 99, 235),
-                ForeColor = Color.White,
-                Cursor = Cursors.Hand
+                Location = new Point(27, 326),
+                Size = new Size(376, 52),
+                Enabled = false
             };
-            _start.FlatAppearance.BorderSize = 0;
             _start.Click += async delegate { await StartMeterAsync(); };
-            Controls.Add(_start);
+            _launchCard.Controls.Add(_start);
 
-            _version = new Label
+            _terms = new CheckBox
             {
-                Text = CurrentVersionText(),
-                ForeColor = Color.FromArgb(100, 116, 139),
-                Font = new Font("Segoe UI", 8F),
-                AutoSize = true,
-                Location = new Point(36, 321)
+                Text = "모든 약관에 동의",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
+                ForeColor = LauncherPalette.Text,
+                BackColor = Color.Transparent,
+                Location = new Point(27, 387),
+                Size = new Size(190, 24),
+                Cursor = Cursors.Hand,
+                FlatStyle = FlatStyle.Flat
             };
-            Controls.Add(_version);
-            FormClosing += delegate { _cancellation?.Cancel(); };
-            Shown += delegate { _passKey.Focus(); };
+            _terms.CheckedChanged += delegate
+            {
+                if (_start.Text == "미터기 실행") _start.Enabled = _terms.Checked;
+                if (_terms.Checked && _progress.Value == 0)
+                    SetOperationState("실행 준비", "미터기 실행을 누르면 최신 버전을 확인합니다.", false, 0);
+            };
+            _launchCard.Controls.Add(_terms);
+
+            var termsLink = new LinkLabel
+            {
+                Text = "약관 보기",
+                Font = new Font("Segoe UI", 8F, FontStyle.Regular),
+                LinkColor = LauncherPalette.AccentBright,
+                ActiveLinkColor = Color.White,
+                VisitedLinkColor = LauncherPalette.AccentBright,
+                BackColor = Color.Transparent,
+                Location = new Point(315, 390),
+                Size = new Size(88, 20),
+                TextAlign = ContentAlignment.TopRight,
+                TabStop = true
+            };
+            termsLink.LinkClicked += delegate { OpenExternalLink(PrivacyUrl); };
+            _launchCard.Controls.Add(termsLink);
+
+            var securityHint = CreateLabel(
+                "RSA 서명과 파일 무결성을 확인한 뒤 실행합니다.",
+                new Font("Segoe UI", 7.8F, FontStyle.Regular),
+                Color.FromArgb(126, 137, 156),
+                new Point(27, 417),
+                new Size(376, 18));
+            securityHint.TextAlign = ContentAlignment.TopCenter;
+            _launchCard.Controls.Add(securityHint);
+
+            content.Resize += delegate { LayoutContent(content); };
+            LayoutContent(content);
+
+            _feedView = BuildFeedView();
+            _feedView.Visible = false;
+            _viewHost.Controls.Add(_feedView);
+            _mainView.BringToFront();
+
+            _mainTab.Click += delegate { ShowView("main"); };
+            _updateTab.Click += delegate { ShowView("update"); };
+            _noticeTab.Click += delegate { ShowView("notice"); };
+
+            FormClosing += delegate
+            {
+                _contentCancellation.Cancel();
+                if (_cancellation != null) _cancellation.Cancel();
+            };
+            Shown += async delegate { await LoadContentAsync(); };
+            ResumeLayout(true);
+        }
+
+        public bool SessionHandedOff { get; private set; }
+
+        private Panel BuildSidebar()
+        {
+            var sidebar = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                BackColor = LauncherPalette.Sidebar
+            };
+
+            var brandBar = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 64,
+                BackColor = LauncherPalette.Sidebar
+            };
+            AttachTitleBar(brandBar);
+            brandBar.Controls.Add(new Label
+            {
+                Text = "K",
+                BackColor = LauncherPalette.Accent,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Location = new Point(20, 18),
+                Size = new Size(28, 28)
+            });
+            brandBar.Controls.Add(CreateLabel(
+                "KINOJO",
+                new Font("Segoe UI", 12F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(57, 19),
+                new Size(104, 28)));
+            sidebar.Controls.Add(brandBar);
+
+            if (LauncherVersion.IsStaging)
+            {
+                sidebar.Controls.Add(CreateLabel(
+                    "테스트 버전",
+                    new Font("Segoe UI", 7F, FontStyle.Bold),
+                    LauncherPalette.AccentBright,
+                    new Point(20, 73),
+                    new Size(174, 18)));
+            }
+
+            sidebar.Controls.Add(CreateSidebarButton("●   MAIN", 101, true));
+            var infoHome = CreateSidebarButton("↗   KINOJO INFO 홈", 151, false);
+            infoHome.Cursor = Cursors.Hand;
+            infoHome.Click += delegate { OpenExternalLink(KinojoInfoUrl); };
+            sidebar.Controls.Add(infoHome);
+            var meterWeb = CreateSidebarButton("↗   KINOJO METER 웹", 201, false);
+            meterWeb.Cursor = Cursors.Hand;
+            meterWeb.Click += delegate { OpenExternalLink(KinojoMeterWebUrl); };
+            sidebar.Controls.Add(meterWeb);
+
+            var coreCard = new LauncherCard
+            {
+                BackColor = Color.FromArgb(18, 23, 33),
+                BorderColor = Color.FromArgb(40, 49, 65),
+                CornerRadius = 12,
+                Location = new Point(16, 603),
+                Size = new Size(182, 92),
+                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
+            };
+            sidebar.Controls.Add(coreCard);
+            coreCard.Controls.Add(CreateLabel(
+                "설치된 버전",
+                new Font("Segoe UI", 8F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(14, 14),
+                new Size(150, 18)));
+            _sidebarCore = CreateLabel(
+                InstalledCoreText(),
+                new Font("Segoe UI", 10F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(14, 35),
+                new Size(150, 22));
+            coreCard.Controls.Add(_sidebarCore);
+            coreCard.Controls.Add(CreateLabel(
+                "●  업데이트 확인 준비됨",
+                new Font("Segoe UI", 7.5F, FontStyle.Regular),
+                LauncherPalette.Success,
+                new Point(14, 62),
+                new Size(154, 18)));
+            return sidebar;
+        }
+
+        private Panel BuildTopbar()
+        {
+            var topbar = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                BackColor = LauncherPalette.Topbar
+            };
+            AttachTitleBar(topbar);
+            _mainTab = CreateTopTab("MAIN", 22, true);
+            _updateTab = CreateTopTab("업데이트", 104, false);
+            _noticeTab = CreateTopTab("공지", 202, false);
+            topbar.Controls.Add(_mainTab);
+            topbar.Controls.Add(_updateTab);
+            topbar.Controls.Add(_noticeTab);
+
+            var rightHost = new Panel
+            {
+                Dock = DockStyle.Right,
+                Width = 410,
+                BackColor = LauncherPalette.Topbar
+            };
+            topbar.Controls.Add(rightHost);
+            var windowControls = CreateWindowControls(true);
+            windowControls.Dock = DockStyle.None;
+            windowControls.Location = new Point(272, 0);
+            rightHost.Controls.Add(windowControls);
+            rightHost.Controls.Add(CreateLabel(
+                "●  런처 준비됨",
+                new Font("Segoe UI", 8F, FontStyle.Bold),
+                LauncherPalette.Success,
+                new Point(0, 21),
+                new Size(135, 22)));
+            var launcherVersion = CreateLabel(
+                "Launcher " + LauncherVersion.Current,
+                new Font("Segoe UI", 8F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(137, 21),
+                new Size(122, 22));
+            launcherVersion.TextAlign = ContentAlignment.TopRight;
+            rightHost.Controls.Add(launcherVersion);
+            return topbar;
+        }
+
+        private LauncherCard BuildNoticeCard()
+        {
+            var card = new LauncherCard
+            {
+                Size = new Size(410, 190),
+                BackColor = Color.FromArgb(18, 23, 34),
+                BorderColor = Color.FromArgb(48, 58, 76),
+                CornerRadius = 16,
+                Anchor = AnchorStyles.Left | AnchorStyles.Bottom
+            };
+            card.Controls.Add(CreateLabel(
+                "최신 소식",
+                new Font("Segoe UI", 12F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(20, 18),
+                new Size(240, 28)));
+            _newsState = CreateLabel(
+                "연동 준비 중",
+                new Font("Segoe UI", 8F, FontStyle.Bold),
+                LauncherPalette.AccentBright,
+                new Point(288, 21),
+                new Size(100, 22));
+            _newsState.TextAlign = ContentAlignment.TopRight;
+            card.Controls.Add(_newsState);
+
+            _latestUpdateRow = CreateNewsPlaceholder("업데이트 내역", "새 버전 소식이 이곳에 표시됩니다.", 58, out _latestUpdateTitle, out _latestUpdateSummary);
+            BindNewsRow(_latestUpdateRow);
+            card.Controls.Add(_latestUpdateRow);
+            _latestNoticeRow = CreateNewsPlaceholder("KINOJO 공지", "중요 안내를 런처에서 바로 확인할 수 있습니다.", 116, out _latestNoticeTitle, out _latestNoticeSummary);
+            BindNewsRow(_latestNoticeRow);
+            card.Controls.Add(_latestNoticeRow);
+            return card;
+        }
+
+        private static Panel CreateNewsPlaceholder(string title, string description, int top, out Label titleLabel, out Label summaryLabel)
+        {
+            var row = new Panel
+            {
+                BackColor = Color.FromArgb(25, 31, 44),
+                Location = new Point(20, top),
+                Size = new Size(370, 48)
+            };
+            titleLabel = CreateLabel(
+                title,
+                new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(12, 7),
+                new Size(330, 18));
+            summaryLabel = CreateLabel(
+                description,
+                new Font("Segoe UI", 7.8F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(12, 26),
+                new Size(342, 16));
+            row.Controls.Add(titleLabel);
+            row.Controls.Add(summaryLabel);
+            return row;
+        }
+
+        private void BindNewsRow(Panel row)
+        {
+            row.Cursor = Cursors.Hand;
+            row.Click += delegate { OpenContentItem(row.Tag as LauncherContentItem); };
+            foreach (Control child in row.Controls)
+            {
+                child.Cursor = Cursors.Hand;
+                child.Click += delegate { OpenContentItem(row.Tag as LauncherContentItem); };
+            }
+        }
+
+        private LauncherBackdrop BuildFeedView()
+        {
+            var view = new LauncherBackdrop
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            _feedTitle = CreateLabel(
+                "업데이트",
+                new Font("Segoe UI", 23F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(43, 37),
+                new Size(500, 46));
+            view.Controls.Add(_feedTitle);
+            _feedStatus = CreateLabel(
+                "공지를 불러오는 중입니다.",
+                new Font("Segoe UI", 9F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(48, 82),
+                new Size(600, 24));
+            view.Controls.Add(_feedStatus);
+
+            _feedList = new FlowLayoutPanel
+            {
+                Location = new Point(48, 121),
+                Size = new Size(820, 490),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = Color.Transparent,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = true,
+                Margin = Padding.Empty,
+                Padding = new Padding(0, 0, 8, 0)
+            };
+            view.Controls.Add(_feedList);
+            view.Resize += delegate
+            {
+                _feedList.Size = new Size(
+                    Math.Max(500, view.ClientSize.Width - 96),
+                    Math.Max(280, view.ClientSize.Height - 153));
+                ResizeFeedRows();
+            };
+            return view;
+        }
+
+        private async Task LoadContentAsync()
+        {
+            _seenContentIds = LauncherContentClient.ReadSeenIds();
+            using (var client = new LauncherContentClient())
+            {
+                var cached = client.LoadCached();
+                if (cached != null) ApplyContentResult(cached);
+                var result = await client.LoadAsync(_contentCancellation.Token);
+                if (_contentCancellation.IsCancellationRequested || IsDisposed || Disposing) return;
+                ApplyContentResult(result);
+            }
+        }
+
+        private void ApplyContentResult(LauncherContentLoadResult result)
+        {
+            _contentItems = result == null || result.Items == null
+                ? new List<LauncherContentItem>()
+                : result.Items;
+            _contentStatus = result == null ? "공지를 불러오지 못했습니다" : result.Status;
+            UpdateNewsCard();
+            UpdateUnreadTabs();
+            if (_activeView != "main") RenderFeedItems(_activeView);
+        }
+
+        private void ShowView(string view)
+        {
+            _activeView = view == "update" || view == "notice" ? view : "main";
+            var main = _activeView == "main";
+            _mainView.Visible = main;
+            _feedView.Visible = !main;
+            if (main) _mainView.BringToFront();
+            else
+            {
+                _feedView.BringToFront();
+                RenderFeedItems(_activeView);
+                MarkVisibleItemsSeen(_activeView);
+            }
+            SetTabState(_mainTab, main);
+            SetTabState(_updateTab, _activeView == "update");
+            SetTabState(_noticeTab, _activeView == "notice");
+        }
+
+        private void UpdateNewsCard()
+        {
+            _newsState.Text = _contentStatus;
+            _newsState.ForeColor = _contentStatus == "최신 공지" ? LauncherPalette.Success : LauncherPalette.Muted;
+            ApplyNewsRow(
+                _latestUpdateRow,
+                _latestUpdateTitle,
+                _latestUpdateSummary,
+                _contentItems.FirstOrDefault(item => item.Type == "update"),
+                "업데이트 소식이 없습니다.");
+            ApplyNewsRow(
+                _latestNoticeRow,
+                _latestNoticeTitle,
+                _latestNoticeSummary,
+                _contentItems.FirstOrDefault(item => item.Type == "notice"),
+                "등록된 공지가 없습니다.");
+        }
+
+        private static void ApplyNewsRow(Panel row, Label title, Label summary, LauncherContentItem item, string empty)
+        {
+            row.Tag = item;
+            row.Cursor = item == null ? Cursors.Default : Cursors.Hand;
+            title.Cursor = row.Cursor;
+            summary.Cursor = row.Cursor;
+            title.Text = item == null ? empty : item.Title;
+            summary.Text = item == null ? "" : item.Summary;
+            title.ForeColor = item == null ? LauncherPalette.Muted : LauncherPalette.Text;
+        }
+
+        private void RenderFeedItems(string type)
+        {
+            _feedTitle.Text = type == "notice" ? "공지" : "업데이트";
+            var items = _contentItems.Where(item => item.Type == type).ToList();
+            _feedStatus.Text = items.Count == 0
+                ? _contentStatus + " · 표시할 항목이 없습니다."
+                : _contentStatus + " · " + items.Count + "개";
+            _feedList.SuspendLayout();
+            try
+            {
+                while (_feedList.Controls.Count > 0)
+                {
+                    var control = _feedList.Controls[0];
+                    _feedList.Controls.RemoveAt(0);
+                    control.Dispose();
+                }
+                if (items.Count == 0)
+                {
+                    _feedList.Controls.Add(CreateLabel(
+                        "새로운 " + (type == "notice" ? "공지" : "업데이트") + "가 등록되면 이곳에 표시됩니다.",
+                        new Font("Segoe UI", 10F, FontStyle.Regular),
+                        LauncherPalette.Muted,
+                        Point.Empty,
+                        new Size(620, 40)));
+                }
+                else
+                {
+                    foreach (var item in items) _feedList.Controls.Add(CreateFeedRow(item));
+                }
+                ResizeFeedRows();
+            }
+            finally
+            {
+                _feedList.ResumeLayout(true);
+            }
+        }
+
+        private LauncherCard CreateFeedRow(LauncherContentItem item)
+        {
+            var row = new LauncherCard
+            {
+                BackColor = Color.FromArgb(20, 25, 36),
+                BorderColor = Color.FromArgb(48, 58, 76),
+                CornerRadius = 14,
+                Width = Math.Max(500, _feedList.ClientSize.Width - 28),
+                Height = 118,
+                Margin = new Padding(0, 0, 0, 12),
+                Tag = item
+            };
+            row.Controls.Add(CreateLabel(
+                item.Pinned ? "중요" : (item.Type == "notice" ? "공지" : "업데이트"),
+                new Font("Segoe UI", 7.5F, FontStyle.Bold),
+                item.Pinned ? LauncherPalette.AccentBright : LauncherPalette.Muted,
+                new Point(18, 15),
+                new Size(72, 18)));
+            row.Controls.Add(CreateLabel(
+                item.Title,
+                new Font("Segoe UI", 11F, FontStyle.Bold),
+                LauncherPalette.Text,
+                new Point(18, 37),
+                new Size(570, 26)));
+            row.Controls.Add(CreateLabel(
+                item.Summary,
+                new Font("Segoe UI", 8.5F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(18, 68),
+                new Size(620, 38)));
+            var metadata = CreateLabel(
+                item.PublishedAt.ToLocalTime().ToString("yyyy.MM.dd") + (String.IsNullOrWhiteSpace(item.Version) ? "" : "  ·  v" + item.Version),
+                new Font("Segoe UI", 8F, FontStyle.Regular),
+                LauncherPalette.Muted,
+                new Point(605, 17),
+                new Size(130, 20));
+            metadata.TextAlign = ContentAlignment.TopRight;
+            metadata.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            row.Controls.Add(metadata);
+            var open = new Button
+            {
+                Text = "자세히 보기  ↗",
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                ForeColor = LauncherPalette.AccentBright,
+                BackColor = Color.FromArgb(28, 35, 49),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(118, 32),
+                Location = new Point(617, 61),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            open.FlatAppearance.BorderSize = 0;
+            open.Click += delegate { OpenContentItem(item); };
+            row.Controls.Add(open);
+            return row;
+        }
+
+        private void ResizeFeedRows()
+        {
+            if (_feedList == null) return;
+            var width = Math.Max(500, _feedList.ClientSize.Width - 28);
+            foreach (Control control in _feedList.Controls)
+            {
+                var card = control as LauncherCard;
+                if (card != null) card.Width = width;
+            }
+        }
+
+        private void MarkVisibleItemsSeen(string type)
+        {
+            var changed = false;
+            foreach (var item in _contentItems.Where(item => item.Type == type))
+                changed |= _seenContentIds.Add(item.Id);
+            if (changed) LauncherContentClient.SaveSeenIds(_seenContentIds);
+            UpdateUnreadTabs();
+        }
+
+        private void OpenContentItem(LauncherContentItem item)
+        {
+            if (item == null) return;
+            if (_seenContentIds.Add(item.Id)) LauncherContentClient.SaveSeenIds(_seenContentIds);
+            UpdateUnreadTabs();
+            OpenExternalLink(item.Url);
+        }
+
+        private void UpdateUnreadTabs()
+        {
+            var updates = _contentItems.Count(item => item.Type == "update" && !_seenContentIds.Contains(item.Id));
+            var notices = _contentItems.Count(item => item.Type == "notice" && !_seenContentIds.Contains(item.Id));
+            _updateTab.Text = updates > 0 ? "업데이트  •" : "업데이트";
+            _noticeTab.Text = notices > 0 ? "공지  •" : "공지";
+        }
+
+        private static void SetTabState(Button button, bool active)
+        {
+            var style = active ? FontStyle.Bold : FontStyle.Regular;
+            if (button.Font.Style != style)
+            {
+                var previous = button.Font;
+                button.Font = new Font("Segoe UI", 9F, style);
+                previous.Dispose();
+            }
+            button.ForeColor = active ? LauncherPalette.Text : LauncherPalette.Muted;
+            button.BackColor = active ? Color.FromArgb(24, 30, 43) : LauncherPalette.Topbar;
+        }
+
+        private void LayoutContent(Control content)
+        {
+            const int margin = 32;
+            _launchCard.Location = new Point(
+                Math.Max(16, content.ClientSize.Width - _launchCard.Width - margin),
+                Math.Max(20, content.ClientSize.Height - _launchCard.Height - margin));
+
+            var noticeWidth = Math.Max(300, Math.Min(410, _launchCard.Left - 80));
+            _noticeCard.Width = noticeWidth;
+            _noticeCard.Location = new Point(48, Math.Max(300, content.ClientSize.Height - _noticeCard.Height - margin));
+            foreach (Control child in _noticeCard.Controls)
+            {
+                if (child is Panel) child.Width = Math.Max(240, noticeWidth - 40);
+            }
+
+            var heroWidth = Math.Max(390, _launchCard.Left - 68);
+            _heroTitle.Width = heroWidth;
+            _heroDescription.Width = heroWidth;
+        }
+
+        private static Label CreateLabel(string text, Font font, Color color, Point location, Size size)
+        {
+            return new Label
+            {
+                Text = text,
+                Font = font,
+                ForeColor = color,
+                BackColor = Color.Transparent,
+                Location = location,
+                Size = size,
+                AutoEllipsis = true,
+                UseCompatibleTextRendering = false
+            };
+        }
+
+        private static Button CreateSidebarButton(string text, int top, bool active)
+        {
+            var button = new Button
+            {
+                Text = text,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(14, 0, 0, 0),
+                Font = new Font("Segoe UI", 9F, active ? FontStyle.Bold : FontStyle.Regular),
+                ForeColor = active ? LauncherPalette.Text : LauncherPalette.Muted,
+                BackColor = active ? Color.FromArgb(37, 44, 61) : LauncherPalette.Sidebar,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(12, top),
+                Size = new Size(190, 42),
+                Cursor = Cursors.Default,
+                TabStop = false
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = active ? Color.FromArgb(42, 50, 69) : Color.FromArgb(23, 29, 41);
+            return button;
+        }
+
+        private static Button CreateTopTab(string text, int left, bool active)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Font = new Font("Segoe UI", 9F, active ? FontStyle.Bold : FontStyle.Regular),
+                ForeColor = active ? LauncherPalette.Text : LauncherPalette.Muted,
+                BackColor = active ? Color.FromArgb(24, 30, 43) : LauncherPalette.Topbar,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(left, 12),
+                Size = new Size(text.Length * 18 + 34, 40),
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(31, 38, 53);
+            return button;
         }
 
         private string CurrentVersionText()
@@ -130,106 +862,127 @@ namespace KinojoMeterLauncher
             using (var installer = new CorePackageInstaller())
             {
                 var active = installer.ReadActiveState();
-                return "Launcher " + LauncherVersion.Current + " · " + LauncherVersion.Channel.ToUpperInvariant() + " · Core " + (active == null ? "설치 전" : active.CoreVersion);
+                var channel = LauncherVersion.IsStaging ? "  ·  테스트 버전" : "";
+                return "Launcher " + LauncherVersion.Current + channel + "  ·  Core " + (active == null ? "설치 전" : active.CoreVersion);
+            }
+        }
+
+        private string InstalledCoreText()
+        {
+            using (var installer = new CorePackageInstaller())
+            {
+                var active = installer.ReadActiveState();
+                return active == null ? "Core 설치 전" : "Core " + active.CoreVersion;
             }
         }
 
         private async Task StartMeterAsync()
         {
-            if (!_start.Enabled) return;
-            var passKey = (_passKey.Text ?? "").Trim().ToUpperInvariant();
-            if (passKey.Length != 6)
+            if (!_terms.Checked)
             {
-                SetStatus("PASS KEY 6자리를 입력해 주세요.", true);
-                _passKey.Focus();
+                SetOperationState("약관 동의 필요", "모든 약관에 동의한 뒤 미터기를 실행해 주세요.", true, _progress.Value);
+                return;
+            }
+            if (!_start.Enabled) return;
+            if (String.IsNullOrWhiteSpace(_login.SessionToken))
+            {
+                SetOperationState("로그인 만료", "런처를 다시 실행해 PASS KEY로 로그인해 주세요.", true, 0);
                 return;
             }
 
             _start.Enabled = false;
-            _passKey.Enabled = false;
+            _start.Text = "KINOJO Meter 준비 중...";
+            _terms.Enabled = false;
+            _progress.Error = false;
             _progress.Value = 0;
             _cancellation = new CancellationTokenSource();
-            var sessionToken = "";
             try
             {
-                SetStatus("KINOJO Server에서 이용 권한을 확인하는 중입니다.", false);
                 using (var api = new LauncherApiClient())
                 using (var installer = new CorePackageInstaller())
                 {
-                    try
+                    var installationId = LauncherPaths.GetOrCreateInstallationId();
+                    var current = installer.ReadActiveState();
+                    SetOperationState("최신 버전 확인 중", "설치된 Core와 최신 배포 버전을 비교하고 있습니다.", false, 16);
+                    var authorization = await api.AuthorizeCoreUpdateAsync(
+                        _login.SessionToken,
+                        installationId,
+                        current == null ? "" : current.CoreVersion);
+                    if (!authorization.Authorized || authorization.Release == null)
+                        throw new InvalidOperationException(String.IsNullOrWhiteSpace(authorization.Message)
+                            ? "현재 Core 다운로드가 허용되지 않았습니다."
+                            : authorization.Message);
+
+                    var sameVersion = current != null && String.Equals(current.CoreVersion, authorization.Release.CoreVersion, StringComparison.Ordinal);
+                    SetOperationState(
+                        sameVersion ? "설치 상태 확인 중" : "업데이트 다운로드 중",
+                        sameVersion ? "설치된 Core의 무결성을 확인하고 있습니다." : "최신 Core를 안전하게 내려받고 있습니다.",
+                        false,
+                        28);
+                    var progress = new Progress<int>(value =>
                     {
-                        var login = await api.LoginAsync(passKey);
-                        sessionToken = login.SessionToken;
-                        if (String.IsNullOrWhiteSpace(sessionToken)) throw new InvalidOperationException("Server 세션을 받지 못했습니다.");
-                        _passKey.Clear();
+                        var mapped = 28 + (int)Math.Round(Math.Max(0, Math.Min(100, value)) * 0.57D);
+                        _progress.Value = Math.Max(0, Math.Min(85, mapped));
+                        _progressText.Text = _progress.Value + "%";
+                    });
+                    var install = await installer.EnsureInstalledAsync(
+                        authorization.Release,
+                        api.ProjectHost,
+                        progress,
+                        _cancellation.Token);
 
-                        var installationId = LauncherPaths.GetOrCreateInstallationId();
-                        var current = installer.ReadActiveState();
-                        SetStatus("최신 Core 버전과 운영 상태를 확인하는 중입니다.", false);
-                        var authorization = await api.AuthorizeCoreUpdateAsync(
-                            sessionToken,
-                            installationId,
-                            current == null ? "" : current.CoreVersion);
-                        if (!authorization.Authorized || authorization.Release == null)
-                            throw new InvalidOperationException(String.IsNullOrWhiteSpace(authorization.Message)
-                                ? "현재 Core 다운로드가 허용되지 않았습니다."
-                                : authorization.Message);
-
-                        SetStatus(current != null && String.Equals(current.CoreVersion, authorization.Release.CoreVersion, StringComparison.Ordinal)
-                            ? "설치된 Core 무결성을 확인하는 중입니다."
-                            : "최신 Core를 안전하게 내려받는 중입니다.", false);
-                        var progress = new Progress<int>(value =>
-                        {
-                            _progress.Value = Math.Max(_progress.Minimum, Math.Min(_progress.Maximum, value));
-                        });
-                        var install = await installer.EnsureInstalledAsync(
-                            authorization.Release,
-                            api.ProjectHost,
-                            progress,
-                            _cancellation.Token);
-
-                        SetStatus("Core 실행을 확인하는 중입니다.", false);
-                        await installer.LaunchAndVerifyAsync(install, login, installationId);
-                        _version.Text = "Launcher " + LauncherVersion.Current + " · " + LauncherVersion.Channel.ToUpperInvariant() + " · Core " + install.Active.CoreVersion;
-                        sessionToken = ""; // Core가 stdin으로 세션을 인계받았으므로 Launcher는 폐기한다.
-                        SetStatus("KINOJO Meter가 실행되었습니다.", false);
-                        _progress.Value = 100;
-                        await Task.Delay(350);
-                        Close();
-                    }
-                    catch
-                    {
-                        await api.LogoutAsync(sessionToken);
-                        sessionToken = "";
-                        throw;
-                    }
+                    SetOperationState("미터기 실행 확인 중", "Core 실행과 준비 신호를 확인하고 있습니다.", false, 92);
+                    await installer.LaunchAndVerifyAsync(install, _login, installationId);
+                    _version.Text = "Launcher " + LauncherVersion.Current + "  ·  Core " + install.Active.CoreVersion;
+                    _sidebarCore.Text = "Core " + install.Active.CoreVersion;
+                    SessionHandedOff = true;
+                    _login.SessionToken = "";
+                    SetOperationState("실행 완료", "KINOJO Meter가 정상적으로 실행되었습니다.", false, 100);
+                    await Task.Delay(500);
+                    Close();
                 }
             }
             catch (OperationCanceledException)
             {
-                SetStatus("작업이 취소되었습니다.", true);
+                SetOperationState("작업 취소됨", "요청한 작업이 취소되었습니다.", true, _progress.Value);
             }
-            catch (Exception ex)
+            catch (Exception error)
             {
-                SetStatus(ex.Message, true);
+                SetOperationState("확인이 필요합니다", error.Message, true, _progress.Value);
             }
             finally
             {
-                sessionToken = "";
-                _passKey.Clear();
                 if (!IsDisposed)
                 {
-                    _start.Enabled = true;
-                    _passKey.Enabled = true;
-                    _passKey.Focus();
+                    _start.Text = "미터기 실행";
+                    _start.Enabled = _terms.Checked && !String.IsNullOrWhiteSpace(_login.SessionToken);
+                    _terms.Enabled = true;
                 }
             }
         }
 
-        private void SetStatus(string text, bool error)
+        private void SetOperationState(string title, string text, bool error, int progress)
         {
+            _statusTitle.Text = String.IsNullOrWhiteSpace(title) ? "런처 상태" : title.Trim();
             _status.Text = String.IsNullOrWhiteSpace(text) ? "-" : text.Trim();
-            _status.ForeColor = error ? Color.FromArgb(185, 28, 28) : Color.FromArgb(37, 99, 235);
+            _status.ForeColor = error ? LauncherPalette.Error : LauncherPalette.Muted;
+            _statusTitle.ForeColor = error ? LauncherPalette.Error : LauncherPalette.Text;
+            _progress.Error = error;
+            _progress.Value = Math.Max(0, Math.Min(100, progress));
+            _progressText.Text = error ? "오류" : (_progress.Value >= 100 ? "완료" : (_progress.Value == 0 ? "대기" : _progress.Value + "%"));
+            _progressText.ForeColor = error ? LauncherPalette.Error : (_progress.Value >= 100 ? LauncherPalette.Success : LauncherPalette.Muted);
+        }
+
+        private static void OpenExternalLink(string url)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch
+            {
+                MessageBox.Show("웹 브라우저를 열지 못했습니다.\r\n\r\n" + url, "KINOJO Meter", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
     }
 }

@@ -34,6 +34,11 @@ namespace KinojoMeterLauncher
                 Run("reject Windows ADS path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("KINOJO.Meter.exe:payload", false)));
                 Run("reject rooted path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("C:\\Windows\\system32.dll", false)));
                 Run("reject reserved device path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("NUL.txt", false)));
+                Run("accept Launcher content feed", VerifyLauncherContentFeed);
+                Run("filter cross-channel Launcher content", VerifyLauncherContentChannelFilter);
+                Run("reject Launcher content wrong host", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(rows => rows[0]["url"] = "https://example.com/notice"))));
+                Run("reject duplicate Launcher content id", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(rows => rows.Add(new Dictionary<string, object>(rows[0]))))));
+                Run("reject unsupported Launcher content schema", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(null, 2))));
                 using (var signingKey = new RSACryptoServiceProvider(3072))
                 {
                     signingKey.PersistKeyInCsp = false;
@@ -67,6 +72,58 @@ namespace KinojoMeterLauncher
             if (!String.Equals(LauncherBuildProfile.FunctionName, expectedFunction, StringComparison.Ordinal) ||
                 !String.Equals(LauncherBuildProfile.DataFolderName, expectedFolder, StringComparison.Ordinal))
                 throw new InvalidOperationException("Launcher channel profile is not compile-time bound.");
+        }
+
+        private static void VerifyLauncherContentFeed()
+        {
+            var result = LauncherContentClient.ParseForTest(ContentFeedJson(null));
+            if (result == null || result.Items == null || result.Items.Count != 1 || result.Items[0].Id != "test-update")
+                throw new InvalidOperationException("Launcher content feed was not parsed.");
+        }
+
+        private static void VerifyLauncherContentChannelFilter()
+        {
+            var other = LauncherVersion.Channel == "staging" ? "stable" : "staging";
+            var result = LauncherContentClient.ParseForTest(ContentFeedJson(rows => rows.Add(new Dictionary<string, object>
+            {
+                { "id", "other-channel" },
+                { "type", "notice" },
+                { "channel", other },
+                { "pinned", false },
+                { "title", "Other channel" },
+                { "summary", "Must be filtered" },
+                { "publishedAt", "2026-08-06T14:00:00+09:00" },
+                { "version", "" },
+                { "url", "https://kinojo.info/meter/" }
+            })));
+            if (result.Items.Count != 1 || result.Items.Any(item => item.Id == "other-channel"))
+                throw new InvalidOperationException("Cross-channel Launcher content was not filtered.");
+        }
+
+        private static string ContentFeedJson(Action<List<Dictionary<string, object>>> mutate, int schemaVersion = 1)
+        {
+            var rows = new List<Dictionary<string, object>>
+            {
+                new Dictionary<string, object>
+                {
+                    { "id", "test-update" },
+                    { "type", "update" },
+                    { "channel", "all" },
+                    { "pinned", true },
+                    { "title", "Test update" },
+                    { "summary", "Validated Launcher content" },
+                    { "publishedAt", "2026-08-06T14:00:00+09:00" },
+                    { "version", "1.0.0" },
+                    { "url", "https://kinojo.info/meter/" }
+                }
+            };
+            if (mutate != null) mutate(rows);
+            return new JavaScriptSerializer().Serialize(new Dictionary<string, object>
+            {
+                { "schemaVersion", schemaVersion },
+                { "updatedAt", "2026-08-06T14:00:00+09:00" },
+                { "items", rows }
+            });
         }
 
         private static void VerifyPackage(string root, bool unmanaged, bool duplicate, bool wrongManifestHash)
