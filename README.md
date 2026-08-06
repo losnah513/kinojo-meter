@@ -2,10 +2,10 @@
 
 
 기준일: 2026-08-06
-운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / Stable 활성 Launcher·Core 없음 / `RANK_ALLOWLIST [3,4,5]`
+운영 기준: Stable Launcher `1.1.0` / Stable Private Core `0.2.39` / 공개 통계·관측 SQL `50015` / `RANK_ALLOWLIST [3,4,5]`
 
 전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
-전환 상태: Stable 운영 모드는 관리자 설정으로 3·4·5등급 허용이지만 활성 Launcher·Core가 없어 정식 배포 전이다. Staging에는 Launcher `1.1.0`과 Core `0.2.39`를 활성화했으며, 실제 Windows E2E는 보류하고 Staging 다운로드는 다시 `CLOSED`로 닫았다.
+전환 상태: Stable Launcher `1.1.0`과 Core `0.2.39`를 Core → Launcher 순서로 발행했고 Server `downloadReady=true`를 확인했다. 운영 모드는 관리자 설정 `RANK_ALLOWLIST [3,4,5]`다. Staging은 같은 버전을 유지하되 실제 Windows E2E를 보류하고 `CLOSED`로 닫았다.
 
 ## 사용자 기준 기본 흐름
 
@@ -43,8 +43,8 @@ WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-sig
 |---|---|---:|---|
 | Launcher | 이 공개 저장소의 `launcher/**` → Stable `launcher-v*` / E2E `launcher-staging-v*` GitHub Release | Stable 공개 / Staging 사전 릴리스 | 미서명 취미 배포 명시, 원격 size/SHA-256, GitHub OIDC, Server readback |
 | Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | RSA-3072 manifest 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
-| Server | SQL `50016~50019`, `meter-ingest`, `meter-staging-ingest`, release sync | 내부 | 채널 결합·전용 PASS KEY/RSA·Edge health readback 완료. Stable 활성화는 clean Windows E2E 통과 후 |
-| WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher·Core·Server readback 완료 후 마지막 전환 |
+| Server | SQL `50016~50022`, `meter-ingest`, `meter-staging-ingest`, release sync | 내부 | Stable/채널 결합·PASS KEY/RSA·Edge health·ACTIVE release readback 완료 |
+| WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher `1.1.0`·Core `0.2.39`·합산 `1.5 MB` 운영 표시 확인 |
 
 Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이나 Supabase service-role key를 클라이언트에 넣지 않는다. Storage object는 `<channel>/<version>/KinojoMeterCore_<version>_x64.zip`의 불변 경로를 사용한다.
 
@@ -64,24 +64,24 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 
 ## 전환 상태와 남은 Gate
 
-완료된 기반:
+완료된 기반과 Stable 발행:
 
 - private Core 저장소·`meter-core-production` Environment·수동 `PUBLISH_CORE_<version>` 발행 Gate를 구성했다.
 - private Storage `meter-core-private`는 `public=false`이며 public policy가 없다.
 - RSA-3072 개인키는 private Environment secret에만 두며 Launcher·Core workflow·release sync Edge의 공개키 일치를 강제한다. GitHub Environment가 없던 상태에서 Staging 개인키가 보존되지 않은 사실을 확인해 `kinojo-core-staging-rsa-2026-03`으로 회전하고 새 개인키를 `meter-core-staging` Secret에만 등록한다.
-- SQL `50016~50019` 운영 Migration과 `meter-ingest` v21·`meter-staging-ingest` v1·`meter-core-release-sync` v10 source/health readback을 완료했다.
+- SQL `50016~50022`, `meter-ingest` API `50022.0` v24, `meter-staging-ingest` API `50022.0` v4, `meter-release-sync` API `50022.0` v9, `meter-core-release-sync` API `50019.10` v16 source/health readback을 완료했다.
 - Staging Launcher는 컴파일 시 채널·함수명·데이터/설치/로그 폴더·뮤텍스·Core RSA 공개키가 고정된다. Staging 장애 시 Stable endpoint로 우회하지 않는다.
 - Staging PASS KEY는 평문을 DB에 저장하지 않고 SHA-256 hash와 만료/해제 상태만 보관한다. 세션은 채널에 결합돼 교차 endpoint 사용이 차단된다.
-- 공개 PR `#12`와 비공개 PR `#6`은 Stable/Staging CI를 통과했고 각각 main `62b4c255832d7b3ab457a777c05e51b50092877e`, `0db69a1a51d227e7d0ea7b3b22e79301031a6391`로 병합됐다. PREPARE 상태라 Stable publish는 계속 차단된다.
+- 공개 PR `#22`와 비공개 PR `#11`에서 Stable manifest를 `ACTIVE`로 전환했고 각각 main `f04338032b0cbedfb3ac09eb3824cbe8119ed5fc`, `951991aeb428d401f4ea35bca0ac600d4464c498`로 병합했다.
+- Stable Core workflow run `31097916177`은 Production Environment endpoint 누락을 보완한 attempt 2에서 RSA 서명·Private Storage 업로드·Server ACTIVE 전환을 완료했다.
+- Stable Launcher workflow run `31097904569`은 Production Environment 승인 후 GitHub Release `launcher-v1.1.0` 생성·SHA-256 검증·Server ACTIVE 전환을 완료했다.
+- 운영 WEB `/meter/`에서 Launcher `1.1.0`, Core `0.2.39`, Launcher `0.4 MB`, 설치 후 합산 `1.5 MB`, 정확한 두 파일명을 확인했다.
 
 남은 Gate:
 
-1. Staging RSA key `kinojo-core-staging-rsa-2026-03` 공개 계약을 공개 Launcher·Private Core·release sync Edge에 같은 회차로 병합·배포한다.
-2. `PUBLISH_STAGING_CORE_0.2.39` 수동 Gate로 Staging Core를 서명·업로드하고 Staging active row와 Storage hash를 readback한다.
-3. Staging `downloadEnabled`만 열고 CI의 `KINOJO_Meter_Launcher_Staging_1.1.0.exe`로 clean Windows에서 Launcher 자체 교체·자동 재실행과 PASS KEY 후 RSA Core 자동 설치/업데이트·변조 차단·ready handshake·강제 실패 롤백을 검증한다.
-4. 실제 게임 fixture 성능과 미터기 정상 실행을 확인한 뒤 Staging 다운로드를 다시 닫는다.
-5. 검증 통과 후 private Core `0.2.39` → Launcher `1.1.0` 순서로 Stable ACTIVE manifest를 승인·발행하고 Server active row를 readback한다.
-6. Stable `MAINTENANCE`를 유지한 채 WEB를 `LAUNCHER_PRIVATE_CORE`로 전환해 smoke test하고, 마지막에만 운영 다운로드를 개방한다.
+1. 사용자가 Windows를 직접 조작할 수 있을 때 PASS KEY 로그인 → Launcher 자체 업데이트·재실행 → Core `0.2.39` 자동 설치·RSA 검증 → 미터기 실행을 실제 E2E로 확인한다.
+2. 수동 캐릭터 선택창 중앙 배치, 변조 차단·이전 Core rollback, 제거 후 잔여 상태를 확인한다.
+3. E2E가 실패하면 Stable 다운로드를 즉시 `CLOSED`로 바꾸고 활성 release는 보존한 채 원인을 수정한다.
 
 운영 전환 실패 시 WEB 다운로드를 기존 `0.2.37` Desktop으로 되돌리고 Server의 Launcher/Core active row는 유지하되 `downloadEnabled=false`로 차단한다. 이미 설치된 정상 Core slot은 삭제하지 않는다.
 
