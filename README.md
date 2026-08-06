@@ -2,10 +2,10 @@
 
 
 기준일: 2026-08-06
-운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / `MAINTENANCE` / `downloadEnabled=false`
+운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / Stable 활성 Launcher·Core 없음 / `RANK_ALLOWLIST [3,4,5]`
 
-전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50021` / `meter-ingest` `50021.1` v23 / `meter-staging-ingest` `50021.1` v3 / Launcher release sync `50021.2` v8 / Core release sync v15
-전환 상태: Stable/Staging 다운로드는 모두 `CLOSED`다. Stable active Launcher/Core는 없고 Staging에는 검증된 Core `0.2.38`만 유지한다. Launcher `1.1.0`과 Core `0.2.39`는 소스·로컬 검증 단계이며, 실제 Staging Windows E2E와 승인 전에는 발행하거나 다운로드를 열지 않는다.
+전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
+전환 상태: Stable 운영 모드는 관리자 설정으로 3·4·5등급 허용이지만 활성 Launcher·Core가 없어 정식 배포 전이다. Staging에는 Launcher `1.1.0`과 Core `0.2.39`를 활성화했으며, 실제 Windows E2E는 보류하고 Staging 다운로드는 다시 `CLOSED`로 닫았다.
 
 ## 사용자 기준 기본 흐름
 
@@ -503,9 +503,9 @@ Payload에는 앱 EXE, NuGet 런타임 DLL, 검증된 WinDivert 파일, README, 
 ## 운영 반영 상태
 
 
-- Supabase Meter SQL `50009~50015`: 운영 반영 완료
-- `meter-ingest` Edge Function API `50015.3`: `MAINTENANCE` 업데이트 차단 계약 반영
-- `meter-release-sync` Edge Function API `50015.3`: GitHub Actions OIDC·고정 저장소/브랜치/Workflow·원격 설치기 SHA-256 검증 후 Server Master 자동 등록·활성화
+- Supabase Meter SQL `50009~50022`: 운영 반영 완료
+- `meter-ingest` / `meter-staging-ingest` Edge Function API `50022.0`: Launcher 배포 조회와 채널 고정 Core 승인 계약 반영
+- `meter-release-sync` Edge Function API `50022.0`: GitHub Actions OIDC·고정 저장소/브랜치/Workflow·채널별 release tag·원격 설치기 SHA-256 검증 후 Server Master 자동 등록·활성화
 - Desktop 최신 소스·GitHub Release·Server 활성 stable 릴리스: `0.2.37`
 - Damage/DPS Decoder 부분 검증으로 로컬 판독만 활성화하며 `UploadEligible=false`, `serverUploadEnabled=false`, Server 제출 Gate 유지
 - `50009.sql`은 운영 스키마 기록 복구 파일이므로 재실행하지 않습니다.
