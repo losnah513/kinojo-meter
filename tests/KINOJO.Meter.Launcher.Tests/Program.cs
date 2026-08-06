@@ -36,6 +36,9 @@ namespace KinojoMeterLauncher
                 Run("reject Windows ADS path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("KINOJO.Meter.exe:payload", false)));
                 Run("reject rooted path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("C:\\Windows\\system32.dll", false)));
                 Run("reject reserved device path", () => ExpectFailure(() => CorePackageInstaller.ValidatePackageRelativePath("NUL.txt", false)));
+                Run("accept vendor-signed WinDivert driver", VerifyBundledDriverSignature);
+                Run("reject unsigned executable as vendor driver", () => ExpectFailure(() => AuthenticodeVerifier.Verify(typeof(LauncherPackageTests).Assembly.Location, "")));
+                Run("reject tampered vendor driver", () => VerifyTamperedDriverRejected(root));
                 Run("accept Launcher content feed", VerifyLauncherContentFeed);
                 Run("filter cross-channel Launcher content", VerifyLauncherContentChannelFilter);
                 Run("reject Launcher content wrong host", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(rows => rows[0]["url"] = "https://example.com/notice"))));
@@ -91,6 +94,21 @@ namespace KinojoMeterLauncher
         {
             if (LauncherPassKeyContract.IsValid("KINOJ"))
                 throw new InvalidOperationException("Incomplete PASS KEY was accepted.");
+        }
+
+        private static void VerifyBundledDriverSignature()
+        {
+            AuthenticodeVerifier.Verify(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WinDivert64.sys"), "");
+        }
+
+        private static void VerifyTamperedDriverRejected(string root)
+        {
+            var source = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WinDivert64.sys");
+            var target = Path.Combine(root, "WinDivert64-tampered.sys");
+            var bytes = File.ReadAllBytes(source);
+            bytes[bytes.Length / 2] ^= 0x01;
+            File.WriteAllBytes(target, bytes);
+            ExpectFailure(() => AuthenticodeVerifier.Verify(target, ""));
         }
 
         private static void VerifyLauncherContentFeed()
