@@ -32,6 +32,10 @@ if ([string]$stagingLauncher.channel -ne 'staging' -or $stagingLauncher.publicDi
 }
 
 Require-Text '.github\workflows\launcher-build.yml' 'build-launcher[.]ps1' 'Public workflow does not build the Launcher.'
+Require-Text '.github\workflows\launcher-build.yml' 'PUBLISH_STAGING_LAUNCHER_' 'Staging Launcher publication requires no explicit confirmation.'
+Require-Text '.github\workflows\launcher-build.yml' 'meter-launcher-staging' 'Staging Launcher publication environment is missing.'
+Require-Text 'scripts\publish-launcher-release.ps1' 'launcher-staging-v' 'Staging Launcher release tag contract is missing.'
+Require-Text 'scripts\sync-launcher-release.ps1' "channel=[$]Channel" 'Launcher Server synchronization is not channel-bound.'
 $publicWorkflow = Get-Content -LiteralPath (Join-Path $root '.github\workflows\launcher-build.yml') -Raw
 if ($publicWorkflow -match 'azure/login|artifact-signing|AZURE_CLIENT_ID|ARTIFACT_SIGNING_') {
     throw 'Public Launcher workflow must not depend on paid Azure code signing.'

@@ -4,7 +4,7 @@
 기준일: 2026-08-06
 운영 기준: Desktop `0.2.37` / 공개 통계·관측 SQL `50015` / Desktop Edge `50015.3` / `MAINTENANCE` / `downloadEnabled=false`
 
-전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50021` / `meter-ingest` `50021.1` v23 / `meter-staging-ingest` `50021.1` v3 / Launcher release sync v7 / Core release sync v15
+전환 준비 기준: Launcher `1.1.0` / Private Core `0.2.39` / Database `50021` / `meter-ingest` `50021.1` v23 / `meter-staging-ingest` `50021.1` v3 / Launcher release sync `50021.2` v8 / Core release sync v15
 전환 상태: Stable/Staging 다운로드는 모두 `CLOSED`다. Stable active Launcher/Core는 없고 Staging에는 검증된 Core `0.2.38`만 유지한다. Launcher `1.1.0`과 Core `0.2.39`는 소스·로컬 검증 단계이며, 실제 Staging Windows E2E와 승인 전에는 발행하거나 다운로드를 열지 않는다.
 
 ## 사용자 기준 기본 흐름
@@ -41,7 +41,7 @@ WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-sig
 
 | Lane | 저장소/배포 위치 | 공개 여부 | 활성 조건 |
 |---|---|---:|---|
-| Launcher | 이 공개 저장소의 `launcher/**` → `launcher-v*` GitHub Release | 공개 | 미서명 취미 배포 명시, 원격 size/SHA-256, GitHub OIDC, Server readback |
+| Launcher | 이 공개 저장소의 `launcher/**` → Stable `launcher-v*` / E2E `launcher-staging-v*` GitHub Release | Stable 공개 / Staging 사전 릴리스 | 미서명 취미 배포 명시, 원격 size/SHA-256, GitHub OIDC, Server readback |
 | Core | `losnah513/kinojo-meter-core-private` → private `meter-core-private` Storage | 비공개 | RSA-3072 manifest 서명, Storage readback hash, GitHub OIDC, 수동 발행 확인 Gate |
 | Server | SQL `50016~50019`, `meter-ingest`, `meter-staging-ingest`, release sync | 내부 | 채널 결합·전용 PASS KEY/RSA·Edge health readback 완료. Stable 활성화는 clean Windows E2E 통과 후 |
 | WEB | `distributionManifest` / `launcherDownloadAuthorization` | 공개 UI | Launcher·Core·Server readback 완료 후 마지막 전환 |
@@ -59,6 +59,7 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 - `release/core-version.json`: private Core 단일 버전 기준.
 - `contracts/`: Launcher↔Server↔Core 배포 계약.
 - `scripts/build-launcher.ps1`: `stable`/`staging` 채널 고정 Launcher 빌드.
+- `launcher-build.yml` 수동 Staging 발행은 `target_channel=staging`, `confirm_publish=PUBLISH_STAGING_LAUNCHER_<version>`의 정확한 확인값을 요구한다.
 - `scripts/build-core-private.ps1`: public repository에서는 실행을 거부하는 Core 빌드·패키지.
 
 ## 전환 상태와 남은 Gate

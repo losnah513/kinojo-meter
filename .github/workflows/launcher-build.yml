@@ -6,6 +6,17 @@ concurrency:
 
 'on':
   workflow_dispatch:
+    inputs:
+      target_channel:
+        description: '발행 대상 채널'
+        required: true
+        default: staging
+        type: choice
+        options: [staging, stable]
+      confirm_publish:
+        description: 'PUBLISH_STAGING_LAUNCHER_<version> 또는 PUBLISH_LAUNCHER_<version>'
+        required: false
+        type: string
   pull_request:
     paths:
       - 'launcher/**'
@@ -119,6 +130,10 @@ jobs:
       contents: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
+      channel: ${{ steps.gate.outputs.channel }}
+      version: ${{ steps.gate.outputs.version }}
+      workflow_artifact: ${{ steps.gate.outputs.workflow_artifact }}
+      environment: ${{ steps.gate.outputs.environment }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,25 +143,44 @@ jobs:
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+          CONFIRM_PUBLISH: ${{ inputs.confirm_publish }}
         run: |
-          state="$(python -c "import json; print(json.load(open('release/launcher-version.json', encoding='utf-8'))['cutoverState'])")"
-          if [[ "$state" != "ACTIVE" ]]; then
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo 'publish=true' >> "$GITHUB_OUTPUT"
-          elif [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-          elif git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- release/launcher-version.json; then
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          channel='stable'
+          manifest='release/launcher-version.json'
+          expected_state='ACTIVE'
+          environment='meter-launcher-production'
+          artifact_prefix='KINOJO-Meter-Launcher'
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' && "$TARGET_CHANNEL" == 'staging' ]]; then
+            channel='staging'
+            manifest='release/launcher-staging-version.json'
+            expected_state='STAGING_E2E'
+            environment='meter-launcher-staging'
+            artifact_prefix='KINOJO-Meter-Launcher-Staging'
           fi
+          version="$(python -c "import json; print(json.load(open('$manifest', encoding='utf-8'))['version'])")"
+          state="$(python -c "import json; print(json.load(open('$manifest', encoding='utf-8'))['cutoverState'])")"
+          publish=false
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+            expected="PUBLISH_LAUNCHER_${version}"
+            [[ "$channel" == 'staging' ]] && expected="PUBLISH_STAGING_LAUNCHER_${version}"
+            [[ "$state" == "$expected_state" && "$CONFIRM_PUBLISH" == "$expected" ]] && publish=true
+          elif [[ "$state" == 'ACTIVE' && "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] &&
+               git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null &&
+               ! git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- release/launcher-version.json; then
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "workflow_artifact=${artifact_prefix}-${version}" >> "$GITHUB_OUTPUT"
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
 
   publish:
     if: needs.cutover-gate.outputs.publish == 'true'
     needs: [build, cutover-gate]
     runs-on: windows-2025
-    environment: meter-launcher-production
+    environment: ${{ needs.cutover-gate.outputs.environment }}
     permissions:
       contents: write
       id-token: write
@@ -157,11 +191,12 @@ jobs:
         id: release
         shell: pwsh
         run: |
-          $manifest = Get-Content ./release/launcher-version.json -Raw | ConvertFrom-Json
+          $manifestPath = if ('${{ needs.cutover-gate.outputs.channel }}' -eq 'staging') { './release/launcher-staging-version.json' } else { './release/launcher-version.json' }
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           "version=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - uses: actions/download-artifact@v4
         with:
-          name: KINOJO-Meter-Launcher-${{ steps.release.outputs.version }}
+          name: ${{ needs.cutover-gate.outputs.workflow_artifact }}
           path: build
       - name: Publish immutable unsigned hobby Launcher release
         shell: pwsh
@@ -172,9 +207,11 @@ jobs:
           -GitHubOwner '${{ github.repository_owner }}'
           -GitHubRepository '${{ github.event.repository.name }}'
           -ExpectedCommit '${{ github.sha }}'
+          -Channel '${{ needs.cutover-gate.outputs.channel }}'
       - name: Synchronize unsigned hobby Launcher to Server Master
         shell: pwsh
         run: >-
           ./scripts/sync-launcher-release.ps1
           -Endpoint 'https://josvoltpktvwysrasffq.supabase.co/functions/v1/meter-release-sync'
           -ExpectedCommit '${{ github.sha }}'
+          -Channel '${{ needs.cutover-gate.outputs.channel }}'
