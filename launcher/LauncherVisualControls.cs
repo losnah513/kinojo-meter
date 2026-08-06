@@ -1,10 +1,129 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace KinojoMeterLauncher
 {
+    internal class LauncherWindowForm : Form
+    {
+        private const int WmNcHitTest = 0x0084;
+        private const int WmNcLeftButtonDown = 0x00A1;
+        private const int HtClient = 1;
+        private const int HtCaption = 2;
+        private const int HtLeft = 10;
+        private const int HtRight = 11;
+        private const int HtTop = 12;
+        private const int HtTopLeft = 13;
+        private const int HtTopRight = 14;
+        private const int HtBottom = 15;
+        private const int HtBottomLeft = 16;
+        private const int HtBottomRight = 17;
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr handle, int message, IntPtr wParam, IntPtr lParam);
+
+        protected LauncherWindowForm()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            Padding = new Padding(1);
+            BackColor = LauncherPalette.Border;
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.ResizeRedraw, true);
+        }
+
+        protected void AttachTitleBar(Control titleBar)
+        {
+            titleBar.MouseDown += delegate(object sender, MouseEventArgs args)
+            {
+                if (args.Button != MouseButtons.Left) return;
+                ReleaseCapture();
+                SendMessage(Handle, WmNcLeftButtonDown, new IntPtr(HtCaption), IntPtr.Zero);
+            };
+            titleBar.DoubleClick += delegate { ToggleMaximized(); };
+        }
+
+        protected Panel CreateWindowControls(bool allowMaximize)
+        {
+            var width = allowMaximize ? 138 : 92;
+            var panel = new Panel
+            {
+                BackColor = LauncherPalette.Topbar,
+                Size = new Size(width, 64),
+                Dock = DockStyle.Right
+            };
+            var close = CreateWindowButton("×", allowMaximize ? 92 : 46, true);
+            close.Click += delegate { Close(); };
+            panel.Controls.Add(close);
+
+            if (allowMaximize)
+            {
+                var maximize = CreateWindowButton("□", 46, false);
+                maximize.Click += delegate { ToggleMaximized(); };
+                panel.Controls.Add(maximize);
+            }
+
+            var minimize = CreateWindowButton("—", 0, false);
+            minimize.Click += delegate { WindowState = FormWindowState.Minimized; };
+            panel.Controls.Add(minimize);
+            return panel;
+        }
+
+        private static Button CreateWindowButton(string text, int left, bool close)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Font = new Font("Segoe UI", close ? 13F : 10F, FontStyle.Regular),
+                ForeColor = LauncherPalette.Muted,
+                BackColor = LauncherPalette.Topbar,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(left, 0),
+                Size = new Size(46, 64),
+                TabStop = false,
+                Cursor = Cursors.Hand
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = close ? Color.FromArgb(196, 43, 62) : Color.FromArgb(38, 45, 60);
+            button.FlatAppearance.MouseDownBackColor = close ? Color.FromArgb(159, 35, 50) : Color.FromArgb(45, 53, 70);
+            return button;
+        }
+
+        private void ToggleMaximized()
+        {
+            if (!MaximizeBox) return;
+            WindowState = WindowState == FormWindowState.Maximized
+                ? FormWindowState.Normal
+                : FormWindowState.Maximized;
+        }
+
+        protected override void WndProc(ref Message message)
+        {
+            base.WndProc(ref message);
+            if (message.Msg != WmNcHitTest || (int)message.Result != HtClient || WindowState == FormWindowState.Maximized) return;
+
+            const int border = 7;
+            var point = PointToClient(Cursor.Position);
+            var left = point.X <= border;
+            var right = point.X >= ClientSize.Width - border;
+            var top = point.Y <= border;
+            var bottom = point.Y >= ClientSize.Height - border;
+
+            if (left && top) message.Result = new IntPtr(HtTopLeft);
+            else if (right && top) message.Result = new IntPtr(HtTopRight);
+            else if (left && bottom) message.Result = new IntPtr(HtBottomLeft);
+            else if (right && bottom) message.Result = new IntPtr(HtBottomRight);
+            else if (left) message.Result = new IntPtr(HtLeft);
+            else if (right) message.Result = new IntPtr(HtRight);
+            else if (top) message.Result = new IntPtr(HtTop);
+            else if (bottom) message.Result = new IntPtr(HtBottom);
+        }
+    }
+
     internal static class LauncherPalette
     {
         public static readonly Color Window = Color.FromArgb(10, 13, 20);

@@ -28,9 +28,11 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="LauncherBuildProfile.cs" />
+    <Compile Include="LauncherLoginForm.cs" />
     <Compile Include="LauncherForm.cs" />
     <Compile Include="LauncherVisualControls.cs" />
     <Compile Include="LauncherApiClient.cs" />
+    <Compile Include="LauncherContentClient.cs" />
     <Compile Include="CorePackageInstaller.cs" />
     <Compile Include="CoreReleaseIntegrityVerifier.cs" />
     <Compile Include="LauncherModels.cs" />

@@ -11,6 +11,26 @@ namespace KinojoMeterLauncher
         public List<Dictionary<string, object>> Characters { get; set; }
     }
 
+    internal sealed class LauncherContentItem
+    {
+        public string Id { get; set; }
+        public string Type { get; set; }
+        public string Channel { get; set; }
+        public bool Pinned { get; set; }
+        public string Title { get; set; }
+        public string Summary { get; set; }
+        public DateTimeOffset PublishedAt { get; set; }
+        public string Version { get; set; }
+        public string Url { get; set; }
+    }
+
+    internal sealed class LauncherContentLoadResult
+    {
+        public List<LauncherContentItem> Items { get; set; }
+        public bool Cached { get; set; }
+        public string Status { get; set; }
+    }
+
     internal sealed class CoreUpdateAuthorization
     {
         public bool Authorized { get; set; }
