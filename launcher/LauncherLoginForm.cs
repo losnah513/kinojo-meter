@@ -5,9 +5,167 @@ using System.Windows.Forms;
 
 namespace KinojoMeterLauncher
 {
+    internal sealed class LauncherPassKeyInput : UserControl
+    {
+        private readonly TextBox _input;
+
+        public LauncherPassKeyInput()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor |
+                     ControlStyles.UserPaint, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.IBeam;
+            TabStop = true;
+            AccessibleName = "키노조 웹 PASS KEY 입력";
+            Font = new Font("Malgun Gothic", 15.5F, FontStyle.Bold, GraphicsUnit.Point);
+
+            _input = new TextBox
+            {
+                BorderStyle = BorderStyle.None,
+                CharacterCasing = CharacterCasing.Normal,
+                Font = new Font("Malgun Gothic", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(16, 20, 30),
+                BackColor = Color.FromArgb(16, 20, 30),
+                AutoSize = false,
+                ImeMode = ImeMode.Off,
+                MaxLength = LauncherPassKeyContract.RequiredTextElements,
+                Multiline = false,
+                ShortcutsEnabled = true,
+                TabStop = true,
+                UseSystemPasswordChar = false,
+                PasswordChar = '\0'
+            };
+            _input.TextChanged += delegate
+            {
+                UppercaseAsciiInput();
+                Invalidate();
+            };
+            _input.KeyPress += delegate(object sender, KeyPressEventArgs args)
+            {
+                if (args.KeyChar >= 'a' && args.KeyChar <= 'z')
+                    args.KeyChar = Char.ToUpperInvariant(args.KeyChar);
+            };
+            _input.Enter += delegate { Invalidate(); };
+            _input.Leave += delegate { Invalidate(); };
+            _input.KeyDown += delegate(object sender, KeyEventArgs args)
+            {
+                if (args.KeyCode != Keys.Enter) return;
+                args.SuppressKeyPress = true;
+                SubmitRequested?.Invoke(this, EventArgs.Empty);
+            };
+            Controls.Add(_input);
+            PositionInputHost();
+        }
+
+        public event EventHandler SubmitRequested;
+
+        public string PassKey
+        {
+            get { return _input.Text ?? ""; }
+        }
+
+        public void ClearPassKey()
+        {
+            _input.Clear();
+        }
+
+        public void FocusInput()
+        {
+            if (_input.CanFocus) _input.Focus();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs args)
+        {
+            base.OnMouseDown(args);
+            FocusInput();
+        }
+
+        protected override void OnResize(EventArgs args)
+        {
+            base.OnResize(args);
+            PositionInputHost();
+        }
+
+        protected override void OnPaint(PaintEventArgs args)
+        {
+            base.OnPaint(args);
+            var values = LauncherPassKeyContract.TextElements(_input.Text);
+            const int cellCount = LauncherPassKeyContract.RequiredTextElements;
+            var activeIndex = values.Length >= cellCount ? cellCount - 1 : values.Length;
+            var outer = new Rectangle(0, 0, Math.Max(1, ClientSize.Width - 1), Math.Max(1, ClientSize.Height - 1));
+
+            using (var background = new SolidBrush(Color.FromArgb(16, 20, 30)))
+            using (var border = new Pen(Color.FromArgb(48, 57, 76), 1F))
+            {
+                args.Graphics.FillRectangle(background, outer);
+                args.Graphics.DrawRectangle(border, outer);
+                for (var divider = 1; divider < cellCount; divider++)
+                {
+                    var x = ClientSize.Width * divider / cellCount;
+                    args.Graphics.DrawLine(border, x, 8, x, Math.Max(8, ClientSize.Height - 9));
+                }
+            }
+
+            for (var index = 0; index < cellCount; index++)
+            {
+                var left = ClientSize.Width * index / cellCount;
+                var right = ClientSize.Width * (index + 1) / cellCount;
+                var rectangle = new Rectangle(left, 0, Math.Max(1, right - left), Math.Max(1, ClientSize.Height));
+                var active = _input.Focused && index == activeIndex;
+                if (active)
+                {
+                    using (var activeBorder = new Pen(LauncherPalette.AccentBright, 2F))
+                    {
+                        var activeRectangle = new Rectangle(rectangle.X + 1, 1, Math.Max(0, rectangle.Width - 2), Math.Max(0, rectangle.Height - 2));
+                        args.Graphics.DrawRectangle(activeBorder, activeRectangle);
+                    }
+                }
+
+                if (index < values.Length)
+                {
+                    TextRenderer.DrawText(
+                        args.Graphics,
+                        values[index],
+                        Font,
+                        rectangle,
+                        LauncherPalette.Text,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                }
+            }
+        }
+
+        private void PositionInputHost()
+        {
+            if (_input == null) return;
+            _input.Location = new Point(-4, -4);
+            _input.Size = new Size(1, 1);
+        }
+
+        private void UppercaseAsciiInput()
+        {
+            var current = _input.Text ?? "";
+            var characters = current.ToCharArray();
+            var changed = false;
+            for (var index = 0; index < characters.Length; index++)
+            {
+                if (characters[index] < 'a' || characters[index] > 'z') continue;
+                characters[index] = Char.ToUpperInvariant(characters[index]);
+                changed = true;
+            }
+            if (!changed) return;
+
+            var selectionStart = _input.SelectionStart;
+            _input.Text = new string(characters);
+            _input.SelectionStart = Math.Min(selectionStart, _input.TextLength);
+        }
+    }
+
     internal sealed class LauncherLoginForm : LauncherWindowForm
     {
-        private readonly TextBox _passKey;
+        private readonly LauncherPassKeyInput _passKey;
         private readonly LauncherActionButton _loginButton;
         private readonly Label _status;
         private readonly LauncherProgressBar _progress;
@@ -87,54 +245,27 @@ namespace KinojoMeterLauncher
                 new Point(42, 38),
                 new Size(430, 46)));
             content.Controls.Add(CreateLabel(
-                "승인된 PASS KEY로 로그인하면 KINOJO Meter MAIN으로 이동합니다.",
+                "키노조 웹 PASS KEY로 로그인하면 KINOJO Meter MAIN으로 이동합니다.",
                 new Font("Segoe UI", 9F, FontStyle.Regular),
                 LauncherPalette.Muted,
                 new Point(44, 89),
                 new Size(430, 42)));
 
             var keyLabel = CreateLabel(
-                "6자리 PASS KEY",
+                "키노조 웹 PASS KEY 입력",
                 new Font("Segoe UI", 8.5F, FontStyle.Bold),
                 LauncherPalette.Muted,
                 new Point(44, 143),
                 new Size(220, 20));
             content.Controls.Add(keyLabel);
 
-            var keyFrame = new Panel
+            _passKey = new LauncherPassKeyInput
             {
-                BackColor = Color.FromArgb(48, 57, 76),
                 Location = new Point(44, 169),
-                Size = new Size(430, 54),
-                Padding = new Padding(1)
+                Size = new Size(430, 54)
             };
-            content.Controls.Add(keyFrame);
-            var keyInner = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(16, 20, 30),
-                Padding = new Padding(16, 9, 16, 7)
-            };
-            keyFrame.Controls.Add(keyInner);
-            _passKey = new TextBox
-            {
-                Dock = DockStyle.Fill,
-                MaxLength = 6,
-                CharacterCasing = CharacterCasing.Upper,
-                UseSystemPasswordChar = true,
-                TextAlign = HorizontalAlignment.Center,
-                Font = new Font("Segoe UI", 16F, FontStyle.Bold),
-                BorderStyle = BorderStyle.None,
-                BackColor = keyInner.BackColor,
-                ForeColor = LauncherPalette.Text
-            };
-            _passKey.KeyDown += async delegate(object sender, KeyEventArgs args)
-            {
-                if (args.KeyCode != Keys.Enter) return;
-                args.SuppressKeyPress = true;
-                await LoginAsync();
-            };
-            keyInner.Controls.Add(_passKey);
+            _passKey.SubmitRequested += async delegate { await LoginAsync(); };
+            content.Controls.Add(_passKey);
 
             _progress = new LauncherProgressBar
             {
@@ -171,7 +302,7 @@ namespace KinojoMeterLauncher
             content.Controls.Add(security);
 
             AcceptButton = _loginButton;
-            Shown += delegate { _passKey.Focus(); };
+            Shown += delegate { _passKey.FocusInput(); };
             FormClosing += delegate(object sender, FormClosingEventArgs args)
             {
                 if (_busy && DialogResult != DialogResult.OK) args.Cancel = true;
@@ -183,11 +314,11 @@ namespace KinojoMeterLauncher
         private async Task LoginAsync()
         {
             if (_busy) return;
-            var passKey = (_passKey.Text ?? "").Trim().ToUpperInvariant();
-            if (passKey.Length != 6)
+            var passKey = LauncherPassKeyContract.Normalize(_passKey.PassKey);
+            if (!LauncherPassKeyContract.IsValid(passKey))
             {
-                SetStatus("PASS KEY 6자리를 입력해 주세요.", true, 0);
-                _passKey.Focus();
+                SetStatus("키노조 웹 PASS KEY 6자리를 입력해 주세요.", true, 0);
+                _passKey.FocusInput();
                 return;
             }
 
@@ -217,13 +348,13 @@ namespace KinojoMeterLauncher
             finally
             {
                 _busy = false;
-                _passKey.Clear();
+                _passKey.ClearPassKey();
                 if (!IsDisposed && DialogResult != DialogResult.OK)
                 {
                     _loginButton.Enabled = true;
                     _loginButton.Text = "다시 로그인";
                     _passKey.Enabled = true;
-                    _passKey.Focus();
+                    _passKey.FocusInput();
                 }
             }
         }

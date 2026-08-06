@@ -26,6 +26,8 @@ namespace KinojoMeterLauncher
             try
             {
                 Run("channel profile is compile-time bound", VerifyChannelProfile);
+                Run("accept six PASS KEY text elements", VerifyPassKeyLength);
+                Run("reject incomplete PASS KEY", VerifyIncompletePassKey);
                 Run("valid package", () => VerifyPackage(root, false, false, false));
                 Run("reject unmanaged file", () => ExpectFailure(() => VerifyPackage(root, true, false, false)));
                 Run("reject duplicate archive path", () => ExpectFailure(() => VerifyPackage(root, false, true, false)));
@@ -72,6 +74,23 @@ namespace KinojoMeterLauncher
             if (!String.Equals(LauncherBuildProfile.FunctionName, expectedFunction, StringComparison.Ordinal) ||
                 !String.Equals(LauncherBuildProfile.DataFolderName, expectedFolder, StringComparison.Ordinal))
                 throw new InvalidOperationException("Launcher channel profile is not compile-time bound.");
+        }
+
+        private static void VerifyPassKeyLength()
+        {
+            const string passKey = "kinojo";
+            const string expected = "KINOJO";
+            var normalized = LauncherPassKeyContract.Normalize(passKey);
+            if (!LauncherPassKeyContract.IsValid(normalized) ||
+                LauncherPassKeyContract.TextElements(normalized).Length != 6 ||
+                !String.Equals(normalized, expected, StringComparison.Ordinal))
+                throw new InvalidOperationException("Six-character PASS KEY was not normalized to uppercase.");
+        }
+
+        private static void VerifyIncompletePassKey()
+        {
+            if (LauncherPassKeyContract.IsValid("KINOJ"))
+                throw new InvalidOperationException("Incomplete PASS KEY was accepted.");
         }
 
         private static void VerifyLauncherContentFeed()

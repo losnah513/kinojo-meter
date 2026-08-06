@@ -28,6 +28,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="LauncherBuildProfile.cs" />
+    <Compile Include="LauncherPassKeyContract.cs" />
     <Compile Include="LauncherLoginForm.cs" />
     <Compile Include="LauncherForm.cs" />
     <Compile Include="LauncherVisualControls.cs" />
