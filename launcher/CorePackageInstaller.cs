@@ -518,15 +518,52 @@ namespace KinojoMeterLauncher
     internal static class AuthenticodeVerifier
     {
         private static readonly Guid WintrustActionGenericVerifyV2 = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+        private const uint WtdUiNone = 2;
+        private const uint WtdRevokeNone = 0;
+        private const uint WtdChoiceFile = 1;
+        private const uint WtdStateActionVerify = 1;
+        private const uint WtdStateActionClose = 2;
 
         public static void Verify(string path, string expectedPublisherSubject)
         {
-            var fileInfo = new WinTrustFileInfo(path);
-            var data = new WinTrustData(fileInfo);
+            if (String.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                throw new InvalidOperationException("Core Authenticode 검증 대상 파일이 없습니다.");
+
+            var actionId = WintrustActionGenericVerifyV2;
+            var pathPointer = IntPtr.Zero;
+            var fileInfoPointer = IntPtr.Zero;
+            var data = new WinTrustData();
             try
             {
-                var result = WinVerifyTrust(new IntPtr(-1), WintrustActionGenericVerifyV2, data);
-                if (result != 0) throw new InvalidOperationException("Core Authenticode 서명 검증에 실패했습니다. 코드: 0x" + result.ToString("X8"));
+                pathPointer = Marshal.StringToCoTaskMemUni(path);
+                var fileInfo = new WinTrustFileInfo
+                {
+                    StructSize = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo)),
+                    FilePath = pathPointer,
+                    FileHandle = IntPtr.Zero,
+                    KnownSubject = IntPtr.Zero
+                };
+                fileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WinTrustFileInfo)));
+                Marshal.StructureToPtr(fileInfo, fileInfoPointer, false);
+                data = new WinTrustData
+                {
+                    StructSize = (uint)Marshal.SizeOf(typeof(WinTrustData)),
+                    PolicyCallbackData = IntPtr.Zero,
+                    SIPClientData = IntPtr.Zero,
+                    UIChoice = WtdUiNone,
+                    RevocationChecks = WtdRevokeNone,
+                    UnionChoice = WtdChoiceFile,
+                    FileInfoPtr = fileInfoPointer,
+                    StateAction = WtdStateActionVerify,
+                    StateData = IntPtr.Zero,
+                    URLReference = IntPtr.Zero,
+                    ProvFlags = 0,
+                    UIContext = 0
+                };
+
+                var result = WinVerifyTrust(IntPtr.Zero, ref actionId, ref data);
+                if (result != 0)
+                    throw new InvalidOperationException("Core Authenticode 서명 검증에 실패했습니다. 코드: 0x" + unchecked((uint)result).ToString("X8"));
                 if (!String.IsNullOrWhiteSpace(expectedPublisherSubject))
                 {
                     using (var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path)))
@@ -539,55 +576,43 @@ namespace KinojoMeterLauncher
             }
             finally
             {
-                data.Dispose();
-                fileInfo.Dispose();
+                if (data.StateData != IntPtr.Zero)
+                {
+                    data.StateAction = WtdStateActionClose;
+                    WinVerifyTrust(IntPtr.Zero, ref actionId, ref data);
+                }
+                if (fileInfoPointer != IntPtr.Zero) Marshal.FreeCoTaskMem(fileInfoPointer);
+                if (pathPointer != IntPtr.Zero) Marshal.FreeCoTaskMem(pathPointer);
             }
         }
 
         [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
-        private static extern uint WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid actionId, WinTrustData data);
+        private static extern int WinVerifyTrust(IntPtr hwnd, ref Guid actionId, ref WinTrustData data);
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private sealed class WinTrustFileInfo : IDisposable
+        private struct WinTrustFileInfo
         {
-            private readonly IntPtr _path;
-            public uint StructSize = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo));
+            public uint StructSize;
             public IntPtr FilePath;
-            public IntPtr FileHandle = IntPtr.Zero;
-            public IntPtr KnownSubject = IntPtr.Zero;
-
-            public WinTrustFileInfo(string path)
-            {
-                _path = Marshal.StringToCoTaskMemUni(path);
-                FilePath = _path;
-            }
-
-            public void Dispose() { if (_path != IntPtr.Zero) Marshal.FreeCoTaskMem(_path); }
+            public IntPtr FileHandle;
+            public IntPtr KnownSubject;
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private sealed class WinTrustData : IDisposable
+        private struct WinTrustData
         {
-            public uint StructSize = (uint)Marshal.SizeOf(typeof(WinTrustData));
-            public IntPtr PolicyCallbackData = IntPtr.Zero;
-            public IntPtr SIPClientData = IntPtr.Zero;
-            public uint UIChoice = 2;
-            public uint RevocationChecks = 0;
-            public uint UnionChoice = 1;
+            public uint StructSize;
+            public IntPtr PolicyCallbackData;
+            public IntPtr SIPClientData;
+            public uint UIChoice;
+            public uint RevocationChecks;
+            public uint UnionChoice;
             public IntPtr FileInfoPtr;
-            public uint StateAction = 0;
-            public IntPtr StateData = IntPtr.Zero;
-            public string URLReference = null;
-            public uint ProvFlags = 0x00000020;
-            public uint UIContext = 0;
-
-            public WinTrustData(WinTrustFileInfo fileInfo)
-            {
-                FileInfoPtr = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WinTrustFileInfo)));
-                Marshal.StructureToPtr(fileInfo, FileInfoPtr, false);
-            }
-
-            public void Dispose() { if (FileInfoPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(FileInfoPtr); }
+            public uint StateAction;
+            public IntPtr StateData;
+            public IntPtr URLReference;
+            public uint ProvFlags;
+            public uint UIContext;
         }
     }
 }
