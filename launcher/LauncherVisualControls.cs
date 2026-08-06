@@ -309,6 +309,118 @@ namespace KinojoMeterLauncher
         }
     }
 
+    internal sealed class LauncherConsentCheckBox : CheckBox
+    {
+        private readonly Font _regularFont;
+        private readonly Font _checkedFont;
+
+        public LauncherConsentCheckBox()
+        {
+            _regularFont = new Font("Segoe UI", 8.5F, FontStyle.Regular, GraphicsUnit.Point);
+            _checkedFont = new Font("Segoe UI", 8.5F, FontStyle.Bold, GraphicsUnit.Point);
+            Font = _regularFont;
+            AutoCheck = true;
+            ThreeState = false;
+            Appearance = Appearance.Normal;
+            BackColor = Color.Transparent;
+            ForeColor = LauncherPalette.Text;
+            Cursor = Cursors.Hand;
+            TabStop = true;
+            UseMnemonic = false;
+            UseVisualStyleBackColor = false;
+            AccessibleName = "모든 약관에 동의";
+            AccessibleRole = AccessibleRole.CheckButton;
+            DoubleBuffered = true;
+            SetStyle(
+                ControlStyles.UserPaint |
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.SupportsTransparentBackColor,
+                true);
+        }
+
+        protected override void OnCheckedChanged(EventArgs e)
+        {
+            ForeColor = Checked ? LauncherPalette.AccentBright : LauncherPalette.Text;
+            Invalidate();
+            base.OnCheckedChanged(e);
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            Invalidate();
+            base.OnEnabledChanged(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(Parent == null ? LauncherPalette.Surface : Parent.BackColor);
+
+            const int boxSize = 16;
+            var box = new Rectangle(1, Math.Max(1, (Height - boxSize) / 2), boxSize, boxSize);
+            var fillColor = Checked ? Color.FromArgb(42, 155, 214) : Color.FromArgb(17, 21, 31);
+            var borderColor = Checked ? LauncherPalette.AccentBright : Color.FromArgb(150, 163, 184);
+            if (!Enabled)
+            {
+                fillColor = Color.FromArgb(44, 50, 64);
+                borderColor = Color.FromArgb(91, 102, 121);
+            }
+
+            using (var fill = new SolidBrush(fillColor))
+            using (var border = new Pen(borderColor, Checked ? 2F : 1F))
+            {
+                e.Graphics.FillRectangle(fill, box);
+                e.Graphics.DrawRectangle(border, box);
+            }
+
+            if (Checked)
+            {
+                using (var check = new Pen(Color.White, 2.2F))
+                {
+                    check.StartCap = LineCap.Round;
+                    check.EndCap = LineCap.Round;
+                    check.LineJoin = LineJoin.Round;
+                    e.Graphics.DrawLines(check, new[]
+                    {
+                        new Point(box.Left + 4, box.Top + 8),
+                        new Point(box.Left + 7, box.Top + 11),
+                        new Point(box.Left + 13, box.Top + 5)
+                    });
+                }
+            }
+
+            var textBounds = new Rectangle(27, 0, Math.Max(1, Width - 28), Height);
+            var textColor = !Enabled
+                ? LauncherPalette.Muted
+                : (Checked ? LauncherPalette.AccentBright : LauncherPalette.Text);
+            TextRenderer.DrawText(
+                e.Graphics,
+                Text,
+                Checked ? _checkedFont : _regularFont,
+                textBounds,
+                textColor,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+            if (Focused && ShowFocusCues)
+            {
+                var focusBounds = new Rectangle(textBounds.X - 2, 2, Math.Max(1, textBounds.Width), Math.Max(1, Height - 4));
+                ControlPaint.DrawFocusRectangle(e.Graphics, focusBounds, textColor, Parent == null ? BackColor : Parent.BackColor);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _regularFont.Dispose();
+                _checkedFont.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+    }
+
     internal sealed class LauncherActionButton : Button
     {
         private bool _hovered;

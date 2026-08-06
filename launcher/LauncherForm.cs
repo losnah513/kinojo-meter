@@ -17,7 +17,7 @@ namespace KinojoMeterLauncher
 
         private readonly LauncherLoginResult _login;
         private readonly LauncherActionButton _start;
-        private readonly CheckBox _terms;
+        private readonly LauncherConsentCheckBox _terms;
         private readonly Label _status;
         private readonly Label _statusTitle;
         private readonly Label _progressText;
@@ -254,16 +254,11 @@ namespace KinojoMeterLauncher
             _start.Click += async delegate { await StartMeterAsync(); };
             _launchCard.Controls.Add(_start);
 
-            _terms = new CheckBox
+            _terms = new LauncherConsentCheckBox
             {
                 Text = "모든 약관에 동의",
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
-                ForeColor = LauncherPalette.Text,
-                BackColor = Color.Transparent,
                 Location = new Point(27, 387),
-                Size = new Size(190, 24),
-                Cursor = Cursors.Hand,
-                FlatStyle = FlatStyle.Flat
+                Size = new Size(250, 24)
             };
             _terms.CheckedChanged += delegate
             {
