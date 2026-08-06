@@ -12,7 +12,12 @@ namespace KinojoMeterLauncher
     internal static class LauncherVersion
     {
         public const string Channel = LauncherBuildProfile.Channel;
-        public const string Current = "1.0.0";
+        public const string Current = "1.1.0";
+
+        public static bool IsStaging
+        {
+            get { return String.Equals(Channel, "staging", StringComparison.Ordinal); }
+        }
     }
 
     internal static class LauncherPackageTests
@@ -44,6 +49,33 @@ namespace KinojoMeterLauncher
                 Run("reject Launcher content wrong host", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(rows => rows[0]["url"] = "https://example.com/notice"))));
                 Run("reject duplicate Launcher content id", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(rows => rows.Add(new Dictionary<string, object>(rows[0]))))));
                 Run("reject unsupported Launcher content schema", () => ExpectFailure(() => LauncherContentClient.ParseForTest(ContentFeedJson(null, 2))));
+                Run("accept Launcher self-update contract", VerifyLauncherUpdateContract);
+                Run("parse Launcher self-update manifest", VerifyLauncherUpdateParsing);
+                Run("compare Launcher semantic versions", () =>
+                {
+                    if (LauncherUpdateService.CompareVersionsForTest("1.2.0", "1.1.9") <= 0)
+                        throw new InvalidOperationException("Launcher semantic version comparison failed.");
+                });
+                Run("reject Launcher update wrong host", () => ExpectFailure(() =>
+                {
+                    var release = LauncherUpdateRelease();
+                    release.DownloadUrl = release.DownloadUrl.Replace("github.com", "example.com");
+                    LauncherUpdateService.ValidateManifestForTest(release);
+                }));
+                Run("reject Launcher update wrong channel", () => ExpectFailure(() =>
+                {
+                    var release = LauncherUpdateRelease();
+                    release.Channel = LauncherVersion.Channel == "staging" ? "stable" : "staging";
+                    LauncherUpdateService.ValidateManifestForTest(release);
+                }));
+                Run("reject Launcher update cross-channel tag", () => ExpectFailure(() =>
+                {
+                    var release = LauncherUpdateRelease();
+                    release.DownloadUrl = LauncherVersion.IsStaging
+                        ? release.DownloadUrl.Replace("launcher-staging-v", "launcher-v")
+                        : release.DownloadUrl.Replace("launcher-v", "launcher-staging-v");
+                    LauncherUpdateService.ValidateManifestForTest(release);
+                }));
                 using (var signingKey = new RSACryptoServiceProvider(3072))
                 {
                     signingKey.PersistKeyInCsp = false;
@@ -135,6 +167,75 @@ namespace KinojoMeterLauncher
             })));
             if (result.Items.Count != 1 || result.Items.Any(item => item.Id == "other-channel"))
                 throw new InvalidOperationException("Cross-channel Launcher content was not filtered.");
+        }
+
+        private static void VerifyLauncherUpdateContract()
+        {
+            LauncherUpdateService.ValidateManifestForTest(LauncherUpdateRelease());
+        }
+
+        private static void VerifyLauncherUpdateParsing()
+        {
+            var release = LauncherUpdateRelease();
+            var raw = new Dictionary<string, object>
+            {
+                { "ok", true },
+                { "launcherRelease", new Dictionary<string, object>
+                    {
+                        { "releaseAvailable", true },
+                        { "updateAvailable", true },
+                        { "launcherUpdate", new Dictionary<string, object>
+                            {
+                                { "version", release.Version },
+                                { "fileVersion", release.FileVersion },
+                                { "minimumVersion", release.MinimumVersion },
+                                { "fileName", release.FileName },
+                                { "fileSize", release.FileSize },
+                                { "sha256", release.Sha256 },
+                                { "downloadUrl", release.DownloadUrl },
+                                { "mandatory", true },
+                                { "releaseNote", "test" },
+                                { "codeSignatureRequired", false },
+                                { "publisherSubject", "" },
+                                { "trustMode", "WINDOWS_UNSIGNED_HOBBY" },
+                                { "smartScreenWarningExpected", true },
+                                { "channel", release.Channel }
+                            }
+                        }
+                    }
+                }
+            };
+            var parsed = LauncherApiClient.ParseLauncherUpdateForTest(raw);
+            if (parsed == null || !parsed.ReleaseAvailable || !parsed.UpdateAvailable || parsed.Release == null ||
+                !String.Equals(parsed.Release.Version, release.Version, StringComparison.Ordinal))
+                throw new InvalidOperationException("Launcher update manifest was not parsed.");
+        }
+
+        private static LauncherUpdateManifest LauncherUpdateRelease()
+        {
+            const string version = "1.2.0";
+            var fileName = LauncherVersion.IsStaging
+                ? "KINOJO_Meter_Launcher_Staging_" + version + ".exe"
+                : "KINOJO_Meter_Launcher_" + version + ".exe";
+            var tag = LauncherVersion.IsStaging ? "launcher-staging-v" + version : "launcher-v" + version;
+            return new LauncherUpdateManifest
+            {
+                SchemaVersion = 1,
+                Channel = LauncherVersion.Channel,
+                Version = version,
+                FileVersion = version + ".0",
+                MinimumVersion = "1.1.0",
+                FileName = fileName,
+                FileSize = 1024,
+                Sha256 = new String('a', 64),
+                DownloadUrl = "https://github.com/losnah513/kinojo-meter/releases/download/" + tag + "/" + fileName,
+                Mandatory = true,
+                ReleaseNote = "test",
+                CodeSignatureRequired = false,
+                PublisherSubject = "",
+                TrustMode = "WINDOWS_UNSIGNED_HOBBY",
+                SmartScreenWarningExpected = true
+            };
         }
 
         private static string ContentFeedJson(Action<List<Dictionary<string, object>>> mutate, int schemaVersion = 1)

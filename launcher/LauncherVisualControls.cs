@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -71,6 +72,31 @@ namespace KinojoMeterLauncher
             minimize.Click += delegate { WindowState = FormWindowState.Minimized; };
             panel.Controls.Add(minimize);
             return panel;
+        }
+
+        protected PictureBox CreateBrandIcon(Point location, Size size)
+        {
+            var picture = new PictureBox
+            {
+                BackColor = Color.Transparent,
+                Location = location,
+                Size = size,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                TabStop = false
+            };
+            try
+            {
+                using (var icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location))
+                {
+                    if (icon != null) picture.Image = icon.ToBitmap();
+                }
+            }
+            catch { }
+            picture.Disposed += delegate
+            {
+                if (picture.Image != null) picture.Image.Dispose();
+            };
+            return picture;
         }
 
         private static Button CreateWindowButton(string text, int left, bool close)

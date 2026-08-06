@@ -87,6 +87,19 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "distributionManifest" },
+                { "channel", LauncherVersion.Channel },
+                { "launcherVersion", LauncherVersion.Current }
+            }).ConfigureAwait(false);
+            if (!Bool(result, "ok"))
+                throw new InvalidOperationException(Text(result, "message", "Launcher 업데이트 정보를 확인하지 못했습니다."));
+            return ParseLauncherUpdate(result);
+        }
+
         public async Task LogoutAsync(string sessionToken)
         {
             if (String.IsNullOrWhiteSpace(sessionToken)) return;
@@ -163,6 +176,40 @@ namespace KinojoMeterLauncher
                 IntegrityMode = Text(value, "integrityMode", ""),
                 SigningKeyId = Text(value, "signingKeyId", ""),
                 ManifestSignature = Text(value, "manifestSignature", "")
+            };
+        }
+
+        internal static LauncherUpdateCheckResult ParseLauncherUpdateForTest(Dictionary<string, object> value)
+        {
+            return ParseLauncherUpdate(value);
+        }
+
+        private static LauncherUpdateCheckResult ParseLauncherUpdate(Dictionary<string, object> value)
+        {
+            var releaseEnvelope = Dict(value, "launcherRelease");
+            var release = Dict(releaseEnvelope, "launcherUpdate");
+            return new LauncherUpdateCheckResult
+            {
+                ReleaseAvailable = Bool(releaseEnvelope, "releaseAvailable"),
+                UpdateAvailable = Bool(releaseEnvelope, "updateAvailable"),
+                Release = release == null ? null : new LauncherUpdateManifest
+                {
+                    SchemaVersion = 1,
+                    Channel = Text(release, "channel", LauncherVersion.Channel),
+                    Version = Text(release, "version", ""),
+                    FileVersion = Text(release, "fileVersion", ""),
+                    MinimumVersion = Text(release, "minimumVersion", ""),
+                    FileName = Text(release, "fileName", ""),
+                    FileSize = Long(release, "fileSize", 0),
+                    Sha256 = Text(release, "sha256", "").ToLowerInvariant(),
+                    DownloadUrl = Text(release, "downloadUrl", ""),
+                    Mandatory = Bool(release, "mandatory"),
+                    ReleaseNote = Text(release, "releaseNote", ""),
+                    CodeSignatureRequired = Bool(release, "codeSignatureRequired"),
+                    PublisherSubject = Text(release, "publisherSubject", ""),
+                    TrustMode = Text(release, "trustMode", ""),
+                    SmartScreenWarningExpected = Bool(release, "smartScreenWarningExpected")
+                }
             };
         }
 

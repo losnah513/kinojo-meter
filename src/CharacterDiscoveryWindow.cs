@@ -108,8 +108,16 @@ namespace KinojoMeterPrototype
             Width = visible ? 520 : 390;
             Height = visible ? Math.Min(520, 118 + _cardRows * 82) : 94;
             var working = SystemParameters.WorkArea;
-            Left = Math.Max(working.Left + 8, Math.Min(working.Right - Width - 8, Left));
-            Top = Math.Max(working.Top + 8, Math.Min(working.Bottom - Height - 8, Top));
+            if (visible)
+            {
+                Left = Math.Round(working.Left + Math.Max(0, (working.Width - Width) / 2.0));
+                Top = Math.Round(working.Top + Math.Max(0, (working.Height - Height) / 2.0));
+            }
+            else
+            {
+                Left = Math.Max(working.Left + 8, Math.Min(working.Right - Width - 8, Left));
+                Top = Math.Max(working.Top + 8, Math.Min(working.Bottom - Height - 8, Top));
+            }
         }
     }
 }

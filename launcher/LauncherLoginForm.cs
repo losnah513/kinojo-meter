@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -170,6 +171,7 @@ namespace KinojoMeterLauncher
         private readonly Label _status;
         private readonly LauncherProgressBar _progress;
         private bool _busy;
+        private bool _launcherUpdateRequired;
 
         public LauncherLoginForm()
         {
@@ -204,16 +206,7 @@ namespace KinojoMeterLauncher
             };
             AttachTitleBar(topbar);
             topbar.Controls.Add(CreateWindowControls(false));
-            topbar.Controls.Add(new Label
-            {
-                Text = "K",
-                BackColor = LauncherPalette.Accent,
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(18, 18),
-                Size = new Size(28, 28)
-            });
+            topbar.Controls.Add(CreateBrandIcon(new Point(18, 18), new Size(28, 28)));
             topbar.Controls.Add(CreateLabel(
                 "KINOJO LOGIN",
                 new Font("Segoe UI", 10F, FontStyle.Bold),
@@ -262,9 +255,10 @@ namespace KinojoMeterLauncher
             _passKey = new LauncherPassKeyInput
             {
                 Location = new Point(44, 169),
-                Size = new Size(430, 54)
+                Size = new Size(430, 54),
+                Enabled = false
             };
-            _passKey.SubmitRequested += async delegate { await LoginAsync(); };
+            _passKey.SubmitRequested += async delegate { await HandlePrimaryActionAsync(); };
             content.Controls.Add(_passKey);
 
             _progress = new LauncherProgressBar
@@ -287,9 +281,10 @@ namespace KinojoMeterLauncher
             {
                 Text = "로그인",
                 Location = new Point(44, 306),
-                Size = new Size(430, 52)
+                Size = new Size(430, 52),
+                Enabled = false
             };
-            _loginButton.Click += async delegate { await LoginAsync(); };
+            _loginButton.Click += async delegate { await HandlePrimaryActionAsync(); };
             content.Controls.Add(_loginButton);
 
             var security = CreateLabel(
@@ -302,7 +297,7 @@ namespace KinojoMeterLauncher
             content.Controls.Add(security);
 
             AcceptButton = _loginButton;
-            Shown += delegate { _passKey.FocusInput(); };
+            Shown += async delegate { await CheckLauncherUpdateOnStartupAsync(); };
             FormClosing += delegate(object sender, FormClosingEventArgs args)
             {
                 if (_busy && DialogResult != DialogResult.OK) args.Cancel = true;
@@ -310,6 +305,86 @@ namespace KinojoMeterLauncher
         }
 
         public LauncherLoginResult LoginResult { get; private set; }
+
+        private async Task HandlePrimaryActionAsync()
+        {
+            if (_launcherUpdateRequired) await CheckLauncherUpdateOnStartupAsync();
+            else await LoginAsync();
+        }
+
+        private async Task CheckLauncherUpdateOnStartupAsync()
+        {
+            if (_busy) return;
+            _busy = true;
+            _launcherUpdateRequired = false;
+            _loginButton.Enabled = false;
+            _loginButton.Text = "Launcher 확인 중...";
+            _passKey.Enabled = false;
+            SetStatus("최신 Launcher 버전을 확인하고 있습니다.", false, 8);
+            var updateDetected = false;
+            var installerStarted = false;
+            try
+            {
+                LauncherUpdateCheckResult check;
+                using (var api = new LauncherApiClient())
+                    check = await api.CheckLauncherUpdateAsync();
+
+                if (check != null && check.ReleaseAvailable && check.Release != null)
+                {
+                    using (var updater = new LauncherUpdateService())
+                    {
+                        var calculated = updater.IsUpdateAvailable(check.Release);
+                        if (calculated != check.UpdateAvailable)
+                            throw new InvalidOperationException("Launcher 업데이트 버전 판정이 Server와 일치하지 않습니다.");
+                        if (calculated)
+                        {
+                            updateDetected = true;
+                            _launcherUpdateRequired = true;
+                            var progress = new Progress<LauncherUpdateProgress>(value =>
+                            {
+                                var percentage = value == null ? 0 : Math.Max(0, Math.Min(100, value.Percentage));
+                                SetStatus(value == null ? "Launcher 업데이트 중" : value.Stage, false, percentage);
+                            });
+                            installerStarted = await updater.DownloadAndLaunchAsync(check.Release, progress, CancellationToken.None);
+                            if (!installerStarted) throw new InvalidOperationException("Launcher 업데이트 설치기를 시작하지 못했습니다.");
+                        }
+                    }
+                }
+
+                if (installerStarted)
+                {
+                    SetStatus("Launcher를 업데이트한 뒤 자동으로 다시 실행합니다.", false, 100);
+                    _busy = false;
+                    Close();
+                    return;
+                }
+
+                SetStatus("Launcher 최신 버전입니다. PASS KEY를 입력해 주세요.", false, 0);
+            }
+            catch (Exception error)
+            {
+                if (updateDetected)
+                {
+                    _launcherUpdateRequired = true;
+                    SetStatus(error.Message, true, _progress.Value);
+                }
+                else
+                {
+                    SetStatus("Launcher 업데이트 확인을 건너뛰었습니다. PASS KEY 로그인을 계속할 수 있습니다.", false, 0);
+                }
+            }
+            finally
+            {
+                _busy = false;
+                if (!IsDisposed && !installerStarted)
+                {
+                    _loginButton.Enabled = true;
+                    _loginButton.Text = _launcherUpdateRequired ? "업데이트 다시 시도" : "로그인";
+                    _passKey.Enabled = !_launcherUpdateRequired;
+                    if (!_launcherUpdateRequired) _passKey.FocusInput();
+                }
+            }
+        }
 
         private async Task LoginAsync()
         {
@@ -352,9 +427,9 @@ namespace KinojoMeterLauncher
                 if (!IsDisposed && DialogResult != DialogResult.OK)
                 {
                     _loginButton.Enabled = true;
-                    _loginButton.Text = "다시 로그인";
-                    _passKey.Enabled = true;
-                    _passKey.FocusInput();
+                    _loginButton.Text = _launcherUpdateRequired ? "업데이트 다시 시도" : "다시 로그인";
+                    _passKey.Enabled = !_launcherUpdateRequired;
+                    if (!_launcherUpdateRequired) _passKey.FocusInput();
                 }
             }
         }

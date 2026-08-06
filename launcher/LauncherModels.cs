@@ -40,6 +40,38 @@ namespace KinojoMeterLauncher
         public CoreReleaseManifest Release { get; set; }
     }
 
+    internal sealed class LauncherUpdateCheckResult
+    {
+        public bool ReleaseAvailable { get; set; }
+        public bool UpdateAvailable { get; set; }
+        public LauncherUpdateManifest Release { get; set; }
+    }
+
+    internal sealed class LauncherUpdateManifest
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string Version { get; set; }
+        public string FileVersion { get; set; }
+        public string MinimumVersion { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string Sha256 { get; set; }
+        public string DownloadUrl { get; set; }
+        public bool Mandatory { get; set; }
+        public string ReleaseNote { get; set; }
+        public bool CodeSignatureRequired { get; set; }
+        public string PublisherSubject { get; set; }
+        public string TrustMode { get; set; }
+        public bool SmartScreenWarningExpected { get; set; }
+    }
+
+    internal sealed class LauncherUpdateProgress
+    {
+        public int Percentage { get; set; }
+        public string Stage { get; set; }
+    }
+
     internal sealed class CoreReleaseManifest
     {
         public int SchemaVersion { get; set; }
