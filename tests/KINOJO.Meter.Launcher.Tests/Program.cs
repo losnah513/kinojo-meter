@@ -12,7 +12,7 @@ namespace KinojoMeterLauncher
     internal static class LauncherVersion
     {
         public const string Channel = LauncherBuildProfile.Channel;
-        public const string Current = "1.1.0";
+        public const string Current = "1.1.1";
 
         public static bool IsStaging
         {
