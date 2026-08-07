@@ -968,22 +968,34 @@ namespace KinojoMeterLauncher
                         sameVersion ? "설치된 Core의 무결성을 확인하고 있습니다." : "최신 Core를 안전하게 내려받고 있습니다.",
                         false,
                         24);
+                    var prepareProgressActive = true;
                     var progress = new Progress<int>(value =>
                     {
+                        if (!prepareProgressActive || IsDisposed || Disposing) return;
                         var mapped = 24 + (int)Math.Round(Math.Max(0, Math.Min(100, value)) * 0.70D);
                         _progress.Value = Math.Max(0, Math.Min(94, mapped));
                         _progressText.Text = _progress.Value + "%";
                     });
-                    _preparedCore = await installer.EnsureInstalledAsync(
-                        authorization.Release,
-                        api.ProjectHost,
-                        progress,
-                        _cancellation.Token);
+                    try
+                    {
+                        _preparedCore = await installer.EnsureInstalledAsync(
+                            authorization.Release,
+                            api.ProjectHost,
+                            progress,
+                            _cancellation.Token);
+                    }
+                    finally
+                    {
+                        // Progress<T> posts callbacks asynchronously to the UI context. Once
+                        // install/verification is complete, queued 94% callbacks must never
+                        // overwrite the terminal 100% state below.
+                        prepareProgressActive = false;
+                    }
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        "미터기 준비 완료",
-                        _preparedCore.Changed ? "최신 Core 업데이트와 무결성 검증을 완료했습니다." : "최신 Core와 파일 무결성을 확인했습니다.",
+                        _preparedCore.Changed ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        _preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core이며 파일 무결성 검증까지 완료했습니다.",
                         false,
                         100);
                     return true;
