@@ -1,0 +1,23 @@
+name: Prepare source readback bundle
+
+'on':
+  push:
+    branches: ['ops/source-readback-260809']
+    paths: ['.github/workflows/source-readback.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create source archive
+        shell: bash
+        run: zip -qr source-readback.zip . -x '.git/*' 'source-readback.zip'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kinojo-meter-main-source-readback
+          path: source-readback.zip
+          retention-days: 1
