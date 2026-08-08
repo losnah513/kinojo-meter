@@ -31,6 +31,12 @@ namespace KinojoMeterLauncher
             try
             {
                 Run("channel profile is compile-time bound", VerifyChannelProfile);
+                Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
+                Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
+                Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
+                Run("reject mismatched Core update request id", VerifyCoreUpdateHandoffRequestMismatch);
+                Run("format takeover READY signal", VerifyCoreUpdateHandoffReadySignal);
+                Run("compare Core handoff semantic versions", VerifyCoreUpdateHandoffVersionComparison);
                 Run("accept six PASS KEY text elements", VerifyPassKeyLength);
                 Run("reject incomplete PASS KEY", VerifyIncompletePassKey);
                 Run("valid package", () => VerifyPackage(root, false, false, false));
@@ -100,6 +106,117 @@ namespace KinojoMeterLauncher
                 try { Directory.Delete(root, true); }
                 catch { }
             }
+        }
+
+        private static void VerifyCoreUpdateHandoffArguments()
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            CoreUpdateHandoffRequest request;
+            string error;
+            if (!CoreUpdateHandoffProtocol.TryParseArguments(new[]
+                {
+                    CoreUpdateHandoffProtocol.ModeArgument,
+                    CoreUpdateHandoffProtocol.RequestArgument,
+                    requestId,
+                    CoreUpdateHandoffProtocol.ProcessArgument,
+                    "321"
+                }, out request, out error) || request == null || request.CoreProcessId != 321 ||
+                !String.Equals(request.RequestId, requestId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Hidden handoff arguments were not parsed.");
+        }
+
+        private static void VerifyCoreUpdateHandoffCommandLineBoundary()
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            var args = new[]
+            {
+                CoreUpdateHandoffProtocol.ModeArgument,
+                CoreUpdateHandoffProtocol.RequestArgument,
+                requestId,
+                CoreUpdateHandoffProtocol.ProcessArgument,
+                "321"
+            };
+            var serialized = String.Join(" ", args);
+            if (serialized.IndexOf("session", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                serialized.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                serialized.IndexOf("installation", StringComparison.OrdinalIgnoreCase) >= 0)
+                throw new InvalidOperationException("Secret-bearing fields leaked into Launcher arguments.");
+
+            CoreUpdateHandoffRequest ignored;
+            string error;
+            if (CoreUpdateHandoffProtocol.TryParseArguments(args.Concat(new[] { "--session-token", "secret" }).ToArray(), out ignored, out error))
+                throw new InvalidOperationException("Unexpected secret-bearing Launcher arguments were accepted.");
+        }
+
+        private static void VerifyCoreUpdateHandoffEnvelope()
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            var request = new CoreUpdateHandoffRequest { RequestId = requestId, CoreProcessId = 321 };
+            var token = new String('T', 32);
+            var installationId = Guid.NewGuid().ToString("N");
+            var raw = new Dictionary<string, object>
+            {
+                { "schemaVersion", 1 },
+                { "requestId", requestId },
+                { "coreProcessId", 321 },
+                { "sessionToken", token },
+                { "installationId", installationId },
+                { "currentCoreVersion", "0.2.49" },
+                { "issuedAtUtc", DateTime.UtcNow.ToString("o") },
+                { "account", new Dictionary<string, object> { { "mainCharacterName", "청소기" } } },
+                { "characters", new List<Dictionary<string, object>>
+                    {
+                        new Dictionary<string, object> { { "characterKey", "self" }, { "characterName", "청소기" } }
+                    }
+                }
+            };
+            var line = CoreUpdateHandoffProtocol.EnvelopePrefix + Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(raw)));
+            var parsed = CoreUpdateHandoffProtocol.ParseEnvelopeLineForTest(line, request, DateTime.UtcNow);
+            if (parsed == null || parsed.SessionToken != token || parsed.InstallationId != installationId ||
+                parsed.Characters == null || parsed.Characters.Count != 1)
+                throw new InvalidOperationException("Redirected handoff envelope was not parsed.");
+        }
+
+        private static void VerifyCoreUpdateHandoffRequestMismatch()
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            var request = new CoreUpdateHandoffRequest { RequestId = requestId, CoreProcessId = 321 };
+            var raw = new Dictionary<string, object>
+            {
+                { "schemaVersion", 1 },
+                { "requestId", Guid.NewGuid().ToString("N") },
+                { "coreProcessId", 321 },
+                { "sessionToken", new String('T', 32) },
+                { "installationId", Guid.NewGuid().ToString("N") },
+                { "currentCoreVersion", "0.2.49" },
+                { "issuedAtUtc", DateTime.UtcNow.ToString("o") },
+                { "account", new Dictionary<string, object>() },
+                { "characters", new List<Dictionary<string, object>>
+                    {
+                        new Dictionary<string, object> { { "characterKey", "self" } }
+                    }
+                }
+            };
+            var line = CoreUpdateHandoffProtocol.EnvelopePrefix + Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(raw)));
+            ExpectFailure(() => CoreUpdateHandoffProtocol.ParseEnvelopeLineForTest(line, request, DateTime.UtcNow));
+        }
+
+        private static void VerifyCoreUpdateHandoffReadySignal()
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            var expected = CoreUpdateHandoffProtocol.ReadyPrefix + requestId + " 0.2.50";
+            if (!String.Equals(CoreUpdateHandoffProtocol.ReadyLine(requestId, "0.2.50"), expected, StringComparison.Ordinal))
+                throw new InvalidOperationException("Launcher takeover READY signal changed.");
+        }
+
+        private static void VerifyCoreUpdateHandoffVersionComparison()
+        {
+            if (CoreUpdateHandoffProtocol.CompareVersions("0.2.50", "0.2.49") <= 0 ||
+                CoreUpdateHandoffProtocol.CompareVersions("0.2.49", "0.2.49") != 0 ||
+                CoreUpdateHandoffProtocol.CompareVersions("0.2.48", "0.2.49") >= 0)
+                throw new InvalidOperationException("Core handoff semantic version comparison failed.");
         }
 
         private static void VerifyChannelProfile()
