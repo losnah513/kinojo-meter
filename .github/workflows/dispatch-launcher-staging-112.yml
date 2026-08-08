@@ -1,0 +1,27 @@
+name: Dispatch Launcher 1.1.2 staging publish
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dispatch-launcher-staging-112.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded Launcher staging release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run launcher-build.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f target_channel=staging \
+            -f confirm_publish=PUBLISH_STAGING_LAUNCHER_1.1.2
