@@ -36,6 +36,7 @@
     <Compile Include="LauncherContentClient.cs" />
     <Compile Include="LauncherUpdateService.cs" />
     <Compile Include="CorePackageInstaller.cs" />
+    <Compile Include="CoreUpdateHandoffMode.cs" />
     <Compile Include="CoreReleaseIntegrityVerifier.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />

@@ -28,27 +28,41 @@ namespace KinojoMeterLauncher
     internal static class Program
     {
         [STAThread]
-        private static void Main()
+        private static int Main(string[] args)
         {
+            var handoffRequested = CoreUpdateHandoffProtocol.IsRequested(args);
+            CoreUpdateHandoffRequest handoffRequest = null;
+            string handoffError;
+            if (handoffRequested && !CoreUpdateHandoffProtocol.TryParseArguments(args, out handoffRequest, out handoffError))
+            {
+                WriteHandoffRejected("", handoffError);
+                return 64;
+            }
+
             using (var singleInstance = new Mutex(true, LauncherBuildProfile.MutexName, out var created))
             {
                 if (!created)
                 {
-                    MessageBox.Show("KINOJO Meter Launcher" + LauncherBuildProfile.DisplaySuffix + "가 이미 실행 중입니다.", "KINOJO Meter" + LauncherBuildProfile.DisplaySuffix, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
+                    if (handoffRequested) WriteHandoffRejected(handoffRequest == null ? "" : handoffRequest.RequestId, "LAUNCHER_BUSY");
+                    else MessageBox.Show("KINOJO Meter Launcher" + LauncherBuildProfile.DisplaySuffix + "가 이미 실행 중입니다.", "KINOJO Meter" + LauncherBuildProfile.DisplaySuffix, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return 2;
                 }
 
-                AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs args)
+                AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs value)
                 {
-                    Trace.WriteLine(args.ExceptionObject);
+                    Trace.WriteLine(value == null ? null : value.ExceptionObject);
                 };
+
+                if (handoffRequested)
+                    return CoreUpdateHandoffMode.RunAsync(handoffRequest).GetAwaiter().GetResult();
+
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
                 LauncherLoginResult login;
                 using (var loginForm = new LauncherLoginForm())
                 {
-                    if (loginForm.ShowDialog() != DialogResult.OK || loginForm.LoginResult == null) return;
+                    if (loginForm.ShowDialog() != DialogResult.OK || loginForm.LoginResult == null) return 0;
                     login = loginForm.LoginResult;
                 }
 
@@ -71,7 +85,19 @@ namespace KinojoMeterLauncher
                         }
                     }
                 }
+                return 0;
             }
+        }
+
+        private static void WriteHandoffRejected(string requestId, string code)
+        {
+            if (!Console.IsOutputRedirected) return;
+            try
+            {
+                Console.Out.WriteLine(CoreUpdateHandoffProtocol.RejectedLine(requestId, code));
+                Console.Out.Flush();
+            }
+            catch { }
         }
     }
 }
