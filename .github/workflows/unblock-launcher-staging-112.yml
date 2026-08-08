@@ -1,0 +1,23 @@
+name: Unblock Launcher 1.1.2 staging publish
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/unblock-launcher-staging-112.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  unblock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel stale Stable approval run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run cancel 31271183920 --repo "${{ github.repository }}"
