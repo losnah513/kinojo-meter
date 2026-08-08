@@ -1,0 +1,23 @@
+name: Prepare Drive source sync bundle
+
+'on':
+  push:
+    branches: ['ops/dispatch-launcher-staging-112']
+    paths: ['.github/workflows/source-sync-bundle.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create source archive
+        shell: bash
+        run: zip -qr kinojo-launcher-drive-source.zip launcher release tests/KINOJO.Meter.Launcher.Tests -x '*.git*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kinojo-launcher-drive-source
+          path: kinojo-launcher-drive-source.zip
+          retention-days: 1
