@@ -1,0 +1,31 @@
+name: Apply Staging Launcher 1.1.3 launch gate
+
+'on':
+  push:
+    branches:
+      - staging/launcher-1.1.3-launch-gate-260809
+    paths:
+      - '.github/workflows/apply-launcher-113-launch-gate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Apply deterministic source patch
+        run: python scripts/apply-launcher-113-launch-gate.py
+      - name: Commit product changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'losnah513'
+          git config user.email 'losnah513@gmail.com'
+          git add launcher/LauncherModels.cs launcher/LauncherApiClient.cs launcher/LauncherForm.cs launcher/CoreUpdateHandoffMode.cs tests/KINOJO.Meter.Launcher.Tests/Program.cs release/launcher-staging-version.json
+          git diff --cached --check
+          git commit -m 'feat: gate Core launch from Server operation state'
+          git push origin HEAD:staging/launcher-1.1.3-launch-gate-260809
