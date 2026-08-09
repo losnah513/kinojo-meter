@@ -1,0 +1,26 @@
+name: Dispatch guarded Staging Launcher 1.1.3 publish
+
+'on':
+  push:
+    branches:
+      - ops/dispatch-staging-launcher-113-260809
+    paths:
+      - '.github/workflows/dispatch-staging-launcher-113-260809.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch official guarded Launcher workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run launcher-build.yml
+          --repo '${{ github.repository }}'
+          --ref main
+          -f target_channel=staging
+          -f confirm_publish=PUBLISH_STAGING_LAUNCHER_1.1.3
