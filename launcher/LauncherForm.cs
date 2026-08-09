@@ -52,6 +52,7 @@ namespace KinojoMeterLauncher
         private CancellationTokenSource _cancellation;
         private CoreInstallResult _preparedCore;
         private string _installationId;
+        private MeterLaunchOperation _launchOperation;
         private bool _operationBusy;
 
         public LauncherForm(LauncherLoginResult login)
@@ -317,6 +318,7 @@ namespace KinojoMeterLauncher
             {
                 var contentTask = LoadContentAsync();
                 await PrepareCoreAsync();
+                await RefreshLaunchOperationAsync(true);
                 await contentTask;
             };
             ResumeLayout(true);
@@ -899,9 +901,10 @@ namespace KinojoMeterLauncher
             _progress.Error = false;
             try
             {
+                if (!await RefreshLaunchOperationAsync(false)) return;
                 using (var installer = new CorePackageInstaller())
                 {
-                    SetOperationState("미터기 실행 확인 중", "Core 실행과 준비 신호를 확인하고 있습니다.", false, 92);
+                    SetOperationState("미터기 실행 확인 중", "Server 실행 허용 상태와 Core 준비 신호를 확인했습니다.", false, 92);
                     await installer.LaunchAndVerifyAsync(_preparedCore, _login, _installationId);
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
@@ -1018,10 +1021,44 @@ namespace KinojoMeterLauncher
             }
         }
 
+        private async Task<bool> RefreshLaunchOperationAsync(bool showAllowedState)
+        {
+            try
+            {
+                using (var api = new LauncherApiClient())
+                    _launchOperation = await api.GetLaunchOperationAsync();
+                if (_launchOperation == null || !_launchOperation.Enabled)
+                {
+                    var message = _launchOperation == null ? "미터기 실행 운영 상태를 확인하지 못했습니다." : _launchOperation.Message;
+                    SetOperationState("미터기 실행 중지", message, false, _progress.Value);
+                    return false;
+                }
+                if (showAllowedState && _preparedCore != null)
+                    SetOperationState("실행 준비 완료", "현재 미터기 실행이 허용되어 있습니다.", false, 100);
+                return true;
+            }
+            catch (Exception error)
+            {
+                _launchOperation = new MeterLaunchOperation
+                {
+                    Channel = LauncherVersion.Channel,
+                    Enabled = false,
+                    Message = error.Message
+                };
+                SetOperationState("실행 상태 확인 필요", error.Message, true, _progress.Value);
+                return false;
+            }
+            finally
+            {
+                if (!IsDisposed) RefreshStartButton();
+            }
+        }
+
         private void RefreshStartButton()
         {
             if (_start == null) return;
-            _start.Enabled = _terms.Checked && !_operationBusy && !String.IsNullOrWhiteSpace(_login.SessionToken);
+            _start.Enabled = _terms.Checked && !_operationBusy && !String.IsNullOrWhiteSpace(_login.SessionToken) &&
+                _launchOperation != null && _launchOperation.Enabled;
         }
 
         private void SetOperationState(string title, string text, bool error, int progress)

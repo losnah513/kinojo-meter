@@ -100,6 +100,19 @@ namespace KinojoMeterLauncher
             return ParseLauncherUpdate(result);
         }
 
+        public async Task<MeterLaunchOperation> GetLaunchOperationAsync()
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "distributionManifest" },
+                { "channel", LauncherVersion.Channel },
+                { "launcherVersion", LauncherVersion.Current }
+            }).ConfigureAwait(false);
+            if (!Bool(result, "ok"))
+                throw new InvalidOperationException(Text(result, "message", "미터기 실행 운영 상태를 확인하지 못했습니다."));
+            return ParseLaunchOperation(result);
+        }
+
         public async Task LogoutAsync(string sessionToken)
         {
             if (String.IsNullOrWhiteSpace(sessionToken)) return;
@@ -182,6 +195,34 @@ namespace KinojoMeterLauncher
         internal static LauncherUpdateCheckResult ParseLauncherUpdateForTest(Dictionary<string, object> value)
         {
             return ParseLauncherUpdate(value);
+        }
+
+        internal static MeterLaunchOperation ParseLaunchOperationForTest(Dictionary<string, object> value)
+        {
+            return ParseLaunchOperation(value);
+        }
+
+        private static MeterLaunchOperation ParseLaunchOperation(Dictionary<string, object> value)
+        {
+            var operation = Dict(value, "operation");
+            if (operation == null)
+            {
+                return new MeterLaunchOperation
+                {
+                    Channel = LauncherVersion.Channel,
+                    Enabled = false,
+                    Message = "미터기 실행 운영 상태를 확인하고 있습니다. 잠시 후 다시 시도해 주세요."
+                };
+            }
+            var message = Text(operation, "launchMessage", "").Trim();
+            return new MeterLaunchOperation
+            {
+                Channel = Text(operation, "channel", LauncherVersion.Channel),
+                Enabled = Bool(operation, "launchEnabled"),
+                Message = String.IsNullOrWhiteSpace(message)
+                    ? "키노조 미터 실행이 일시 중지되어 있습니다. 잠시 후 다시 시도해 주세요."
+                    : message
+            };
         }
 
         private static LauncherUpdateCheckResult ParseLauncherUpdate(Dictionary<string, object> value)

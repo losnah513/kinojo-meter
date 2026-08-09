@@ -234,6 +234,7 @@ namespace KinojoMeterLauncher
                         throw new InvalidOperationException("Core 업데이트 승인을 받지 못했습니다.");
                     if (CoreUpdateHandoffProtocol.CompareVersions(authorization.Release.CoreVersion, envelope.CurrentCoreVersion) <= 0)
                         throw new InvalidOperationException("설치 가능한 새 Core가 없습니다.");
+                    RequireLaunchEnabled(await api.GetLaunchOperationAsync().ConfigureAwait(false));
 
                     var login = new LauncherLoginResult
                     {
@@ -258,6 +259,7 @@ namespace KinojoMeterLauncher
                             api.ProjectHost,
                             null,
                             CancellationToken.None).ConfigureAwait(false);
+                        RequireLaunchEnabled(await api.GetLaunchOperationAsync().ConfigureAwait(false));
                         await installer.LaunchAndVerifyAsync(install, login, envelope.InstallationId).ConfigureAwait(false);
                         return 0;
                     }
@@ -295,6 +297,13 @@ namespace KinojoMeterLauncher
             }
         }
 
+        private static void RequireLaunchEnabled(MeterLaunchOperation operation)
+        {
+            if (operation != null && operation.Enabled) return;
+            var message = operation == null ? "미터기 실행 운영 상태를 확인하지 못했습니다." : operation.Message;
+            throw new InvalidOperationException("미터기 실행 차단 · " + message);
+        }
+
         private static Process RequireRunningCoreProcess(int processId)
         {
             Process process;
@@ -311,6 +320,7 @@ namespace KinojoMeterLauncher
         private static string FailureCode(Exception error)
         {
             if (error == null) return "HANDOFF_FAILED";
+            if (error.Message.IndexOf("실행 차단", StringComparison.OrdinalIgnoreCase) >= 0) return "LAUNCH_DISABLED";
             if (error.Message.IndexOf("승인", StringComparison.OrdinalIgnoreCase) >= 0) return "AUTHORIZATION_REJECTED";
             if (error.Message.IndexOf("새 Core", StringComparison.OrdinalIgnoreCase) >= 0) return "NO_UPDATE";
             if (error.Message.IndexOf("프로세스", StringComparison.OrdinalIgnoreCase) >= 0) return "CORE_PROCESS_INVALID";

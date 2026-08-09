@@ -31,6 +31,7 @@ namespace KinojoMeterLauncher
             try
             {
                 Run("channel profile is compile-time bound", VerifyChannelProfile);
+                Run("parse Server Meter launch operation", VerifyMeterLaunchOperationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -106,6 +107,41 @@ namespace KinojoMeterLauncher
                 try { Directory.Delete(root, true); }
                 catch { }
             }
+        }
+
+        private static void VerifyMeterLaunchOperationParsing()
+        {
+            var allowed = LauncherApiClient.ParseLaunchOperationForTest(new Dictionary<string, object>
+            {
+                { "ok", true },
+                { "operation", new Dictionary<string, object>
+                    {
+                        { "channel", LauncherVersion.Channel },
+                        { "launchEnabled", true },
+                        { "launchMessage", "테스트 실행 허용" }
+                    }
+                }
+            });
+            if (allowed == null || !allowed.Enabled || allowed.Channel != LauncherVersion.Channel || allowed.Message != "테스트 실행 허용")
+                throw new InvalidOperationException("Server Meter launch operation was not parsed.");
+
+            var blocked = LauncherApiClient.ParseLaunchOperationForTest(new Dictionary<string, object>
+            {
+                { "ok", true },
+                { "operation", new Dictionary<string, object>
+                    {
+                        { "channel", LauncherVersion.Channel },
+                        { "launchEnabled", false },
+                        { "launchMessage", "점검 중" }
+                    }
+                }
+            });
+            if (blocked == null || blocked.Enabled || blocked.Message != "점검 중")
+                throw new InvalidOperationException("Server launch-disabled operation was not fail-closed.");
+
+            var missing = LauncherApiClient.ParseLaunchOperationForTest(new Dictionary<string, object> { { "ok", true } });
+            if (missing == null || missing.Enabled)
+                throw new InvalidOperationException("Missing launch operation did not fail closed.");
         }
 
         private static void VerifyCoreUpdateHandoffArguments()
