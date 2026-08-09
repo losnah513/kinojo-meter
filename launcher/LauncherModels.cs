@@ -40,6 +40,13 @@ namespace KinojoMeterLauncher
         public CoreReleaseManifest Release { get; set; }
     }
 
+    internal sealed class MeterLaunchOperation
+    {
+        public string Channel { get; set; }
+        public bool Enabled { get; set; }
+        public string Message { get; set; }
+    }
+
     internal sealed class LauncherUpdateCheckResult
     {
         public bool ReleaseAvailable { get; set; }
