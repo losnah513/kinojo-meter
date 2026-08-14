@@ -31,6 +31,14 @@ if ([string]$stagingLauncher.channel -ne 'staging' -or $stagingLauncher.publicDi
     throw 'Staging Launcher must remain private and channel-locked for E2E.'
 }
 
+foreach ($relativeManifest in @('launcher\app.manifest', 'launcher-setup\app.manifest')) {
+    $applicationManifest = Get-Content -LiteralPath (Join-Path $root $relativeManifest) -Raw
+    if ($applicationManifest -notmatch 'requestedExecutionLevel\s+level="asInvoker"' -or
+        $applicationManifest -match 'requireAdministrator|highestAvailable') {
+        throw "Launcher and per-user Setup must not request routine elevation. ($relativeManifest)"
+    }
+}
+
 Require-Text '.github\workflows\launcher-build.yml' 'build-launcher[.]ps1' 'Public workflow does not build the Launcher.'
 Require-Text '.github\workflows\launcher-build.yml' 'PUBLISH_STAGING_LAUNCHER_' 'Staging Launcher publication requires no explicit confirmation.'
 Require-Text '.github\workflows\launcher-build.yml' 'meter-launcher-staging' 'Staging Launcher publication environment is missing.'
