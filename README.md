@@ -1,11 +1,13 @@
 ﻿# KINOJO Meter Launcher + Private Core
 
 
-기준일: 2026-08-06
-운영 기준: Stable Launcher `1.1.0` / Stable Private Core `0.2.41` / 공개 통계·관측 SQL `50015` / `RANK_ALLOWLIST [3,4,5]`
+기준일: 2026-08-15
+운영 기준: Stable Launcher `1.1.4` / Stable Private Core `0.2.68`
 
-전환 준비 기준: Launcher `1.1.0` / Stable Private Core `0.2.41` / Staging Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
-전환 상태: Stable Launcher `1.1.0`과 Core `0.2.41`이 발행됐고 Server `downloadReady=true` 및 실제 Windows 설치·업데이트·실행 E2E를 확인했다. 운영 모드는 관리자 설정 `RANK_ALLOWLIST [3,4,5]`다. Staging은 Core `0.2.39`를 유지하고 `CLOSED`로 닫았다.
+Stable Launcher `1.1.4`부터 바탕화면 바로가기의 일상 실행은 `asInvoker`로 동작하며 UAC 권한 상승을 요청하지 않는다. 미서명 신규 설치 파일에 대한 SmartScreen 평판 안내는 일상 실행 UAC와 별개다.
+
+과거 전환 기준(2026-08-06): Launcher `1.1.0` / Stable Private Core `0.2.41` / Staging Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
+현재 상태: Stable Launcher `1.1.4`와 Core `0.2.68`의 일반 실행 UAC 제거 계약을 적용한다. 설치·업데이트는 사용자별 `%LocalAppData%` 범위에서 수행한다.
 
 ## 사용자 기준 기본 흐름
 
@@ -21,7 +23,7 @@ GitHub Release의 Launcher 설치 파일, 최신 버전 확인, Core 다운로�
 
 ## 목표 구조
 
-WEB에는 공개 Launcher 설치기만 둔다. 개인 취미 배포라 Launcher/Setup EXE는 Windows 유료 게시자 코드서명을 사용하지 않으며 SmartScreen의 `알 수 없는 게시자` 경고가 예상된다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. 실행된 Launcher는 Server의 공개 release manifest와 GitHub 설치 파일의 크기·SHA-256을 확인해 기존 설치기로 자신을 교체하고 자동 재실행한다. 로그인 뒤에는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core ZIP과 내부 install manifest는 RSA-3072/SHA-256으로 검증하고 버전별 폴더에 설치한 뒤 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
+WEB에는 공개 Launcher 설치기만 둔다. 개인 취미 배포라 Launcher/Setup EXE는 Windows 유료 게시자 코드서명을 사용하지 않아 신규 설치 파일에는 SmartScreen 평판 안내가 표시될 수 있다. 설치된 Launcher와 Setup은 `asInvoker`로 실행되어 UAC 권한 상승을 요청하지 않는다. 설치기는 사용자별 `%LocalAppData%\Programs\KINOJO Meter`에 Launcher 앱을 설치하고 바탕화면·시작 메뉴·앱 제거 항목을 만든다. 실행된 Launcher는 Server의 공개 release manifest와 GitHub 설치 파일의 크기·SHA-256을 확인해 기존 설치기로 자신을 교체하고 자동 재실행한다. 로그인 뒤에는 PASS KEY 세션, 현재 동의, 운영 상태와 최소 버전을 Server에서 확인한 후 60초짜리 비공개 Storage URL로 Core를 받는다. Core ZIP과 내부 install manifest는 RSA-3072/SHA-256으로 검증하고 버전별 폴더에 설치한 뒤 `active.json`만 원자적으로 바꾼다. 새 Core가 준비 handshake 전에 실패하면 이전 정상 버전을 자동 실행한다.
 
 ```text
 WEB → unsigned hobby Launcher → meter-ingest → private Storage → RSA-signed Core manifest
@@ -362,7 +364,7 @@ Core 패키지는 GitHub 공개 Release에 올리지 않으며 GitHub token이�
 - 설치 후 EXE 실행이 5초 이상 유지되는지 확인하며, 실패하면 기존 파일·바로가기·제거 프로그램 정보를 자동 복원합니다.
 - 설치마다 `install-manifest.json`을 생성해 관리 파일의 크기와 SHA-256을 기록하고 복구 설치 검증에 사용합니다.
 - 사용자 설정·오버레이 위치·로그는 `%LOCALAPPDATA%\KINOJO Meter`에 두므로 프로그램 파일 교체와 제거 후에도 유지합니다.
-- 앱과 설치기는 관리자 권한을 자동 요청해 WinDivert 드라이버 권한을 확보합니다.
+- Launcher와 사용자별 설치기는 `asInvoker`로 실행하며 관리자 권한을 자동 요청하지 않습니다. Core 캡처는 일반 사용자 접근이 허용된 Npcap을 우선 사용하고, 관리자 전용 WinDivert를 자동 권한 상승으로 실행하지 않습니다.
 - Windows 제거 프로그램에는 제거와 복구 설치 진입점을 등록합니다.
 - 기존 `%LOCALAPPDATA%\Programs\KINOJO Meter Test` 설치와 바로가기·레지스트리는 새 버전 실행 확인 후 정리합니다.
 - 프로그램 시작 시 로그인 전 `desktopUpdate` action을 호출하고, 로그인 후 Catalog bootstrap에서도 같은 릴리스 계약을 다시 확인합니다.
@@ -446,7 +448,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 
 - 앱·설치기 표준 매니페스트 `app.manifest`
-- Drive 다운로드로 `app.manifest.xml`만 존재하면 XML 구조와 `requireAdministrator` 설정을 검증한 뒤 표준 이름으로 자동 복구
+- 현재 Launcher·Setup의 표준 매니페스트는 `asInvoker`를 강제하며 `requireAdministrator` 또는 `highestAvailable`이 섞이면 빌드를 중단
 - `app.manifest`와 `app.manifest.xml`이 함께 존재할 때 내용이 다르면 안전을 위해 빌드 중단
 - Visual Studio MSBuild와 .NET Framework 4.8 Targeting Pack
 - WinDivert x64 DLL·드라이버의 고정 SHA-256

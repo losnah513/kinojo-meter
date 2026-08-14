@@ -38,7 +38,8 @@ namespace KinojoMeterLauncherSetup
             if (!silent && MessageBox.Show(
                 "KINOJO Meter Launcher를 이 Windows 사용자 계정에 설치합니다.\n\n" +
                 "이 프로그램은 개인 취미 프로젝트라 유료 Windows 게시자 인증서를 사용하지 않습니다. " +
-                "Windows에 '알 수 없는 게시자' 경고가 표시될 수 있습니다.\n\n" +
+                "새 설치 파일을 처음 내려받을 때 Windows SmartScreen의 평판 안내가 표시될 수 있지만, " +
+                "설치된 Launcher와 미터기는 관리자 권한을 요청하지 않습니다.\n\n" +
                 "Core 업데이트는 RSA 전자서명과 SHA-256으로 별도 검증합니다. 계속할까요?",
                 SetupBuildProfile.ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 

@@ -66,6 +66,15 @@ function Assert-FileVersion([string]$Path, [string]$Expected) {
     if ($actual -ne $Expected) { throw "File version mismatch: $Path expected=$Expected actual=$actual" }
 }
 
+function Assert-EmbeddedAsInvoker([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Build output is missing: $Path" }
+    $binaryText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($Path))
+    if ($binaryText -notmatch 'requestedExecutionLevel\s+level="asInvoker"' -or
+        $binaryText -match 'requireAdministrator|highestAvailable') {
+        throw "Built executable requests elevation instead of asInvoker: $Path"
+    }
+}
+
 New-Item $buildDirectory -ItemType Directory -Force | Out-Null
 New-Item $appBuildDirectory -ItemType Directory -Force | Out-Null
 
@@ -79,10 +88,12 @@ if (-not $SetupOnly) {
 
     $builtApp = Join-Path $appOutput $launcherAssemblyName
     Assert-FileVersion $builtApp $fileVersion
+    Assert-EmbeddedAsInvoker $builtApp
     Copy-Item -LiteralPath $builtApp -Destination $stagedApp -Force
 }
 
 Assert-FileVersion $stagedApp $fileVersion
+Assert-EmbeddedAsInvoker $stagedApp
 if ($AppOnly) {
     Write-Host "Launcher application: $stagedApp"
     return
@@ -98,8 +109,10 @@ if ($LASTEXITCODE -ne 0) { throw "Launcher setup build failed with exit code $LA
 $builtSetup = Join-Path $setupOutput $setupAssemblyName
 $publishedSetup = Join-Path $buildDirectory $artifactName
 Assert-FileVersion $builtSetup $fileVersion
+Assert-EmbeddedAsInvoker $builtSetup
 Copy-Item -LiteralPath $builtSetup -Destination $publishedSetup -Force
 Assert-FileVersion $publishedSetup $fileVersion
+Assert-EmbeddedAsInvoker $publishedSetup
 
 $assembly = [Reflection.Assembly]::LoadFile($publishedSetup)
 $resourceName = 'KINOJO.Meter.Launcher.Payload'
