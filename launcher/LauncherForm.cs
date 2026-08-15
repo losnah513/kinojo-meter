@@ -23,6 +23,8 @@ namespace KinojoMeterLauncher
         private readonly Label _progressText;
         private readonly Label _version;
         private Label _sidebarCore;
+        private Label _sidebarBrand;
+        private Label _sidebarLauncherVersion;
         private readonly LauncherProgressBar _progress;
         private readonly LauncherCard _launchCard;
         private readonly LauncherCard _noticeCard;
@@ -56,6 +58,11 @@ namespace KinojoMeterLauncher
         private bool _operationBusy;
 
         public LauncherForm(LauncherLoginResult login)
+            : this(login, false)
+        {
+        }
+
+        internal LauncherForm(LauncherLoginResult login, bool suppressStartup)
         {
             if (login == null || String.IsNullOrWhiteSpace(login.SessionToken))
                 throw new ArgumentException("로그인 세션이 필요합니다.", "login");
@@ -314,17 +321,32 @@ namespace KinojoMeterLauncher
                 _contentCancellation.Cancel();
                 if (_cancellation != null) _cancellation.Cancel();
             };
-            Shown += async delegate
+            if (!suppressStartup)
             {
-                var contentTask = LoadContentAsync();
-                await PrepareCoreAsync();
-                await RefreshLaunchOperationAsync(true);
-                await contentTask;
-            };
+                Shown += async delegate
+                {
+                    var contentTask = LoadContentAsync();
+                    await PrepareCoreAsync();
+                    await RefreshLaunchOperationAsync(true);
+                    await contentTask;
+                };
+            }
             ResumeLayout(true);
         }
 
         public bool SessionHandedOff { get; private set; }
+
+        internal bool SidebarBrandContractForTesting
+        {
+            get
+            {
+                if (_sidebarBrand == null || _sidebarLauncherVersion == null) return false;
+                var measured = TextRenderer.MeasureText(_sidebarBrand.Text, _sidebarBrand.Font,
+                    new Size(Int32.MaxValue, _sidebarBrand.Height), TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                return String.Equals(_sidebarBrand.Text, "KINOJO LAUNCHER", StringComparison.Ordinal) &&
+                    measured.Width <= _sidebarBrand.Width && _sidebarLauncherVersion.Top >= _sidebarBrand.Bottom;
+            }
+        }
 
         private Panel BuildSidebar()
         {
@@ -343,18 +365,20 @@ namespace KinojoMeterLauncher
             };
             AttachTitleBar(brandBar);
             brandBar.Controls.Add(CreateBrandIcon(new Point(20, 18), new Size(28, 28)));
-            brandBar.Controls.Add(CreateLabel(
-                "KINOJO",
-                new Font("Segoe UI", 12F, FontStyle.Bold),
+            _sidebarBrand = CreateLabel(
+                "KINOJO LAUNCHER",
+                new Font("Segoe UI", 9F, FontStyle.Bold),
                 LauncherPalette.Text,
-                new Point(57, 19),
-                new Size(76, 28)));
-            brandBar.Controls.Add(CreateLabel(
+                new Point(57, 10),
+                new Size(150, 22));
+            brandBar.Controls.Add(_sidebarBrand);
+            _sidebarLauncherVersion = CreateLabel(
                 "v" + LauncherVersion.Current,
                 new Font("Segoe UI", 7F, FontStyle.Regular),
                 LauncherPalette.Muted,
-                new Point(134, 24),
-                new Size(64, 20)));
+                new Point(57, 35),
+                new Size(145, 18));
+            brandBar.Controls.Add(_sidebarLauncherVersion);
             sidebar.Controls.Add(brandBar);
 
             if (LauncherVersion.IsStaging)

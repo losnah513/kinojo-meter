@@ -20,8 +20,8 @@ namespace KinojoMeterLauncher
             BackColor = Color.Transparent;
             Cursor = Cursors.IBeam;
             TabStop = true;
-            AccessibleName = "키노조 웹 PASS KEY 입력";
-            Font = new Font("Malgun Gothic", 15.5F, FontStyle.Bold, GraphicsUnit.Point);
+            AccessibleName = "PASS KEY 입력";
+            Font = new Font("Malgun Gothic", 12F, FontStyle.Bold, GraphicsUnit.Point);
 
             _input = new TextBox
             {
@@ -106,7 +106,8 @@ namespace KinojoMeterLauncher
                 for (var divider = 1; divider < cellCount; divider++)
                 {
                     var x = ClientSize.Width * divider / cellCount;
-                    args.Graphics.DrawLine(border, x, 8, x, Math.Max(8, ClientSize.Height - 9));
+                    var inset = Math.Max(4, ClientSize.Height / 6);
+                    args.Graphics.DrawLine(border, x, inset, x, Math.Max(inset, ClientSize.Height - inset - 1));
                 }
             }
 
@@ -170,15 +171,22 @@ namespace KinojoMeterLauncher
         private readonly LauncherActionButton _loginButton;
         private readonly Label _status;
         private readonly LauncherProgressBar _progress;
+        private readonly Label _loginTitle;
+        private readonly Label _loginBrand;
         private bool _busy;
         private bool _launcherUpdateRequired;
 
         public LauncherLoginForm()
+            : this(false)
+        {
+        }
+
+        internal LauncherLoginForm(bool suppressStartup)
         {
             Text = "KINOJO PASS KEY 로그인" + LauncherBuildProfile.DisplaySuffix;
-            ClientSize = new Size(520, 470);
-            MinimumSize = new Size(520, 470);
-            MaximumSize = new Size(520, 470);
+            ClientSize = new Size(360, 320);
+            MinimumSize = new Size(360, 320);
+            MaximumSize = new Size(360, 320);
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -194,7 +202,7 @@ namespace KinojoMeterLauncher
                 Padding = Padding.Empty
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             Controls.Add(root);
 
@@ -205,23 +213,16 @@ namespace KinojoMeterLauncher
                 BackColor = LauncherPalette.Topbar
             };
             AttachTitleBar(topbar);
-            topbar.Controls.Add(CreateWindowControls(false));
-            topbar.Controls.Add(CreateBrandIcon(new Point(18, 18), new Size(28, 28)));
-            topbar.Controls.Add(CreateLabel(
-                "KINOJO LOGIN",
-                new Font("Segoe UI", 10F, FontStyle.Bold),
+            topbar.Controls.Add(CreateWindowControls(false, 48, 34));
+            topbar.Controls.Add(CreateBrandIcon(new Point(14, 14), new Size(20, 20)));
+            _loginBrand = CreateLabel(
+                "KINOJO LAUNCHER LOGIN" + (LauncherVersion.IsStaging ? " · TEST" : ""),
+                new Font("Segoe UI", 8.5F, FontStyle.Bold),
                 LauncherPalette.Text,
-                new Point(56, 20),
-                new Size(240, 26)));
-            if (LauncherVersion.IsStaging)
-            {
-                topbar.Controls.Add(CreateLabel(
-                    "테스트 버전",
-                    new Font("Segoe UI", 7.5F, FontStyle.Bold),
-                    LauncherPalette.AccentBright,
-                    new Point(180, 22),
-                    new Size(100, 22)));
-            }
+                new Point(48, 9),
+                new Size(244, 30));
+            _loginBrand.TextAlign = ContentAlignment.MiddleCenter;
+            topbar.Controls.Add(_loginBrand);
             root.Controls.Add(topbar, 0, 0);
 
             var content = new LauncherBackdrop
@@ -231,31 +232,20 @@ namespace KinojoMeterLauncher
             };
             root.Controls.Add(content, 0, 1);
 
-            content.Controls.Add(CreateLabel(
+            _loginTitle = CreateLabel(
                 "PASS KEY 로그인",
-                new Font("Segoe UI", 22F, FontStyle.Bold),
+                new Font("Segoe UI", 17F, FontStyle.Bold),
                 LauncherPalette.Text,
-                new Point(42, 38),
-                new Size(430, 46)));
-            content.Controls.Add(CreateLabel(
-                "키노조 웹 PASS KEY로 로그인하면 KINOJO Meter MAIN으로 이동합니다.",
-                new Font("Segoe UI", 9F, FontStyle.Regular),
-                LauncherPalette.Muted,
-                new Point(44, 89),
-                new Size(430, 42)));
-
-            var keyLabel = CreateLabel(
-                "키노조 웹 PASS KEY 입력",
-                new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                LauncherPalette.Muted,
-                new Point(44, 143),
-                new Size(220, 20));
-            content.Controls.Add(keyLabel);
+                new Point(24, 18),
+                new Size(312, 38));
+            _loginTitle.TextAlign = ContentAlignment.MiddleCenter;
+            content.Controls.Add(_loginTitle);
 
             _passKey = new LauncherPassKeyInput
             {
-                Location = new Point(44, 169),
-                Size = new Size(430, 54),
+                // Six 45x30 cells: each input rectangle is exactly 3:2.
+                Location = new Point(45, 66),
+                Size = new Size(270, 30),
                 Enabled = false
             };
             _passKey.SubmitRequested += async delegate { await HandlePrimaryActionAsync(); };
@@ -263,25 +253,26 @@ namespace KinojoMeterLauncher
 
             _progress = new LauncherProgressBar
             {
-                Location = new Point(44, 240),
-                Size = new Size(430, 7),
+                Location = new Point(45, 139),
+                Size = new Size(270, 5),
                 Value = 0
             };
             content.Controls.Add(_progress);
 
             _status = CreateLabel(
                 "PASS KEY를 입력해 주세요.",
-                new Font("Segoe UI", 8.5F, FontStyle.Regular),
+                new Font("Segoe UI", 8F, FontStyle.Regular),
                 LauncherPalette.Muted,
-                new Point(44, 260),
-                new Size(430, 38));
+                new Point(30, 101),
+                new Size(300, 32));
+            _status.TextAlign = ContentAlignment.MiddleCenter;
             content.Controls.Add(_status);
 
             _loginButton = new LauncherActionButton
             {
                 Text = "로그인",
-                Location = new Point(44, 306),
-                Size = new Size(430, 52),
+                Location = new Point(45, 158),
+                Size = new Size(270, 40),
                 Enabled = false
             };
             _loginButton.Click += async delegate { await HandlePrimaryActionAsync(); };
@@ -289,15 +280,15 @@ namespace KinojoMeterLauncher
 
             var security = CreateLabel(
                 "로그인 세션은 KINOJO Meter 실행에만 사용됩니다.",
-                new Font("Segoe UI", 7.8F, FontStyle.Regular),
+                new Font("Segoe UI", 7.2F, FontStyle.Regular),
                 Color.FromArgb(126, 137, 156),
-                new Point(44, 371),
-                new Size(430, 18));
-            security.TextAlign = ContentAlignment.TopCenter;
+                new Point(30, 217),
+                new Size(300, 18));
+            security.TextAlign = ContentAlignment.MiddleCenter;
             content.Controls.Add(security);
 
             AcceptButton = _loginButton;
-            Shown += async delegate { await CheckLauncherUpdateOnStartupAsync(); };
+            if (!suppressStartup) Shown += async delegate { await CheckLauncherUpdateOnStartupAsync(); };
             FormClosing += delegate(object sender, FormClosingEventArgs args)
             {
                 if (_busy && DialogResult != DialogResult.OK) args.Cancel = true;
@@ -305,6 +296,33 @@ namespace KinojoMeterLauncher
         }
 
         public LauncherLoginResult LoginResult { get; private set; }
+
+        internal bool VisualContractForTesting
+        {
+            get
+            {
+                var cellWidth = _passKey.Width / (double)LauncherPassKeyContract.RequiredTextElements;
+                return ClientSize == new Size(360, 320) &&
+                    _loginBrand.Text.StartsWith("KINOJO LAUNCHER LOGIN", StringComparison.Ordinal) &&
+                    _loginBrand.TextAlign == ContentAlignment.MiddleCenter &&
+                    _loginTitle.TextAlign == ContentAlignment.MiddleCenter &&
+                    Math.Abs(cellWidth / _passKey.Height - 1.5) < 0.001 &&
+                    _status.Top >= _passKey.Bottom && _status.TextAlign == ContentAlignment.MiddleCenter &&
+                    !ContainsVisibleText(this, "키노조 웹 PASS KEY로 로그인하면") &&
+                    !ContainsVisibleText(this, "키노조 웹 PASS KEY 입력");
+            }
+        }
+
+        private static bool ContainsVisibleText(Control root, string value)
+        {
+            if (root == null) return false;
+            foreach (Control child in root.Controls)
+            {
+                if (child.Visible && String.Equals(child.Text, value, StringComparison.Ordinal)) return true;
+                if (ContainsVisibleText(child, value)) return true;
+            }
+            return false;
+        }
 
         private async Task HandlePrimaryActionAsync()
         {
@@ -359,7 +377,7 @@ namespace KinojoMeterLauncher
                     return;
                 }
 
-                SetStatus("Launcher 최신 버전입니다. PASS KEY를 입력해 주세요.", false, 0);
+                SetStatus("런처 최신 버전입니다.", false, 0);
             }
             catch (Exception error)
             {
@@ -392,7 +410,7 @@ namespace KinojoMeterLauncher
             var passKey = LauncherPassKeyContract.Normalize(_passKey.PassKey);
             if (!LauncherPassKeyContract.IsValid(passKey))
             {
-                SetStatus("키노조 웹 PASS KEY 6자리를 입력해 주세요.", true, 0);
+                SetStatus("PASS KEY 6자리를 입력해 주세요.", true, 0);
                 _passKey.FocusInput();
                 return;
             }

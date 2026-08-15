@@ -19,6 +19,9 @@
     <Compile Include="..\..\launcher\CoreReleaseIntegrityVerifier.cs" Link="CoreReleaseIntegrityVerifier.cs" />
     <Compile Include="..\..\launcher\LauncherModels.cs" Link="LauncherModels.cs" />
     <Compile Include="..\..\launcher\LauncherPaths.cs" Link="LauncherPaths.cs" />
+    <Compile Include="..\..\launcher\LauncherVisualControls.cs" Link="LauncherVisualControls.cs" />
+    <Compile Include="..\..\launcher\LauncherLoginForm.cs" Link="LauncherLoginForm.cs" />
+    <Compile Include="..\..\launcher\LauncherForm.cs" Link="LauncherForm.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System.IO.Compression" />
@@ -27,6 +30,7 @@
     <Reference Include="System.Security" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\assets\runtime\WinDivert64.sys" Link="WinDivert64.sys">

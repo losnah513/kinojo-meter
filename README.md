@@ -2,12 +2,12 @@
 
 
 기준일: 2026-08-15
-운영 기준: Stable Launcher `1.1.4` / Stable Private Core `0.2.68`
+발행 대상: Stable Launcher `1.1.5` / Stable Private Core `0.2.75`
 
-Stable Launcher `1.1.4`부터 바탕화면 바로가기의 일상 실행은 `asInvoker`로 동작하며 UAC 권한 상승을 요청하지 않는다. 미서명 신규 설치 파일에 대한 SmartScreen 평판 안내는 일상 실행 UAC와 별개다.
+Stable Launcher `1.1.5`는 `1.1.4`의 `asInvoker`·사용자별 설치 계약을 유지하면서 PASS KEY 창을 360×320으로 축소하고 제목·입력·상태를 가운데 정렬한다. 상단 표기는 `KINOJO LAUNCHER LOGIN`, MAIN 좌측 표기는 `KINOJO LAUNCHER`와 다음 줄 버전으로 분리해 잘림을 없앤다. 미서명 신규 설치 파일에 대한 SmartScreen 평판 안내는 일상 실행 UAC와 별개다.
 
 과거 전환 기준(2026-08-06): Launcher `1.1.0` / Stable Private Core `0.2.41` / Staging Private Core `0.2.39` / Database `50022` / `meter-ingest` `50022.0` v24 / `meter-staging-ingest` `50022.0` v4 / Launcher release sync `50022.0` v9 / Core release sync `50019.10` v16
-현재 상태: Stable Launcher `1.1.4`와 Core `0.2.68`의 일반 실행 UAC 제거 계약을 적용한다. 설치·업데이트는 사용자별 `%LocalAppData%` 범위에서 수행한다.
+현재 발행 대상은 Stable Launcher `1.1.5`와 Core `0.2.75`다. 일반 실행 UAC 제거 계약과 사용자별 `%LocalAppData%` 설치·업데이트는 그대로 유지한다.
 
 ## 사용자 기준 기본 흐름
 

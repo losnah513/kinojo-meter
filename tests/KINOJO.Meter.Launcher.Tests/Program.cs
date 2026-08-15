@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Web.Script.Serialization;
+using System.Windows.Forms;
 
 namespace KinojoMeterLauncher
 {
@@ -24,6 +26,7 @@ namespace KinojoMeterLauncher
     {
         private static int _passed;
 
+        [STAThread]
         private static int Main()
         {
             var root = Path.Combine(Path.GetTempPath(), "kinojo-launcher-tests-" + Guid.NewGuid().ToString("N"));
@@ -40,6 +43,7 @@ namespace KinojoMeterLauncher
                 Run("compare Core handoff semantic versions", VerifyCoreUpdateHandoffVersionComparison);
                 Run("accept six PASS KEY text elements", VerifyPassKeyLength);
                 Run("reject incomplete PASS KEY", VerifyIncompletePassKey);
+                Run("render compact Launcher UI layout contracts", VerifyLauncherUiLayoutContracts);
                 Run("valid package", () => VerifyPackage(root, false, false, false));
                 Run("reject unmanaged file", () => ExpectFailure(() => VerifyPackage(root, true, false, false)));
                 Run("reject duplicate archive path", () => ExpectFailure(() => VerifyPackage(root, false, true, false)));
@@ -279,6 +283,51 @@ namespace KinojoMeterLauncher
         {
             if (LauncherPassKeyContract.IsValid("KINOJ"))
                 throw new InvalidOperationException("Incomplete PASS KEY was accepted.");
+        }
+
+        private static void VerifyLauncherUiLayoutContracts()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            var previewDirectory = Environment.GetEnvironmentVariable("KINOJO_LAUNCHER_UI_PREVIEW_DIR");
+            using (var login = new LauncherLoginForm(true))
+            {
+                login.CreateControl();
+                login.PerformLayout();
+                if (!login.VisualContractForTesting)
+                    throw new InvalidOperationException("Compact PASS KEY login layout contract failed.");
+                if (!String.IsNullOrWhiteSpace(previewDirectory))
+                    SaveFormPreview(login, Path.Combine(previewDirectory, "launcher-login-compact.png"));
+            }
+            using (var launcher = new LauncherForm(new LauncherLoginResult
+            {
+                SessionToken = new String('T', 32),
+                DisplayName = "테스트 사용자"
+            }, true))
+            {
+                launcher.CreateControl();
+                launcher.PerformLayout();
+                if (!launcher.SidebarBrandContractForTesting)
+                    throw new InvalidOperationException("Launcher brand header clipping contract failed.");
+                if (!String.IsNullOrWhiteSpace(previewDirectory))
+                    SaveFormPreview(launcher, Path.Combine(previewDirectory, "launcher-main-header.png"));
+            }
+        }
+
+        private static void SaveFormPreview(Form form, string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
+            form.ShowInTaskbar = false;
+            form.StartPosition = FormStartPosition.Manual;
+            form.Location = new Point(-30000, -30000);
+            form.Show();
+            Application.DoEvents();
+            using (var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height))
+            {
+                form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.ClientSize));
+                bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            form.Hide();
         }
 
         private static void VerifyBundledDriverSignature()
