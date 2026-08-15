@@ -50,25 +50,32 @@ namespace KinojoMeterLauncher
 
         protected Panel CreateWindowControls(bool allowMaximize)
         {
-            var width = allowMaximize ? 138 : 92;
+            return CreateWindowControls(allowMaximize, 64, 46);
+        }
+
+        protected Panel CreateWindowControls(bool allowMaximize, int height, int buttonWidth)
+        {
+            height = Math.Max(32, height);
+            buttonWidth = Math.Max(28, buttonWidth);
+            var width = allowMaximize ? buttonWidth * 3 : buttonWidth * 2;
             var panel = new Panel
             {
                 BackColor = LauncherPalette.Topbar,
-                Size = new Size(width, 64),
+                Size = new Size(width, height),
                 Dock = DockStyle.Right
             };
-            var close = CreateWindowButton("×", allowMaximize ? 92 : 46, true);
+            var close = CreateWindowButton("×", allowMaximize ? buttonWidth * 2 : buttonWidth, true, buttonWidth, height);
             close.Click += delegate { Close(); };
             panel.Controls.Add(close);
 
             if (allowMaximize)
             {
-                var maximize = CreateWindowButton("□", 46, false);
+                var maximize = CreateWindowButton("□", buttonWidth, false, buttonWidth, height);
                 maximize.Click += delegate { ToggleMaximized(); };
                 panel.Controls.Add(maximize);
             }
 
-            var minimize = CreateWindowButton("—", 0, false);
+            var minimize = CreateWindowButton("—", 0, false, buttonWidth, height);
             minimize.Click += delegate { WindowState = FormWindowState.Minimized; };
             panel.Controls.Add(minimize);
             return panel;
@@ -99,7 +106,7 @@ namespace KinojoMeterLauncher
             return picture;
         }
 
-        private static Button CreateWindowButton(string text, int left, bool close)
+        private static Button CreateWindowButton(string text, int left, bool close, int width, int height)
         {
             var button = new Button
             {
@@ -109,7 +116,7 @@ namespace KinojoMeterLauncher
                 BackColor = LauncherPalette.Topbar,
                 FlatStyle = FlatStyle.Flat,
                 Location = new Point(left, 0),
-                Size = new Size(46, 64),
+                Size = new Size(width, height),
                 TabStop = false,
                 Cursor = Cursors.Hand
             };
