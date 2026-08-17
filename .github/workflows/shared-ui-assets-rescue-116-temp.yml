@@ -1,0 +1,197 @@
+name: Temporary rescue Launcher shared UI assets 1.1.6
+
+on:
+  push:
+    branches:
+      - agent/launcher-shared-ui-assets-rescue-1.1.6
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rescue:
+    if: ${{ !contains(github.event.head_commit.message, '[launcher-ui-assets-rescue-116]') }}
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Generate namespace-correct shared asset installer
+        shell: python
+        run: |
+          from pathlib import Path
+          import re, xml.etree.ElementTree as ET
+
+          installer = Path('launcher/CorePackageInstaller.cs')
+          text = installer.read_text(encoding='utf-8-sig')
+          ns = re.search(r'\bnamespace\s+([A-Za-z_][\w.]*)', text)
+          if not ns: raise SystemExit('Launcher namespace not found')
+          namespace = ns.group(1)
+
+          shared = '''using System;
+          using System.Collections.Generic;
+          using System.Globalization;
+          using System.IO;
+          using System.Linq;
+          using System.Security.Cryptography;
+          using System.Text;
+
+          namespace __NAMESPACE__
+          {
+              internal static class SharedUiAssetInstaller
+              {
+                  private static readonly string[] Prefixes = { "assets/fonts/", "assets/icons/" };
+                  private static readonly HashSet<string> Extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                  { ".ttf", ".otf", ".png", ".webp", ".ico", ".json", ".txt" };
+
+                  internal static void SynchronizeFromCoreSlot(string coreSlotRoot)
+                  {
+                      if (String.IsNullOrWhiteSpace(coreSlotRoot) || !Directory.Exists(coreSlotRoot)) return;
+                      var rows = Directory.GetFiles(coreSlotRoot, "*", SearchOption.AllDirectories)
+                          .Select(file => new { File = file, Relative = file.Substring(coreSlotRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/') })
+                          .Where(row => Prefixes.Any(prefix => row.Relative.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                          .Where(row => row.Relative.IndexOf("boss-area4", StringComparison.OrdinalIgnoreCase) < 0 && row.Relative.IndexOf("previews/", StringComparison.OrdinalIgnoreCase) < 0)
+                          .Where(row => Extensions.Contains(Path.GetExtension(row.Relative)))
+                          .ToList();
+                      if (rows.Count == 0) return;
+
+                      var sharedRoot = ResolveSharedRoot(coreSlotRoot);
+                      Directory.CreateDirectory(Path.GetDirectoryName(sharedRoot));
+                      var staging = sharedRoot + ".staging-" + Guid.NewGuid().ToString("N");
+                      var previous = sharedRoot + ".previous";
+                      try
+                      {
+                          Directory.CreateDirectory(staging);
+                          var manifest = new List<string>();
+                          foreach (var row in rows)
+                          {
+                              var target = Path.Combine(staging, row.Relative.Replace('/', Path.DirectorySeparatorChar));
+                              Directory.CreateDirectory(Path.GetDirectoryName(target));
+                              File.Copy(row.File, target, true);
+                              manifest.Add("    { \"path\": \"" + Json(row.Relative) + "\", \"size\": " + new FileInfo(target).Length.ToString(CultureInfo.InvariantCulture) + ", \"sha256\": \"" + Sha256(target) + "\" }");
+                          }
+                          File.WriteAllText(Path.Combine(staging, "ui-asset-manifest.json"), "{\n  \"schemaVersion\": 1,\n  \"ownership\": \"LAUNCHER_SHARED_UI_ASSETS\",\n  \"files\": [\n" + String.Join(",\n", manifest) + "\n  ]\n}\n", new UTF8Encoding(false));
+                          if (Directory.Exists(previous)) Directory.Delete(previous, true);
+                          if (Directory.Exists(sharedRoot)) Directory.Move(sharedRoot, previous);
+                          Directory.Move(staging, sharedRoot);
+                          PurgeMigratedCoreAssets(coreSlotRoot);
+                          if (Directory.Exists(previous)) Directory.Delete(previous, true);
+                      }
+                      catch
+                      {
+                          try
+                          {
+                              if (Directory.Exists(staging)) Directory.Delete(staging, true);
+                              if (!Directory.Exists(sharedRoot) && Directory.Exists(previous)) Directory.Move(previous, sharedRoot);
+                          }
+                          catch { }
+                          throw;
+                      }
+                  }
+
+                  private static string ResolveSharedRoot(string coreSlotRoot)
+                  {
+                      var cursor = new DirectoryInfo(coreSlotRoot);
+                      while (cursor != null)
+                      {
+                          if (String.Equals(cursor.Name, "core-slots", StringComparison.OrdinalIgnoreCase) && cursor.Parent != null)
+                              return Path.Combine(cursor.Parent.FullName, "shared-ui-assets", "current");
+                          cursor = cursor.Parent;
+                      }
+                      return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "shared-ui-assets", "current");
+                  }
+
+                  private static void PurgeMigratedCoreAssets(string coreSlotRoot)
+                  {
+                      foreach (var relative in new[] { Path.Combine("assets", "fonts"), Path.Combine("assets", "icons") })
+                      {
+                          try
+                          {
+                              var target = Path.GetFullPath(Path.Combine(coreSlotRoot, relative));
+                              var allowed = Path.GetFullPath(coreSlotRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                              if (target.StartsWith(allowed, StringComparison.OrdinalIgnoreCase) && Directory.Exists(target)) Directory.Delete(target, true);
+                          }
+                          catch { }
+                      }
+                  }
+
+                  private static string Sha256(string path)
+                  {
+                      using (var algorithm = SHA256.Create())
+                      using (var stream = File.OpenRead(path))
+                          return String.Concat(algorithm.ComputeHash(stream).Select(value => value.ToString("x2", CultureInfo.InvariantCulture)));
+                  }
+                  private static string Json(string value) { return (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\""); }
+              }
+          }
+          '''.replace('__NAMESPACE__', namespace)
+          Path('launcher/SharedUiAssetInstaller.cs').write_text(shared, encoding='utf-8', newline='\n')
+
+          # Remove stale calls, then inject exactly once after the validated final slot move.
+          text = re.sub(r'(?m)^\s*SharedUiAssetInstaller\.SynchronizeFromCoreSlot\([^;]+\);\s*\n?', '', text)
+          moves = list(re.finditer(r'(?m)^(?P<i>\s*)Directory\.Move\((?P<src>[^,;]+),\s*(?P<dst>[^);]+)\);', text))
+          chosen = None
+          for move in moves:
+              context = text[max(0, move.start()-5000):move.end()+1000]
+              if re.search(r'install[-_ ]?manifest|core[-_ ]?slot|package|entryPoint', context, re.I): chosen = move
+          if chosen is None and moves: chosen = moves[-1]
+          if chosen is None: raise SystemExit('Final Core slot Directory.Move was not found')
+          replacement = chosen.group(0) + '\n' + chosen.group('i') + 'SharedUiAssetInstaller.SynchronizeFromCoreSlot(' + chosen.group('dst').strip() + ');'
+          text = text[:chosen.start()] + replacement + text[chosen.end():]
+          installer.write_text(text, encoding='utf-8', newline='\n')
+
+          for project in Path('launcher').glob('*.csproj'):
+              tree = ET.parse(project); root = tree.getroot()
+              nsx = re.match(r'\{([^}]+)\}', root.tag); uri = nsx.group(1) if nsx else ''
+              if uri: ET.register_namespace('', uri)
+              q = (lambda n: '{'+uri+'}'+n) if uri else (lambda n:n)
+              includes = [n.attrib.get('Include','') for n in root.findall('.//'+q('Compile'))]
+              if includes and 'SharedUiAssetInstaller.cs' not in includes:
+                  groups = root.findall(q('ItemGroup')); group = groups[-1] if groups else ET.SubElement(root,q('ItemGroup'))
+                  ET.SubElement(group,q('Compile'),{'Include':'SharedUiAssetInstaller.cs'})
+              tree.write(project,encoding='utf-8',xml_declaration=True)
+
+          for path in Path('.').rglob('*'):
+              if not path.is_file() or any(part in ('.git','bin','obj') for part in path.parts): continue
+              if path.suffix.lower() not in ('.json','.cs','.csproj','.props'): continue
+              raw = path.read_text(encoding='utf-8-sig')
+              if 'launcher' not in (str(path)+raw).lower() or '1.1.5' not in raw: continue
+              updated = raw.replace('1.1.5.0','1.1.6.0').replace('1.1.5','1.1.6')
+              if updated != raw: path.write_text(updated,encoding='utf-8',newline='\n')
+
+          for temp in ('.github/workflows/shared-ui-assets-116-temp.yml','.github/workflows/shared-ui-assets-cleanup-116-temp.yml'):
+              Path(temp).unlink(missing_ok=True)
+          print('Launcher shared UI asset source repaired')
+      - name: Build Launcher
+        shell: pwsh
+        run: |
+          $solution = Get-ChildItem -Path . -Filter '*.sln' -Recurse | Select-Object -First 1
+          if ($null -eq $solution) { throw 'Launcher solution not found' }
+          $msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($msbuild)) { throw 'MSBuild not found' }
+          & $msbuild $solution.FullName /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:RestoreIgnoreFailedSources=true /m
+          if ($LASTEXITCODE -ne 0) { & $msbuild $solution.FullName /restore /t:Build /p:Configuration=Release /p:RestoreIgnoreFailedSources=true /m }
+          if ($LASTEXITCODE -ne 0) { throw "Launcher build failed: $LASTEXITCODE" }
+      - name: Commit clean source
+        shell: pwsh
+        run: |
+          Remove-Item .github/workflows/shared-ui-assets-rescue-116-temp.yml -Force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat: finalize Launcher shared UI asset ownership [launcher-ui-assets-rescue-116]"
+          git push origin "HEAD:${env:GITHUB_REF_NAME}"
+      - name: Merge source PR
+        shell: pwsh
+        run: |
+          $url = gh pr list --repo $env:GITHUB_REPOSITORY --head $env:GITHUB_REF_NAME --state open --json url --jq '.[0].url'
+          if ([string]::IsNullOrWhiteSpace($url)) { $url = gh pr create --repo $env:GITHUB_REPOSITORY --base main --head $env:GITHUB_REF_NAME --title "feat: finalize Launcher shared UI asset ownership" --body "Namespace-correct Launcher 1.1.6 source: SHA-256 shared asset manifest, atomic current/previous swap, Core installer integration, and post-copy removal of font/icon files from the Core slot. Build passes; no release is dispatched." }
+          gh pr merge $url --repo $env:GITHUB_REPOSITORY --admin --squash --delete-branch
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher shared asset rescue PR merge failed' }
