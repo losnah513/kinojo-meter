@@ -35,7 +35,7 @@ def main():
     for marker in ("KINOJO_UI_ASSET_RELEASE_V1", "RSA_SHA256_MANIFEST_V1", "CoreSigningPublicModulusBase64", "CoreSigningKeyId"):
         if marker not in verifier:
             ok = fail("UI Asset signature contract missing: " + marker) and ok
-    for marker in ("InstallPackage", "ReadVerifiedActiveState", "Rollback", "InstallManifestSha256", "ThemeSha256", "EMBEDDED_CORE", "폐기된 Area4", "UiAssetVersionDirectory"):
+    for marker in ("InstallPackage", "ReadVerifiedActiveState", "Rollback", "InstallManifestSha256", "ThemeSha256", "EMBEDDED_CORE", "폐기된 Area4", "UiAssetVersionDirectory", "ExpectedManagedPathsFromTheme", "SetEquals"):
         if marker not in installer_all:
             ok = fail("UI Asset installer contract missing: " + marker) and ok
     if "HttpClient" in installer_all or "DownloadAsync" in installer_all:

@@ -78,6 +78,9 @@ namespace KinojoMeterLauncher
                 !String.Equals(Text(themeObject, "themeId"), manifest.ThemeId, StringComparison.Ordinal) ||
                 !String.Equals(Text(themeObject, "fallback"), "EMBEDDED_CORE", StringComparison.Ordinal))
                 throw new InvalidOperationException("UI Asset theme 계약이 올바르지 않습니다.");
+            var themePaths = ExpectedManagedPathsFromTheme(themeObject);
+            if (!themePaths.SetEquals(new HashSet<string>(manifest.Files.Select(item => ValidateManagedRelativePath(item.Path)), StringComparer.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("UI Asset install manifest 파일 집합이 theme.json 선언과 일치하지 않습니다.");
             return manifest;
         }
 
@@ -107,6 +110,56 @@ namespace KinojoMeterLauncher
             if (!actualPaths.SetEquals(expectedPaths)) throw new InvalidOperationException("설치된 UI Asset 슬롯에 비관리 파일이 있습니다.");
         }
 
+        private static HashSet<string> ExpectedManagedPathsFromTheme(Dictionary<string, object> theme)
+        {
+            var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "theme.json" };
+            foreach (var value in Sequence(theme, "fonts"))
+            {
+                var font = value as Dictionary<string, object>;
+                if (font == null) throw new InvalidOperationException("UI Asset font theme 행이 올바르지 않습니다.");
+                expected.Add(ValidateManagedRelativePath(Text(font, "regular")));
+                expected.Add(ValidateManagedRelativePath(Text(font, "bold")));
+            }
+            Dictionary<string, object> classIcons;
+            if (!TryMap(theme, "classIcons", out classIcons)) throw new InvalidOperationException("UI Asset classIcons theme 계약이 없습니다.");
+            var variants = Sequence(classIcons, "variants").Select(Convert.ToString).Where(value => !String.IsNullOrWhiteSpace(value)).ToArray();
+            var keys = Sequence(classIcons, "keys").Select(Convert.ToString).Where(value => !String.IsNullOrWhiteSpace(value)).ToArray();
+            var template = Text(classIcons, "pathTemplate");
+            if (variants.Length == 0 || keys.Length == 0 || String.IsNullOrWhiteSpace(template) || template.IndexOf("{variant}", StringComparison.Ordinal) < 0 || template.IndexOf("{key}", StringComparison.Ordinal) < 0)
+                throw new InvalidOperationException("UI Asset class icon theme 계약이 올바르지 않습니다.");
+            foreach (var variant in variants)
+                foreach (var key in keys)
+                    expected.Add(ValidateManagedRelativePath(template.Replace("{variant}", variant).Replace("{key}", key)));
+            Dictionary<string, object> statuses;
+            if (!TryMap(theme, "statusIcons", out statuses) || statuses.Count == 0) throw new InvalidOperationException("UI Asset statusIcons theme 계약이 없습니다.");
+            foreach (var value in statuses.Values) expected.Add(ValidateManagedRelativePath(Convert.ToString(value)));
+            Dictionary<string, object> bosses;
+            if (!TryMap(theme, "bossIcons", out bosses) || bosses.Count == 0) throw new InvalidOperationException("UI Asset bossIcons theme 계약이 없습니다.");
+            foreach (var value in bosses.Values) expected.Add(ValidateManagedRelativePath(Convert.ToString(value)));
+            if (expected.Count <= 1) throw new InvalidOperationException("UI Asset theme 파일 집합이 비어 있습니다.");
+            return expected;
+        }
+
+        private static IEnumerable<object> Sequence(Dictionary<string, object> source, string key)
+        {
+            object value;
+            if (source == null || !source.TryGetValue(key, out value) || value == null) return Enumerable.Empty<object>();
+            var array = value as object[];
+            if (array != null) return array;
+            var list = value as System.Collections.ArrayList;
+            if (list != null) return list.Cast<object>();
+            return Enumerable.Empty<object>();
+        }
+
+        private static bool TryMap(Dictionary<string, object> source, string key, out Dictionary<string, object> value)
+        {
+            value = null;
+            object raw;
+            if (source == null || !source.TryGetValue(key, out raw)) return false;
+            value = raw as Dictionary<string, object>;
+            return value != null;
+        }
+
         private static void VerifyManagedFile(string root, UiAssetInstallFile item)
         {
             if (item == null) throw new InvalidOperationException("UI Asset install manifest 파일 행이 없습니다.");
@@ -128,7 +181,7 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("폐기된 Area4 자산은 UI Asset Pack에 포함할 수 없습니다.");
             var allowed = String.Equals(path, "theme.json", StringComparison.OrdinalIgnoreCase) ||
                 (path.StartsWith("fonts/", StringComparison.OrdinalIgnoreCase) && path.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase)) ||
-                ((path.StartsWith("icons/status/", StringComparison.OrdinalIgnoreCase) || path.StartsWith("icons/boss/", StringComparison.OrdinalIgnoreCase)) && path.EndSWith(".png", StringComparison.OrdinalIgnoreCase));
+                ((path.StartsWith("icons/status/", StringComparison.OrdinalIgnoreCase) || path.StartsWith("icons/boss/", StringComparison.OrdinalIgnoreCase)) && path.EndsWith(".png", StringComparison.OrdinalIgnoreCase));
             if (!allowed && path.StartsWith("icons/classes/", StringComparison.OrdinalIgnoreCase) && path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
             {
                 var parts = path.Split('/');
