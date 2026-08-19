@@ -38,6 +38,10 @@ def main():
     for marker in ("InstallPackage", "ReadVerifiedActiveState", "Rollback", "InstallManifestSha256", "ThemeSha256", "EMBEDDED_CORE", "폐기된 Area4", "UiAssetVersionDirectory", "ExpectedManagedPathsFromTheme", "SetEquals"):
         if marker not in installer_all:
             ok = fail("UI Asset installer contract missing: " + marker) and ok
+    if "EndSWith" in installer_all:
+        ok = fail("invalid EndsWith call spelling detected") and ok
+    if 'IndexOf("area4"' not in validator or "UI Asset ZIP" not in validator:
+        ok = fail("Area4 file/directory ZIP rejection contract missing") and ok
     if "HttpClient" in installer_all or "DownloadAsync" in installer_all:
         ok = fail("Stage 3-2 must not pull Stage 5/6 remote acquisition forward") and ok
     if "CorePackageInstaller.cs" not in launcher_project:
