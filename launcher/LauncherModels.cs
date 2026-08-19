@@ -145,4 +145,67 @@ namespace KinojoMeterLauncher
         public ActiveCoreState Previous { get; set; }
         public bool Changed { get; set; }
     }
+
+    internal sealed class UiAssetReleaseManifest
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string PackId { get; set; }
+        public string Version { get; set; }
+        public string MinimumLauncherVersion { get; set; }
+        public string PackageId { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string Sha256 { get; set; }
+        public string InstallManifestSha256 { get; set; }
+        public string ThemeSha256 { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
+        public string ReleaseNote { get; set; }
+    }
+
+    internal sealed class UiAssetInstallManifest
+    {
+        public int SchemaVersion { get; set; }
+        public string PackId { get; set; }
+        public string Version { get; set; }
+        public string ThemeId { get; set; }
+        public List<UiAssetInstallFile> Files { get; set; }
+    }
+
+    internal sealed class UiAssetInstallFile
+    {
+        public string Path { get; set; }
+        public long Size { get; set; }
+        public string Sha256 { get; set; }
+    }
+
+    internal sealed class ActiveUiAssetState
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string PackId { get; set; }
+        public string Version { get; set; }
+        public string MinimumLauncherVersion { get; set; }
+        public string PackageId { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string ThemeId { get; set; }
+        public string InstalledPath { get; set; }
+        public string ActivatedAtUtc { get; set; }
+        public string PackageSha256 { get; set; }
+        public string InstallManifestSha256 { get; set; }
+        public string ThemeSha256 { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
+    }
+
+    internal sealed class UiAssetInstallResult
+    {
+        public ActiveUiAssetState Active { get; set; }
+        public ActiveUiAssetState Previous { get; set; }
+        public bool Changed { get; set; }
+    }
 }

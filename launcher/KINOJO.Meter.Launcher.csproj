@@ -38,6 +38,10 @@
     <Compile Include="CorePackageInstaller.cs" />
     <Compile Include="CoreUpdateHandoffMode.cs" />
     <Compile Include="CoreReleaseIntegrityVerifier.cs" />
+    <Compile Include="UiAssetPackInstaller.cs" />
+    <Compile Include="UiAssetPackageValidator.cs" />
+    <Compile Include="UiAssetPackState.cs" />
+    <Compile Include="UiAssetReleaseIntegrityVerifier.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />
   </ItemGroup>

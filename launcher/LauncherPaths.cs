@@ -15,6 +15,10 @@ namespace KinojoMeterLauncher
         public static readonly string CoreVersions = Path.Combine(CoreRoot, "versions");
         public static readonly string CoreStaging = Path.Combine(CoreRoot, "staging");
         public static readonly string ActiveCoreFile = Path.Combine(CoreRoot, "active.json");
+        public static readonly string UiAssetRoot = Path.Combine(Root, "ui-assets");
+        public static readonly string UiAssetVersions = Path.Combine(UiAssetRoot, "versions");
+        public static readonly string UiAssetStaging = Path.Combine(UiAssetRoot, "staging");
+        public static readonly string ActiveUiAssetFile = Path.Combine(UiAssetRoot, "active.json");
         public static readonly string DeviceIdFile = Path.Combine(LauncherData, "device.dat");
         public static readonly string LauncherContentCacheFile = Path.Combine(LauncherData, "content-cache.json");
         public static readonly string LauncherContentReadFile = Path.Combine(LauncherData, "content-read.json");
@@ -24,6 +28,8 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(LauncherData);
             Directory.CreateDirectory(CoreVersions);
             Directory.CreateDirectory(CoreStaging);
+            Directory.CreateDirectory(UiAssetVersions);
+            Directory.CreateDirectory(UiAssetStaging);
         }
 
         public static string GetOrCreateInstallationId()
@@ -57,6 +63,13 @@ namespace KinojoMeterLauncher
             if (String.IsNullOrWhiteSpace(version) || !System.Text.RegularExpressions.Regex.IsMatch(version, @"^\d{1,4}\.\d{1,4}\.\d{1,4}$"))
                 throw new InvalidOperationException("Core version 형식이 올바르지 않습니다.");
             return Path.Combine(CoreVersions, version);
+        }
+
+        public static string UiAssetVersionDirectory(string version)
+        {
+            if (String.IsNullOrWhiteSpace(version) || !System.Text.RegularExpressions.Regex.IsMatch(version, @"^\d{1,4}\.\d{1,4}\.\d{1,4}$"))
+                throw new InvalidOperationException("UI Asset Pack version 형식이 올바르지 않습니다.");
+            return Path.Combine(UiAssetVersions, version);
         }
     }
 }

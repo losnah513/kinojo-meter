@@ -1,0 +1,36 @@
+name: UI Asset Pack installer boundary
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/LauncherModels.cs'
+      - 'launcher/UiAssetPackInstaller.cs'
+      - 'launcher/UiAssetPackageValidator.cs'
+      - 'launcher/UiAssetPackState.cs'
+      - 'launcher/UiAssetReleaseIntegrityVerifier.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj'
+      - 'scripts/test-ui-asset-installer-boundary.py'
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/LauncherModels.cs'
+      - 'launcher/UiAssetPackInstaller.cs'
+      - 'launcher/UiAssetPackageValidator.cs'
+      - 'launcher/UiAssetPackState.cs'
+      - 'launcher/UiAssetReleaseIntegrityVerifier.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj'
+      - 'scripts/test-ui-asset-installer-boundary.py'
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/test-ui-asset-installer-boundary.py
