@@ -371,7 +371,7 @@ namespace KinojoMeterLauncher
             var temporary = receiptFile + ".tmp-" + Guid.NewGuid().ToString("N");
             try
             {
-                File.WriteAllText(temporary, Json.Serialize(receipt), new UTF8Encoding(false));
+                File.WriteAllText(temporary, SerializeRepairReceipt(receipt), new UTF8Encoding(false));
                 if (File.Exists(receiptFile)) File.Replace(temporary, receiptFile, null);
                 else File.Move(temporary, receiptFile);
             }
@@ -380,6 +380,32 @@ namespace KinojoMeterLauncher
                 SafeDeleteFile(temporary);
                 throw;
             }
+        }
+
+        private static string SerializeRepairReceipt(ModuleDamagedPackageRepairReceipt receipt)
+        {
+            return Json.Serialize(new Dictionary<string, object>
+            {
+                { "schemaVersion", receipt.SchemaVersion },
+                { "status", receipt.Status },
+                { "bundleRevision", receipt.BundleRevision },
+                { "bundleLockSha256", receipt.BundleLockSha256 },
+                { "channel", receipt.Channel },
+                { "moduleId", receipt.ModuleId },
+                { "moduleVersion", receipt.ModuleVersion },
+                { "archiveSha256", receipt.ArchiveSha256 },
+                { "contractSetVersion", receipt.ContractSetVersion },
+                { "stateSchemaVersion", receipt.StateSchemaVersion },
+                { "reasonCode", receipt.ReasonCode },
+                { "downloadedBytes", receipt.DownloadedBytes },
+                { "verificationStatus", receipt.VerificationStatus },
+                { "stagingStatus", receipt.StagingStatus },
+                { "selfTestStatus", receipt.SelfTestStatus },
+                { "repairedAtUtc", receipt.RepairedAtUtc },
+                { "downloadedFresh", receipt.DownloadedFresh },
+                { "activeBundleChanged", receipt.ActiveBundleChanged },
+                { "releasePointerChanged", receipt.ReleasePointerChanged }
+            });
         }
 
         private static void Report(

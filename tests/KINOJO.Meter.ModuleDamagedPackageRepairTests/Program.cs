@@ -45,7 +45,7 @@ namespace KinojoMeterLauncher
 
         private static void DamagedCache(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "cache", key, keyId, true);
+            var f = CreateFixture(root, "cache", key, keyId, true);
             var cacheFile = CachePackage(f.Root, f.Request.Download);
             var len = checked((int)new FileInfo(cacheFile).Length);
             File.WriteAllBytes(cacheFile, Enumerable.Repeat((byte)0x5a, len).ToArray());
@@ -57,7 +57,7 @@ namespace KinojoMeterLauncher
 
         private static void DamagedStaging(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "staging", key, keyId, true);
+            var f = CreateFixture(root, "staging", key, keyId, true);
             var primary = Path.Combine(StageSlot(f.Root, f.Request.Download), "KINOJO.Meter.Contracts.dll");
             File.AppendAllText(primary, "damage");
             var selfReceipt = SelfReceipt(f.Root, f.Request.Download);
@@ -71,7 +71,7 @@ namespace KinojoMeterLauncher
 
         private static void ActiveBlocked(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "active-block", key, keyId, true);
+            var f = CreateFixture(root, "active-block", key, keyId, true);
             WriteActive(f.Root, f.Request.Download.ModuleVersion, f.Request.Download.ExpectedSha256);
             var before = ShaFile(CachePackage(f.Root, f.Request.Download));
             var h = new CountingHandler(f.Package);
@@ -82,7 +82,7 @@ namespace KinojoMeterLauncher
 
         private static void ActivePreserved(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "active-preserve", key, keyId, false);
+            var f = CreateFixture(root, "active-preserve", key, keyId, false);
             WriteActive(f.Root, "9.9.9", new String('b', 64));
             var active = Path.Combine(f.Root, "active-bundle.json");
             var before = ShaFile(active);
@@ -92,7 +92,7 @@ namespace KinojoMeterLauncher
 
         private static void SiblingPreserved(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "sibling", key, keyId, false);
+            var f = CreateFixture(root, "sibling", key, keyId, false);
             var siblingSha = f.Request.Download.ExpectedSha256.StartsWith("b") ? new String('c', 64) : new String('b', 64);
             var sibling = Path.Combine(f.Root, "cache", "contracts", "1.0.0", siblingSha);
             Directory.CreateDirectory(sibling);
@@ -105,7 +105,7 @@ namespace KinojoMeterLauncher
 
         private static void BadDownload(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "bad", key, keyId, false);
+            var f = CreateFixture(root, "bad", key, keyId, false);
             var h = new CountingHandler(Encoding.UTF8.GetBytes("not-approved"));
             Expect(() => Repair(f, h, key, keyId));
             if (h.Calls != 1 || Directory.Exists(StageSlot(f.Root, f.Request.Download)) ||
@@ -116,18 +116,26 @@ namespace KinojoMeterLauncher
 
         private static void ReceiptBoundary(string root, RSACryptoServiceProvider key, string keyId)
         {
-            var f = Fixture(root, "receipt", key, keyId, false);
+            var f = CreateFixture(root, "receipt", key, keyId, false);
             var r = Repair(f, new CountingHandler(f.Package), key, keyId);
             AssertSuccess(r, f.Request);
             var x = Json.DeserializeObject(File.ReadAllText(r.RepairReceiptFile)) as IDictionary<string, object>;
-            if (x == null || Convert.ToString(x["status"]) != ModuleDamagedPackageRepair.RepairedStatus ||
+            var expectedKeys = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "schemaVersion", "status", "bundleRevision", "bundleLockSha256", "channel", "moduleId", "moduleVersion",
+                "archiveSha256", "contractSetVersion", "stateSchemaVersion", "reasonCode", "downloadedBytes",
+                "verificationStatus", "stagingStatus", "selfTestStatus", "repairedAtUtc", "downloadedFresh",
+                "activeBundleChanged", "releasePointerChanged"
+            };
+            if (x == null || x.Count != expectedKeys.Count || x.Keys.Any(keyName => !expectedKeys.Contains(keyName)) ||
+                Convert.ToString(x["status"]) != ModuleDamagedPackageRepair.RepairedStatus ||
                 !Convert.ToBoolean(x["downloadedFresh"]) || Convert.ToBoolean(x["activeBundleChanged"]) ||
                 Convert.ToBoolean(x["releasePointerChanged"]) || Convert.ToString(x["verificationStatus"]) != ModulePackageVerifier.VerifiedStatus ||
                 Convert.ToString(x["stagingStatus"]) != ModuleStagingInstaller.StagedStatus || Convert.ToString(x["selfTestStatus"]) != ModuleStagingSelfTest.PassedStatus)
                 throw new InvalidOperationException("Repair receipt crossed activation/release boundary.");
         }
 
-        private static Fixture Fixture(string root, string name, RSACryptoServiceProvider key, string keyId, bool prime)
+        private static Fixture CreateFixture(string root, string name, RSACryptoServiceProvider key, string keyId, bool prime)
         {
             var r = Path.Combine(root, name + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(r);

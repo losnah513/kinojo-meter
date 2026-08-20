@@ -25,6 +25,10 @@ required = [
     'DownloadedFresh = true',
     'ActiveBundleChanged = false',
     'ReleasePointerChanged = false',
+    '{ "status", receipt.Status }',
+    '{ "downloadedFresh", receipt.DownloadedFresh }',
+    '{ "activeBundleChanged", receipt.ActiveBundleChanged }',
+    '{ "releasePointerChanged", receipt.ReleasePointerChanged }',
 ]
 for needle in required:
     if needle not in text:
