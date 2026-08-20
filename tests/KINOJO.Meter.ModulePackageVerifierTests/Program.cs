@@ -19,7 +19,7 @@ namespace KinojoMeterLauncher
 
         private static int Main()
         {
-            var root = Path.Combine(Path.GetTempPath(), "kinojo-module-verifier-tests-" + Guid.NewGuid().ToString("N"));
+            var root = Path.Combine(Path.GetTempPath(), "k54-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(root);
             try
             {
@@ -117,7 +117,7 @@ namespace KinojoMeterLauncher
 
         private static ModulePackageCacheResult Cache(string root, byte[] package, string expectedSha)
         {
-            var cacheRoot = Path.Combine(root, "cache-" + Guid.NewGuid().ToString("N"));
+            var cacheRoot = Path.Combine(root, "c-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             using (var handler = new ByteArrayHandler(package))
             using (var cache = new ModulePackageDownloadCache(handler, cacheRoot))
             {
