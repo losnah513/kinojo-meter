@@ -35,6 +35,7 @@ namespace KinojoMeterLauncher
             {
                 Run("channel profile is compile-time bound", VerifyChannelProfile);
                 Run("parse Server Meter launch operation", VerifyMeterLaunchOperationParsing);
+                Run("parse Catalog Pack update authorization", VerifyCatalogPackAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -111,6 +112,32 @@ namespace KinojoMeterLauncher
                 try { Directory.Delete(root, true); }
                 catch { }
             }
+        }
+
+        private static void VerifyCatalogPackAuthorizationParsing()
+        {
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "catalogPacks", new object[] { new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", LauncherVersion.Channel },
+                    { "packId", "class-skill-catalog" }, { "catalogVersion", "CLASS_SKILL_CATALOG_20260820_01" },
+                    { "minimumLauncherVersion", "1.0.0" }, { "packageId", "fixture" },
+                    { "fileName", "fixture.zip" }, { "fileSize", 123L }, { "sha256", new String('a', 64) },
+                    { "installManifestSha256", new String('b', 64) }, { "catalogSha256", new String('c', 64) },
+                    { "downloadUrl", "https://example.invalid/fixture" }, { "expiresAt", DateTimeOffset.UtcNow.AddMinutes(5).ToString("o") },
+                    { "integrityMode", "RSA_SHA256_MANIFEST_V1" }, { "signingKeyId", "fixture" }, { "manifestSignature", "fixture" }
+                } } }
+            };
+            var parsed = LauncherApiClient.ParseCatalogPackAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Releases == null || parsed.Releases.Count != 1 ||
+                parsed.Releases[0].PackId != "class-skill-catalog" || parsed.Releases[0].CatalogSha256 != new String('c', 64))
+                throw new InvalidOperationException("Catalog Pack authorization parsing failed.");
+            response["authorized"] = false;
+            var denied = LauncherApiClient.ParseCatalogPackAuthorizationForTest(response);
+            if (denied == null || denied.Authorized)
+                throw new InvalidOperationException("Catalog Pack authorization ignored an explicit Server denial.");
         }
 
         private static void VerifyMeterLaunchOperationParsing()

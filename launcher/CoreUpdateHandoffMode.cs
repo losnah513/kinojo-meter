@@ -221,6 +221,7 @@ namespace KinojoMeterLauncher
                 using (var coreProcess = RequireRunningCoreProcess(request.CoreProcessId))
                 using (var api = new LauncherApiClient())
                 using (var installer = new CorePackageInstaller())
+                using (var catalogInstaller = new CatalogPackInstaller())
                 {
                     var previous = installer.ReadActiveState();
                     if (previous == null || !String.Equals(previous.CoreVersion, envelope.CurrentCoreVersion, StringComparison.Ordinal))
@@ -235,6 +236,16 @@ namespace KinojoMeterLauncher
                     if (CoreUpdateHandoffProtocol.CompareVersions(authorization.Release.CoreVersion, envelope.CurrentCoreVersion) <= 0)
                         throw new InvalidOperationException("설치 가능한 새 Core가 없습니다.");
                     RequireLaunchEnabled(await api.GetLaunchOperationAsync().ConfigureAwait(false));
+
+                    var catalogAuthorization = await api.AuthorizeCatalogPackUpdatesAsync(
+                        envelope.SessionToken,
+                        envelope.InstallationId,
+                        CatalogPackUpdateCoordinator.CurrentStatePayload(catalogInstaller)).ConfigureAwait(false);
+                    await CatalogPackUpdateCoordinator.ApplyAsync(
+                        catalogInstaller,
+                        catalogAuthorization,
+                        api.ProjectHost,
+                        CancellationToken.None).ConfigureAwait(false);
 
                     var login = new LauncherLoginResult
                     {

@@ -17,6 +17,7 @@
     <Compile Include="..\..\launcher\CorePackageInstaller.cs" Link="CorePackageInstaller.cs" />
     <Compile Include="..\..\launcher\CoreUpdateHandoffMode.cs" Link="CoreUpdateHandoffMode.cs" />
     <Compile Include="..\..\launcher\CoreReleaseIntegrityVerifier.cs" Link="CoreReleaseIntegrityVerifier.cs" />
+    <Compile Include="..\..\launcher\CatalogPackUpdater.cs" Link="CatalogPackUpdater.cs" />
     <Compile Include="..\..\launcher\UiAssetPackInstaller.cs" Link="UiAssetPackInstaller.cs" />
     <Compile Include="..\..\launcher\UiAssetPackageValidator.cs" Link="UiAssetPackageValidator.cs" />
     <Compile Include="..\..\launcher\UiAssetPackState.cs" Link="UiAssetPackState.cs" />

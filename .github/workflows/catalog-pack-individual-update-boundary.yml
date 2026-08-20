@@ -1,0 +1,51 @@
+name: Catalog Pack individual update boundary
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/CatalogPackUpdater.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
+      - 'launcher/LauncherModels.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.CatalogPackUpdateTests/**'
+      - 'scripts/test-catalog-pack-individual-update-boundary.py'
+      - '.github/workflows/catalog-pack-individual-update-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/CatalogPackUpdater.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
+      - 'launcher/LauncherModels.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.CatalogPackUpdateTests/**'
+      - 'scripts/test-catalog-pack-individual-update-boundary.py'
+      - '.github/workflows/catalog-pack-individual-update-boundary.yml'
+
+jobs:
+  boundary:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, staging]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: microsoft/setup-msbuild@v2
+      - name: Verify static update boundary
+        run: python scripts/test-catalog-pack-individual-update-boundary.py
+      - name: Build and run Catalog Pack update tests
+        shell: pwsh
+        run: |
+          msbuild ./tests/KINOJO.Meter.CatalogPackUpdateTests/KINOJO.Meter.CatalogPackUpdateTests.csproj /restore /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherChannel='${{ matrix.channel }}' /nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog Pack update test build failed.' }
+          & './tests/KINOJO.Meter.CatalogPackUpdateTests/bin/x64/Release/net48/KINOJO.Meter.CatalogPackUpdateTests.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog Pack update tests failed.' }

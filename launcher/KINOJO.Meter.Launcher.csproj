@@ -50,6 +50,7 @@
     <Compile Include="ModuleBundleActivator.cs" />
     <Compile Include="ModuleBundleRollback.cs" />
     <Compile Include="ModuleDamagedPackageRepair.cs" />
+    <Compile Include="CatalogPackUpdater.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />
   </ItemGroup>

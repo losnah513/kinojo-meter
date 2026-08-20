@@ -19,6 +19,8 @@ namespace KinojoMeterLauncher
         public static readonly string UiAssetVersions = Path.Combine(UiAssetRoot, "versions");
         public static readonly string UiAssetStaging = Path.Combine(UiAssetRoot, "staging");
         public static readonly string ActiveUiAssetFile = Path.Combine(UiAssetRoot, "active.json");
+        public static readonly string CatalogPackRoot = Path.Combine(Root, "catalog-packs");
+        public static readonly string CatalogPackLockFile = Path.Combine(CatalogPackRoot, ".update.lock");
         public static readonly string ModuleRoot = Path.Combine(Root, "modules");
         public static readonly string ModulePackageCache = Path.Combine(ModuleRoot, "cache");
         public static readonly string ModuleStaging = Path.Combine(ModuleRoot, "staging");
@@ -40,6 +42,7 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(CoreStaging);
             Directory.CreateDirectory(UiAssetVersions);
             Directory.CreateDirectory(UiAssetStaging);
+            Directory.CreateDirectory(CatalogPackRoot);
             Directory.CreateDirectory(ModulePackageCache);
             Directory.CreateDirectory(ModuleStaging);
             Directory.CreateDirectory(ModuleSelfTests);
@@ -86,5 +89,6 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("UI Asset Pack version 형식이 올바르지 않습니다.");
             return Path.Combine(UiAssetVersions, version);
         }
+
     }
 }
