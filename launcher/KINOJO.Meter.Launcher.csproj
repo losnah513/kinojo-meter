@@ -46,6 +46,7 @@
     <Compile Include="ModulePackageVerifier.cs" />
     <Compile Include="ModuleStagingInstaller.cs" />
     <Compile Include="ModuleStagingSelfTest.cs" />
+    <Compile Include="ModuleBundleActivator.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />
   </ItemGroup>
