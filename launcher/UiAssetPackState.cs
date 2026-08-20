@@ -17,7 +17,7 @@ namespace KinojoMeterLauncher
             return (value ?? "").Trim().Replace('\\', '/').TrimStart('/');
         }
 
-        private static void ValidateRelease(UiAssetReleaseManifest release)
+        private void ValidateRelease(UiAssetReleaseManifest release)
         {
             if (release == null || release.SchemaVersion != 1 || !String.Equals(release.Channel, LauncherBuildProfile.Channel, StringComparison.Ordinal) ||
                 !String.Equals(release.PackId, UiAssetReleaseIntegrityVerifier.PackId, StringComparison.Ordinal) || !VersionPattern.IsMatch(release.Version ?? "") ||
@@ -26,7 +26,7 @@ namespace KinojoMeterLauncher
                 !Regex.IsMatch(release.FileName, @"^KinojoUiAssets_\d{1,4}\.\d{1,4}\.\d{1,4}\.zip$", RegexOptions.CultureInvariant) ||
                 release.FileSize <= 0 || release.FileSize > MaximumPackageBytes || !IsSha256(release.Sha256) || !IsSha256(release.InstallManifestSha256) || !IsSha256(release.ThemeSha256))
                 throw new InvalidOperationException("UI Asset release manifest 계약이 올바르지 않습니다.");
-            UiAssetReleaseIntegrityVerifier.Verify(release);
+            UiAssetReleaseIntegrityVerifier.VerifyForTest(release, _publicKey, _expectedKeyId);
         }
 
         private static bool IsActiveStateUsable(ActiveUiAssetState state)
@@ -60,12 +60,12 @@ namespace KinojoMeterLauncher
 
         private void WriteActiveState(ActiveUiAssetState state)
         {
-            LauncherPaths.EnsureDirectories();
+            EnsureDirectories();
             var json = _json.Serialize(state);
-            var temporary = LauncherPaths.ActiveUiAssetFile + ".tmp-" + Guid.NewGuid().ToString("N");
+            var temporary = _activeFile + ".tmp-" + Guid.NewGuid().ToString("N");
             File.WriteAllText(temporary, json, new UTF8Encoding(false));
-            if (File.Exists(LauncherPaths.ActiveUiAssetFile)) File.Replace(temporary, LauncherPaths.ActiveUiAssetFile, null);
-            else File.Move(temporary, LauncherPaths.ActiveUiAssetFile);
+            if (File.Exists(_activeFile)) File.Replace(temporary, _activeFile, null);
+            else File.Move(temporary, _activeFile);
         }
 
         private static string CurrentLauncherVersion()

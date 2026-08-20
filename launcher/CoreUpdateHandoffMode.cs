@@ -222,6 +222,7 @@ namespace KinojoMeterLauncher
                 using (var api = new LauncherApiClient())
                 using (var installer = new CorePackageInstaller())
                 using (var catalogInstaller = new CatalogPackInstaller())
+                using (var uiAssetInstaller = new UiAssetPackInstaller())
                 {
                     var previous = installer.ReadActiveState();
                     if (previous == null || !String.Equals(previous.CoreVersion, envelope.CurrentCoreVersion, StringComparison.Ordinal))
@@ -244,6 +245,16 @@ namespace KinojoMeterLauncher
                     await CatalogPackUpdateCoordinator.ApplyAsync(
                         catalogInstaller,
                         catalogAuthorization,
+                        api.ProjectHost,
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    var uiAssetAuthorization = await api.AuthorizeUiAssetPackUpdateAsync(
+                        envelope.SessionToken,
+                        envelope.InstallationId,
+                        UiAssetPackUpdateCoordinator.CurrentStatePayload(uiAssetInstaller)).ConfigureAwait(false);
+                    await UiAssetPackUpdateCoordinator.ApplyAsync(
+                        uiAssetInstaller,
+                        uiAssetAuthorization,
                         api.ProjectHost,
                         CancellationToken.None).ConfigureAwait(false);
 

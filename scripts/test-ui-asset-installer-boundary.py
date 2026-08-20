@@ -35,15 +35,16 @@ def main():
     for marker in ("KINOJO_UI_ASSET_RELEASE_V1", "RSA_SHA256_MANIFEST_V1", "CoreSigningPublicModulusBase64", "CoreSigningKeyId"):
         if marker not in verifier:
             ok = fail("UI Asset signature contract missing: " + marker) and ok
-    for marker in ("InstallPackage", "ReadVerifiedActiveState", "Rollback", "InstallManifestSha256", "ThemeSha256", "EMBEDDED_CORE", "폐기된 Area4", "UiAssetVersionDirectory", "ExpectedManagedPathsFromTheme", "SetEquals"):
+    for marker in ("InstallPackage", "ReadVerifiedActiveState", "Rollback", "InstallManifestSha256", "ThemeSha256", "EMBEDDED_CORE", "폐기된 Area4", "VersionDirectory", "ExpectedManagedPathsFromTheme", "SetEquals"):
         if marker not in installer_all:
             ok = fail("UI Asset installer contract missing: " + marker) and ok
     if "EndSWith" in installer_all:
         ok = fail("invalid EndsWith call spelling detected") and ok
     if 'IndexOf("area4"' not in validator or "UI Asset ZIP" not in validator:
         ok = fail("Area4 file/directory ZIP rejection contract missing") and ok
-    if "HttpClient" in installer_all or "DownloadAsync" in installer_all:
-        ok = fail("Stage 3-2 must not pull Stage 5/6 remote acquisition forward") and ok
+    for marker in ("HttpClient", "DownloadAsync", "RequireApprovedDownloadUri", "UI_ASSET_VERSION_SHA_CONFLICT"):
+        if marker not in installer_all:
+            ok = fail("Stage 6-2 authorized remote acquisition missing: " + marker) and ok
     if "CorePackageInstaller.cs" not in launcher_project:
         ok = fail("existing Core installer was unexpectedly removed") and ok
     for name in ("UiAssetPackInstaller.cs", "UiAssetPackageValidator.cs", "UiAssetPackState.cs", "UiAssetReleaseIntegrityVerifier.cs"):
@@ -53,7 +54,7 @@ def main():
         ok = fail("separate Asset Pack identity missing") and ok
 
     if ok:
-        print("UI_ASSET_INSTALLER_OK local-install=true signature=RSA3072 sha=true rollback=true remote-acquisition=deferred area4=forbidden")
+        print("UI_ASSET_INSTALLER_OK local-install=true signature=RSA3072 sha=true rollback=true remote-acquisition=server-authorized area4=forbidden")
         return 0
     return 1
 

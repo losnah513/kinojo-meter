@@ -87,8 +87,8 @@ namespace KinojoMeterLauncher
         private void VerifyInstalledFiles(ActiveUiAssetState state, UiAssetReleaseManifest release)
         {
             if (!IsActiveStateUsable(state)) throw new InvalidOperationException("설치된 UI Asset 활성 상태가 올바르지 않습니다.");
-            UiAssetReleaseIntegrityVerifier.Verify(release);
-            var expectedPath = Path.GetFullPath(LauncherPaths.UiAssetVersionDirectory(state.Version));
+            UiAssetReleaseIntegrityVerifier.VerifyForTest(release, _publicKey, _expectedKeyId);
+            var expectedPath = Path.GetFullPath(VersionDirectory(state.Version));
             var actualPath = Path.GetFullPath(state.InstalledPath ?? "");
             if (!String.Equals(expectedPath.TrimEnd(Path.DirectorySeparatorChar), actualPath.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) || !Directory.Exists(expectedPath))
                 throw new InvalidOperationException("UI Asset 활성 슬롯 경로가 올바르지 않습니다.");
