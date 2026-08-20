@@ -90,21 +90,5 @@ namespace KinojoMeterLauncher
             return Path.Combine(UiAssetVersions, version);
         }
 
-        public static string CatalogPackDirectory(string packId)
-        {
-            CatalogPackInstaller.ValidatePackId(packId);
-            return Path.Combine(CatalogPackRoot, packId);
-        }
-
-        public static string CatalogPackActiveFile(string packId)
-        {
-            return Path.Combine(CatalogPackDirectory(packId), "active.json");
-        }
-
-        public static string CatalogPackVersionDirectory(string packId, string catalogVersion, string packageSha256)
-        {
-            CatalogPackInstaller.ValidateIdentity(packId, catalogVersion, packageSha256);
-            return Path.Combine(CatalogPackDirectory(packId), "versions", catalogVersion, packageSha256);
-        }
     }
 }

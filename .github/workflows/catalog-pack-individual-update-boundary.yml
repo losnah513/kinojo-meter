@@ -47,5 +47,5 @@ jobs:
         run: |
           msbuild ./tests/KINOJO.Meter.CatalogPackUpdateTests/KINOJO.Meter.CatalogPackUpdateTests.csproj /restore /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherChannel='${{ matrix.channel }}' /nologo
           if ($LASTEXITCODE -ne 0) { throw 'Catalog Pack update test build failed.' }
-          & './tests/KINOJO.Meter.CatalogPackUpdateTests/bin/Release/net48/KINOJO.Meter.CatalogPackUpdateTests.exe'
+          & './tests/KINOJO.Meter.CatalogPackUpdateTests/bin/x64/Release/net48/KINOJO.Meter.CatalogPackUpdateTests.exe'
           if ($LASTEXITCODE -ne 0) { throw 'Catalog Pack update tests failed.' }
