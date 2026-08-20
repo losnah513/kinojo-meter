@@ -9,7 +9,7 @@ required = [
     'public const string ActiveStatus = "ACTIVE_BUNDLE"',
     'public const string RequiredActivationMode = "ATOMIC_BUNDLE"',
     'public const string StaleBundleBaseCode = "STALE_BUNDLE_BASE"',
-    'SELF_TEST_PASSED',
+    'ModuleStagingSelfTest.PassedStatus',
     'ComputeModuleSetHash',
     'ComputeDependencyFingerprint',
     'File.Replace(temporary, activeFile, null)',
