@@ -19,6 +19,8 @@ namespace KinojoMeterLauncher
         public static readonly string UiAssetVersions = Path.Combine(UiAssetRoot, "versions");
         public static readonly string UiAssetStaging = Path.Combine(UiAssetRoot, "staging");
         public static readonly string ActiveUiAssetFile = Path.Combine(UiAssetRoot, "active.json");
+        public static readonly string ModuleRoot = Path.Combine(Root, "modules");
+        public static readonly string ModulePackageCache = Path.Combine(ModuleRoot, "cache");
         public static readonly string DeviceIdFile = Path.Combine(LauncherData, "device.dat");
         public static readonly string LauncherContentCacheFile = Path.Combine(LauncherData, "content-cache.json");
         public static readonly string LauncherContentReadFile = Path.Combine(LauncherData, "content-read.json");
@@ -30,6 +32,7 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(CoreStaging);
             Directory.CreateDirectory(UiAssetVersions);
             Directory.CreateDirectory(UiAssetStaging);
+            Directory.CreateDirectory(ModulePackageCache);
         }
 
         public static string GetOrCreateInstallationId()
