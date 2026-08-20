@@ -108,6 +108,27 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<UiAssetPackUpdateAuthorization> AuthorizeUiAssetPackUpdateAsync(
+            string sessionToken,
+            string installationId,
+            Dictionary<string, object> currentUiAssetPack)
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "uiAssetPackUpdateAuthorization" },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentUiAssetPack", currentUiAssetPack }
+            }).ConfigureAwait(false);
+
+            var authorization = ParseUiAssetPackAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "UI Asset Pack 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
         public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -228,6 +249,11 @@ namespace KinojoMeterLauncher
             return ParseCatalogPackAuthorization(value);
         }
 
+        internal static UiAssetPackUpdateAuthorization ParseUiAssetPackAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParseUiAssetPackAuthorization(value);
+        }
+
         private static CatalogPackUpdateAuthorization ParseCatalogPackAuthorization(Dictionary<string, object> value)
         {
             var releases = new List<CatalogPackReleaseManifest>();
@@ -262,6 +288,44 @@ namespace KinojoMeterLauncher
                 Code = Text(value, "code", ""),
                 Message = Text(value, "message", ""),
                 Releases = releases
+            };
+        }
+
+        private static UiAssetPackUpdateAuthorization ParseUiAssetPackAuthorization(Dictionary<string, object> value)
+        {
+            var release = Dict(value, "uiAssetPack");
+            UiAssetReleaseManifest parsed = null;
+            if (release != null)
+            {
+                DateTimeOffset expiresAt;
+                if (!DateTimeOffset.TryParse(Text(release, "expiresAt", ""), out expiresAt)) expiresAt = DateTimeOffset.MinValue;
+                parsed = new UiAssetReleaseManifest
+                {
+                    SchemaVersion = Int(release, "schemaVersion", 1),
+                    Channel = Text(release, "channel", LauncherVersion.Channel),
+                    PackId = Text(release, "packId", ""),
+                    Version = Text(release, "version", ""),
+                    MinimumLauncherVersion = Text(release, "minimumLauncherVersion", ""),
+                    PackageId = Text(release, "packageId", ""),
+                    FileName = Text(release, "fileName", ""),
+                    FileSize = Long(release, "fileSize", 0),
+                    Sha256 = Text(release, "sha256", "").ToLowerInvariant(),
+                    InstallManifestSha256 = Text(release, "installManifestSha256", "").ToLowerInvariant(),
+                    ThemeSha256 = Text(release, "themeSha256", "").ToLowerInvariant(),
+                    DownloadUrl = Text(release, "downloadUrl", ""),
+                    ExpiresAt = expiresAt,
+                    IntegrityMode = Text(release, "integrityMode", ""),
+                    SigningKeyId = Text(release, "signingKeyId", ""),
+                    ManifestSignature = Text(release, "manifestSignature", ""),
+                    ReleaseNote = Text(release, "releaseNote", "")
+                };
+            }
+            return new UiAssetPackUpdateAuthorization
+            {
+                Authorized = Bool(value, "authorized"),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                Release = parsed
             };
         }
 

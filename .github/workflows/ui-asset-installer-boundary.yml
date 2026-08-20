@@ -5,32 +5,51 @@ on:
     paths:
       - 'launcher/LauncherPaths.cs'
       - 'launcher/LauncherModels.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
       - 'launcher/UiAssetPackInstaller.cs'
       - 'launcher/UiAssetPackageValidator.cs'
       - 'launcher/UiAssetPackState.cs'
       - 'launcher/UiAssetReleaseIntegrityVerifier.cs'
       - 'launcher/KINOJO.Meter.Launcher.csproj'
       - 'tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj'
+      - 'tests/KINOJO.Meter.Launcher.Tests/Program.cs'
       - 'scripts/test-ui-asset-installer-boundary.py'
+      - 'scripts/test-ui-asset-individual-update-boundary.py'
   push:
     branches: [main]
     paths:
       - 'launcher/LauncherPaths.cs'
       - 'launcher/LauncherModels.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
       - 'launcher/UiAssetPackInstaller.cs'
       - 'launcher/UiAssetPackageValidator.cs'
       - 'launcher/UiAssetPackState.cs'
       - 'launcher/UiAssetReleaseIntegrityVerifier.cs'
       - 'launcher/KINOJO.Meter.Launcher.csproj'
       - 'tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj'
+      - 'tests/KINOJO.Meter.Launcher.Tests/Program.cs'
       - 'scripts/test-ui-asset-installer-boundary.py'
+      - 'scripts/test-ui-asset-individual-update-boundary.py'
 
 jobs:
   boundary:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: python scripts/test-ui-asset-installer-boundary.py
+      - run: python scripts/test-ui-asset-individual-update-boundary.py
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and run Launcher regression tests
+        shell: pwsh
+        run: |
+          dotnet build tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj -c Release -p:LauncherChannel=stable
+          & tests/KINOJO.Meter.Launcher.Tests/bin/Release/net48/KINOJO.Meter.Launcher.Tests.exe

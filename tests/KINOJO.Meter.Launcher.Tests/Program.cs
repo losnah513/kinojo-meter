@@ -4,8 +4,12 @@ using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -36,6 +40,7 @@ namespace KinojoMeterLauncher
                 Run("channel profile is compile-time bound", VerifyChannelProfile);
                 Run("parse Server Meter launch operation", VerifyMeterLaunchOperationParsing);
                 Run("parse Catalog Pack update authorization", VerifyCatalogPackAuthorizationParsing);
+                Run("parse UI Asset Pack update authorization", VerifyUiAssetPackAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -98,6 +103,9 @@ namespace KinojoMeterLauncher
                     Run("reject wrong signing key id", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.SigningKeyId = "wrong-key")));
                     Run("reject Authenticode-required hobby release", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.CodeSignatureRequired = true)));
                     Run("reject cross-channel signed URL", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.DownloadUrl = value.DownloadUrl.Replace("/" + LauncherVersion.Channel + "/", "/" + (LauncherVersion.Channel == "staging" ? "stable" : "staging") + "/"))));
+                    Run("download and activate UI Asset Pack independently", () => VerifyUiAssetIndividualUpdate(root, signingKey));
+                    Run("revalidate UI Asset Pack without redownload", () => VerifyUiAssetIdempotent(root, signingKey));
+                    Run("reject same UI Asset version with different SHA", () => VerifyUiAssetVersionShaConflict(root, signingKey));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -138,6 +146,135 @@ namespace KinojoMeterLauncher
             var denied = LauncherApiClient.ParseCatalogPackAuthorizationForTest(response);
             if (denied == null || denied.Authorized)
                 throw new InvalidOperationException("Catalog Pack authorization ignored an explicit Server denial.");
+        }
+
+        private static void VerifyUiAssetPackAuthorizationParsing()
+        {
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "uiAssetPack", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", LauncherVersion.Channel }, { "packId", "ui-assets" },
+                    { "version", "1.0.1" }, { "minimumLauncherVersion", "1.0.0" }, { "packageId", "fixture" },
+                    { "fileName", "KinojoUiAssets_1.0.1.zip" }, { "fileSize", 123L }, { "sha256", new String('a', 64) },
+                    { "installManifestSha256", new String('b', 64) }, { "themeSha256", new String('c', 64) },
+                    { "downloadUrl", "https://example.invalid/fixture?token=test" }, { "expiresAt", DateTimeOffset.UtcNow.AddMinutes(1).ToString("o") },
+                    { "integrityMode", "RSA_SHA256_MANIFEST_V1" }, { "signingKeyId", "fixture" }, { "manifestSignature", "fixture" }
+                } }
+            };
+            var parsed = LauncherApiClient.ParseUiAssetPackAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null || parsed.Release.PackId != "ui-assets" ||
+                parsed.Release.ThemeSha256 != new String('c', 64) || parsed.Release.ExpiresAt == DateTimeOffset.MinValue)
+                throw new InvalidOperationException("UI Asset Pack authorization parsing failed.");
+            response["authorized"] = false;
+            if (LauncherApiClient.ParseUiAssetPackAuthorizationForTest(response).Authorized)
+                throw new InvalidOperationException("UI Asset Pack authorization ignored an explicit Server denial.");
+        }
+
+        private static void VerifyUiAssetIndividualUpdate(string root, RSACryptoServiceProvider key)
+        {
+            var updateRoot = Path.Combine(root, "ui-changed");
+            var fixture = CreateUiAssetFixture("1.0.1", "one", key);
+            var handler = new UiAssetFixtureHandler(fixture.PackageBytes);
+            using (var installer = new UiAssetPackInstaller(handler, updateRoot, key.ExportParameters(false), "ui-test-key"))
+            {
+                var result = installer.EnsureInstalledAsync(fixture.Release, "josvoltpktvwysrasffq.supabase.co", CancellationToken.None).GetAwaiter().GetResult();
+                if (!result.Changed || !result.Downloaded || handler.RequestCount != 1 || installer.ReadVerifiedActiveState() == null)
+                    throw new InvalidOperationException("UI Asset Pack was not independently activated.");
+            }
+        }
+
+        private static void VerifyUiAssetIdempotent(string root, RSACryptoServiceProvider key)
+        {
+            var updateRoot = Path.Combine(root, "ui-idempotent");
+            var fixture = CreateUiAssetFixture("1.0.2", "one", key);
+            using (var installer = new UiAssetPackInstaller(new UiAssetFixtureHandler(fixture.PackageBytes), updateRoot, key.ExportParameters(false), "ui-test-key"))
+                installer.EnsureInstalledAsync(fixture.Release, "josvoltpktvwysrasffq.supabase.co", CancellationToken.None).GetAwaiter().GetResult();
+            var noDownload = new UiAssetFixtureHandler(null);
+            using (var installer = new UiAssetPackInstaller(noDownload, updateRoot, key.ExportParameters(false), "ui-test-key"))
+            {
+                var result = installer.EnsureInstalledAsync(fixture.Release, "josvoltpktvwysrasffq.supabase.co", CancellationToken.None).GetAwaiter().GetResult();
+                if (result.Changed || result.Downloaded || noDownload.RequestCount != 0)
+                    throw new InvalidOperationException("Exact UI Asset Pack was downloaded again.");
+            }
+        }
+
+        private static void VerifyUiAssetVersionShaConflict(string root, RSACryptoServiceProvider key)
+        {
+            var updateRoot = Path.Combine(root, "ui-conflict");
+            var first = CreateUiAssetFixture("1.0.3", "one", key);
+            var conflicting = CreateUiAssetFixture("1.0.3", "two", key);
+            using (var installer = new UiAssetPackInstaller(new UiAssetFixtureHandler(first.PackageBytes), updateRoot, key.ExportParameters(false), "ui-test-key"))
+                installer.EnsureInstalledAsync(first.Release, "josvoltpktvwysrasffq.supabase.co", CancellationToken.None).GetAwaiter().GetResult();
+            var pointer = Path.Combine(updateRoot, "active.json");
+            var before = File.ReadAllBytes(pointer);
+            var handler = new UiAssetFixtureHandler(conflicting.PackageBytes);
+            try
+            {
+                using (var installer = new UiAssetPackInstaller(handler, updateRoot, key.ExportParameters(false), "ui-test-key"))
+                    installer.EnsureInstalledAsync(conflicting.Release, "josvoltpktvwysrasffq.supabase.co", CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (Exception error)
+            {
+                if (error.ToString().IndexOf(UiAssetPackInstaller.VersionShaConflictCode, StringComparison.Ordinal) >= 0 &&
+                    handler.RequestCount == 0 && before.SequenceEqual(File.ReadAllBytes(pointer))) return;
+                throw;
+            }
+            throw new InvalidOperationException("UI Asset version/SHA conflict did not fail closed.");
+        }
+
+        private static UiAssetFixture CreateUiAssetFixture(string version, string marker, RSACryptoServiceProvider key)
+        {
+            var json = new JavaScriptSerializer();
+            var files = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+            {
+                { "fonts/regular.ttf", Encoding.UTF8.GetBytes("regular-" + marker) },
+                { "fonts/bold.ttf", Encoding.UTF8.GetBytes("bold-" + marker) },
+                { "icons/classes/normal/test.png", Encoding.UTF8.GetBytes("class-" + marker) },
+                { "icons/status/ok.png", Encoding.UTF8.GetBytes("status-" + marker) },
+                { "icons/boss/test.png", Encoding.UTF8.GetBytes("boss-" + marker) }
+            };
+            files["theme.json"] = Encoding.UTF8.GetBytes(json.Serialize(new Dictionary<string, object>
+            {
+                { "schemaVersion", 1 }, { "packId", "ui-assets" }, { "version", version }, { "themeId", "fixture-theme" },
+                { "fallback", "EMBEDDED_CORE" },
+                { "fonts", new object[] { new Dictionary<string, object> { { "regular", "fonts/regular.ttf" }, { "bold", "fonts/bold.ttf" } } } },
+                { "classIcons", new Dictionary<string, object> { { "variants", new object[] { "normal" } }, { "keys", new object[] { "test" } }, { "pathTemplate", "icons/classes/{variant}/{key}.png" } } },
+                { "statusIcons", new Dictionary<string, object> { { "ok", "icons/status/ok.png" } } },
+                { "bossIcons", new Dictionary<string, object> { { "test", "icons/boss/test.png" } } }
+            }));
+            var manifest = new UiAssetInstallManifest
+            {
+                SchemaVersion = 1,
+                PackId = "ui-assets",
+                Version = version,
+                ThemeId = "fixture-theme",
+                Files = files.Select(pair => new UiAssetInstallFile { Path = pair.Key, Size = pair.Value.Length, Sha256 = Hash(pair.Value) }).ToList()
+            };
+            var manifestBytes = Encoding.UTF8.GetBytes(json.Serialize(manifest));
+            byte[] packageBytes;
+            using (var stream = new MemoryStream())
+            {
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
+                {
+                    foreach (var pair in files) WriteEntry(archive, pair.Key, pair.Value);
+                    WriteEntry(archive, "install-manifest.json", manifestBytes);
+                }
+                packageBytes = stream.ToArray();
+            }
+            var release = new UiAssetReleaseManifest
+            {
+                SchemaVersion = 1, Channel = LauncherVersion.Channel, PackId = "ui-assets", Version = version,
+                MinimumLauncherVersion = "1.0.0", PackageId = LauncherVersion.Channel + ":ui-assets:" + version,
+                FileName = "KinojoUiAssets_" + version + ".zip", FileSize = packageBytes.Length, Sha256 = Hash(packageBytes),
+                InstallManifestSha256 = Hash(manifestBytes), ThemeSha256 = Hash(files["theme.json"]),
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/ui-assets/" + LauncherVersion.Channel + "/" + version + "/KinojoUiAssets_" + version + ".zip?token=fixture",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), IntegrityMode = UiAssetReleaseIntegrityVerifier.IntegrityMode,
+                SigningKeyId = "ui-test-key", ReleaseNote = "fixture"
+            };
+            release.ManifestSignature = Convert.ToBase64String(key.SignData(Encoding.UTF8.GetBytes(UiAssetReleaseIntegrityVerifier.Canonicalize(release)), CryptoConfig.MapNameToOID("SHA256")));
+            return new UiAssetFixture { Release = release, PackageBytes = packageBytes };
         }
 
         private static void VerifyMeterLaunchOperationParsing()
@@ -596,6 +733,31 @@ namespace KinojoMeterLauncher
             action();
             _passed += 1;
             Console.WriteLine("PASS " + name);
+        }
+
+        private sealed class UiAssetFixture
+        {
+            public UiAssetReleaseManifest Release { get; set; }
+            public byte[] PackageBytes { get; set; }
+        }
+
+        private sealed class UiAssetFixtureHandler : HttpMessageHandler
+        {
+            private readonly byte[] _content;
+            public int RequestCount { get; private set; }
+
+            public UiAssetFixtureHandler(byte[] content) { _content = content; }
+
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                RequestCount += 1;
+                if (_content == null) throw new InvalidOperationException("Unexpected UI Asset network request.");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = request,
+                    Content = new ByteArrayContent(_content)
+                });
+            }
         }
     }
 }

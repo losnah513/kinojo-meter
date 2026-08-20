@@ -977,6 +977,7 @@ namespace KinojoMeterLauncher
                 using (var api = new LauncherApiClient())
                 using (var installer = new CorePackageInstaller())
                 using (var catalogInstaller = new CatalogPackInstaller())
+                using (var uiAssetInstaller = new UiAssetPackInstaller())
                 {
                     _installationId = LauncherPaths.GetOrCreateInstallationId();
                     var current = installer.ReadActiveState();
@@ -1031,13 +1032,26 @@ namespace KinojoMeterLauncher
                         api.ProjectHost,
                         _cancellation.Token);
                     var changedCatalogs = catalogResults.Count(value => value.Changed);
+                    SetOperationState("UI Asset Pack 확인 중", "분리된 UI Asset Pack의 승인 버전과 무결성을 확인하고 있습니다.", false, 98);
+                    var uiAssetAuthorization = await api.AuthorizeUiAssetPackUpdateAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        UiAssetPackUpdateCoordinator.CurrentStatePayload(uiAssetInstaller));
+                    var uiAssetResult = await UiAssetPackUpdateCoordinator.ApplyAsync(
+                        uiAssetInstaller,
+                        uiAssetAuthorization,
+                        api.ProjectHost,
+                        _cancellation.Token);
+                    var uiAssetChanged = uiAssetResult != null && uiAssetResult.Changed;
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed || changedCatalogs > 0 ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        changedCatalogs > 0
-                            ? "최신 Core와 Catalog Pack " + changedCatalogs + "개의 독립 업데이트·무결성 검증을 완료했습니다."
-                            : (_preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core와 Catalog Pack 파일 무결성 검증까지 완료했습니다."),
+                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        uiAssetChanged
+                            ? "최신 Core, Catalog Pack과 UI Asset Pack의 독립 업데이트·무결성 검증을 완료했습니다."
+                            : (changedCatalogs > 0
+                                ? "최신 Core와 Catalog Pack " + changedCatalogs + "개의 독립 업데이트·무결성 검증을 완료했습니다."
+                                : (_preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core, Catalog Pack과 UI Asset Pack 파일 무결성 검증까지 완료했습니다.")),
                         false,
                         100);
                     return true;

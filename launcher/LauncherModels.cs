@@ -231,6 +231,8 @@ namespace KinojoMeterLauncher
         public string Sha256 { get; set; }
         public string InstallManifestSha256 { get; set; }
         public string ThemeSha256 { get; set; }
+        public string DownloadUrl { get; set; }
+        public DateTimeOffset ExpiresAt { get; set; }
         public string IntegrityMode { get; set; }
         public string SigningKeyId { get; set; }
         public string ManifestSignature { get; set; }
@@ -279,5 +281,14 @@ namespace KinojoMeterLauncher
         public ActiveUiAssetState Active { get; set; }
         public ActiveUiAssetState Previous { get; set; }
         public bool Changed { get; set; }
+        public bool Downloaded { get; set; }
+    }
+
+    internal sealed class UiAssetPackUpdateAuthorization
+    {
+        public bool Authorized { get; set; }
+        public string Code { get; set; }
+        public string Message { get; set; }
+        public UiAssetReleaseManifest Release { get; set; }
     }
 }
