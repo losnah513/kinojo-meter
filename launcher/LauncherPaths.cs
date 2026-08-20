@@ -25,6 +25,10 @@ namespace KinojoMeterLauncher
         public static readonly string ModuleSelfTests = Path.Combine(ModuleRoot, "self-tests");
         public static readonly string ModuleActiveBundleFile = Path.Combine(ModuleRoot, "active-bundle.json");
         public static readonly string ModuleActivationLockFile = Path.Combine(ModuleRoot, ".activation.lock");
+        public static readonly string ModuleRollback = Path.Combine(ModuleRoot, "rollback");
+        public static readonly string ModulePreviousBundleFile = Path.Combine(ModuleRollback, "previous-bundle.json");
+        public static readonly string ModuleRollbackPlanFile = Path.Combine(ModuleRollback, "rollback-plan.json");
+        public static readonly string ModuleRollbackReceiptFile = Path.Combine(ModuleRollback, "last-rollback.json");
         public static readonly string DeviceIdFile = Path.Combine(LauncherData, "device.dat");
         public static readonly string LauncherContentCacheFile = Path.Combine(LauncherData, "content-cache.json");
         public static readonly string LauncherContentReadFile = Path.Combine(LauncherData, "content-read.json");
@@ -40,6 +44,7 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(ModuleStaging);
             Directory.CreateDirectory(ModuleSelfTests);
             Directory.CreateDirectory(ModuleRoot);
+            Directory.CreateDirectory(ModuleRollback);
         }
 
         public static string GetOrCreateInstallationId()
