@@ -209,7 +209,7 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(stagingRoot);
             Directory.CreateDirectory(selfRoot);
 
-            const string version = "0.3.0";
+            var version = String.Equals(revision, "B000049", StringComparison.Ordinal) ? "0.3.1" : "0.3.0";
             var modules = new List<ModuleBundleLockEntry>();
             foreach (var id in ModuleIds)
             {
