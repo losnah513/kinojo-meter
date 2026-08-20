@@ -976,6 +976,7 @@ namespace KinojoMeterLauncher
             {
                 using (var api = new LauncherApiClient())
                 using (var installer = new CorePackageInstaller())
+                using (var catalogInstaller = new CatalogPackInstaller())
                 {
                     _installationId = LauncherPaths.GetOrCreateInstallationId();
                     var current = installer.ReadActiveState();
@@ -1018,11 +1019,25 @@ namespace KinojoMeterLauncher
                         // overwrite the terminal 100% state below.
                         prepareProgressActive = false;
                     }
+
+                    SetOperationState("Catalog Pack 확인 중", "분리된 Catalog Pack의 승인 버전과 무결성을 확인하고 있습니다.", false, 95);
+                    var catalogAuthorization = await api.AuthorizeCatalogPackUpdatesAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        CatalogPackUpdateCoordinator.CurrentStatePayload(catalogInstaller));
+                    var catalogResults = await CatalogPackUpdateCoordinator.ApplyAsync(
+                        catalogInstaller,
+                        catalogAuthorization,
+                        api.ProjectHost,
+                        _cancellation.Token);
+                    var changedCatalogs = catalogResults.Count(value => value.Changed);
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        _preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core이며 파일 무결성 검증까지 완료했습니다.",
+                        _preparedCore.Changed || changedCatalogs > 0 ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        changedCatalogs > 0
+                            ? "최신 Core와 Catalog Pack " + changedCatalogs + "개의 독립 업데이트·무결성 검증을 완료했습니다."
+                            : (_preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core와 Catalog Pack 파일 무결성 검증까지 완료했습니다."),
                         false,
                         100);
                     return true;

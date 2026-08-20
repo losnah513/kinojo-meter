@@ -146,6 +146,78 @@ namespace KinojoMeterLauncher
         public bool Changed { get; set; }
     }
 
+    internal sealed class CatalogPackUpdateAuthorization
+    {
+        public bool Authorized { get; set; }
+        public string Code { get; set; }
+        public string Message { get; set; }
+        public List<CatalogPackReleaseManifest> Releases { get; set; }
+    }
+
+    internal sealed class CatalogPackReleaseManifest
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string PackId { get; set; }
+        public string CatalogVersion { get; set; }
+        public string MinimumLauncherVersion { get; set; }
+        public string PackageId { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string Sha256 { get; set; }
+        public string InstallManifestSha256 { get; set; }
+        public string CatalogSha256 { get; set; }
+        public string DownloadUrl { get; set; }
+        public DateTimeOffset ExpiresAt { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
+        public string ReleaseNote { get; set; }
+    }
+
+    internal sealed class CatalogPackInstallManifest
+    {
+        public int SchemaVersion { get; set; }
+        public string PackId { get; set; }
+        public string CatalogVersion { get; set; }
+        public List<CatalogPackInstallFile> Files { get; set; }
+    }
+
+    internal sealed class CatalogPackInstallFile
+    {
+        public string Path { get; set; }
+        public long Size { get; set; }
+        public string Sha256 { get; set; }
+    }
+
+    internal sealed class ActiveCatalogPackState
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string PackId { get; set; }
+        public string CatalogVersion { get; set; }
+        public string MinimumLauncherVersion { get; set; }
+        public string PackageId { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string InstalledPath { get; set; }
+        public string ActivatedAtUtc { get; set; }
+        public string PackageSha256 { get; set; }
+        public string InstallManifestSha256 { get; set; }
+        public string CatalogSha256 { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
+    }
+
+    internal sealed class CatalogPackInstallResult
+    {
+        public ActiveCatalogPackState Active { get; set; }
+        public ActiveCatalogPackState Previous { get; set; }
+        public bool Changed { get; set; }
+        public bool Downloaded { get; set; }
+    }
+
     internal sealed class UiAssetReleaseManifest
     {
         public int SchemaVersion { get; set; }

@@ -87,6 +87,27 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<CatalogPackUpdateAuthorization> AuthorizeCatalogPackUpdatesAsync(
+            string sessionToken,
+            string installationId,
+            List<Dictionary<string, object>> currentCatalogPacks)
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "catalogPackUpdateAuthorization" },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentCatalogPacks", currentCatalogPacks ?? new List<Dictionary<string, object>>() }
+            }).ConfigureAwait(false);
+
+            var authorization = ParseCatalogPackAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "Catalog Pack 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
         public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -200,6 +221,48 @@ namespace KinojoMeterLauncher
         internal static MeterLaunchOperation ParseLaunchOperationForTest(Dictionary<string, object> value)
         {
             return ParseLaunchOperation(value);
+        }
+
+        internal static CatalogPackUpdateAuthorization ParseCatalogPackAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParseCatalogPackAuthorization(value);
+        }
+
+        private static CatalogPackUpdateAuthorization ParseCatalogPackAuthorization(Dictionary<string, object> value)
+        {
+            var releases = new List<CatalogPackReleaseManifest>();
+            foreach (var release in DictList(value, "catalogPacks"))
+            {
+                DateTimeOffset expiresAt;
+                if (!DateTimeOffset.TryParse(Text(release, "expiresAt", ""), out expiresAt)) expiresAt = DateTimeOffset.MinValue;
+                releases.Add(new CatalogPackReleaseManifest
+                {
+                    SchemaVersion = Int(release, "schemaVersion", 1),
+                    Channel = Text(release, "channel", LauncherVersion.Channel),
+                    PackId = Text(release, "packId", ""),
+                    CatalogVersion = Text(release, "catalogVersion", ""),
+                    MinimumLauncherVersion = Text(release, "minimumLauncherVersion", ""),
+                    PackageId = Text(release, "packageId", ""),
+                    FileName = Text(release, "fileName", ""),
+                    FileSize = Long(release, "fileSize", 0),
+                    Sha256 = Text(release, "sha256", "").ToLowerInvariant(),
+                    InstallManifestSha256 = Text(release, "installManifestSha256", "").ToLowerInvariant(),
+                    CatalogSha256 = Text(release, "catalogSha256", "").ToLowerInvariant(),
+                    DownloadUrl = Text(release, "downloadUrl", ""),
+                    ExpiresAt = expiresAt,
+                    IntegrityMode = Text(release, "integrityMode", ""),
+                    SigningKeyId = Text(release, "signingKeyId", ""),
+                    ManifestSignature = Text(release, "manifestSignature", ""),
+                    ReleaseNote = Text(release, "releaseNote", "")
+                });
+            }
+            return new CatalogPackUpdateAuthorization
+            {
+                Authorized = Bool(value, "authorized"),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                Releases = releases
+            };
         }
 
         private static MeterLaunchOperation ParseLaunchOperation(Dictionary<string, object> value)
