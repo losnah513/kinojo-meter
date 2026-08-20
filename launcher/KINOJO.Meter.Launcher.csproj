@@ -43,6 +43,7 @@
     <Compile Include="UiAssetPackState.cs" />
     <Compile Include="UiAssetReleaseIntegrityVerifier.cs" />
     <Compile Include="ModulePackageDownloadCache.cs" />
+    <Compile Include="ModulePackageVerifier.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />
   </ItemGroup>

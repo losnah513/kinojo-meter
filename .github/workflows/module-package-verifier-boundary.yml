@@ -1,0 +1,61 @@
+name: Module package verifier boundary
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/ModulePackageVerifier.cs'
+      - 'launcher/ModulePackageDownloadCache.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/LauncherBuildProfile.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.ModulePackageVerifierTests/**'
+      - 'scripts/test-module-package-verifier-boundary.py'
+      - 'scripts/test-module-download-cache-boundary.py'
+      - '.github/workflows/module-package-verifier-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/ModulePackageVerifier.cs'
+      - 'launcher/ModulePackageDownloadCache.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/LauncherBuildProfile.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.ModulePackageVerifierTests/**'
+      - 'scripts/test-module-package-verifier-boundary.py'
+      - 'scripts/test-module-download-cache-boundary.py'
+      - '.github/workflows/module-package-verifier-boundary.yml'
+  workflow_dispatch:
+
+jobs:
+  static-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/test-module-download-cache-boundary.py
+      - run: python scripts/test-module-package-verifier-boundary.py
+
+  windows-self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build stable Launcher with module verifier
+        shell: pwsh
+        run: |
+          msbuild ./launcher/KINOJO.Meter.Launcher.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherVersion=1.1.5 /p:LauncherFileVersion=1.1.5.0 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build staging Launcher with module verifier
+        shell: pwsh
+        run: |
+          msbuild ./launcher/KINOJO.Meter.Launcher.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherChannel=staging /p:LauncherVersion=1.1.3 /p:LauncherFileVersion=1.1.3.0 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and run module package verifier self-test
+        shell: pwsh
+        run: |
+          msbuild ./tests/KINOJO.Meter.ModulePackageVerifierTests/KINOJO.Meter.ModulePackageVerifierTests.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/KINOJO.Meter.ModulePackageVerifierTests/bin/x64/Release/net48/KINOJO.Meter.ModulePackageVerifierTests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
