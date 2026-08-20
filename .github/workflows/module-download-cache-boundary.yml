@@ -1,0 +1,49 @@
+name: Module package download cache boundary
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/ModulePackageDownloadCache.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.ModuleDownloadCacheTests/**'
+      - 'scripts/test-module-download-cache-boundary.py'
+      - '.github/workflows/module-download-cache-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/ModulePackageDownloadCache.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.ModuleDownloadCacheTests/**'
+      - 'scripts/test-module-download-cache-boundary.py'
+      - '.github/workflows/module-download-cache-boundary.yml'
+  workflow_dispatch:
+
+jobs:
+  static-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/test-module-download-cache-boundary.py
+
+  windows-self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build stable Launcher with module cache
+        shell: pwsh
+        run: |
+          msbuild ./launcher/KINOJO.Meter.Launcher.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherVersion=1.1.5 /p:LauncherFileVersion=1.1.5.0 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and run module download cache self-test
+        shell: pwsh
+        run: |
+          msbuild ./tests/KINOJO.Meter.ModuleDownloadCacheTests/KINOJO.Meter.ModuleDownloadCacheTests.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/KINOJO.Meter.ModuleDownloadCacheTests/bin/x64/Release/net48/KINOJO.Meter.ModuleDownloadCacheTests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
