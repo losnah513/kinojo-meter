@@ -16,6 +16,8 @@ namespace KinojoMeterLauncher
         public string ExpectedBundleLockSha256 { get; set; }
         public string ExpectedChannel { get; set; }
         public string ExpectedCurrentBundleRevision { get; set; }
+        public string ExpectedCurrentBundleLockSha256 { get; set; }
+        public ModuleBundlePointerContext PointerContext { get; set; }
     }
 
     internal sealed class ModuleBundleActivationResult
@@ -156,7 +158,15 @@ namespace KinojoMeterLauncher
                 if (!String.Equals(bundleLockSha256, request.ExpectedBundleLockSha256, StringComparison.Ordinal))
                     throw new InvalidOperationException("Bundle Lock SHA-256이 Server Bundle Manifest 기대값과 일치하지 않습니다.");
 
-                var bundle = ReadAndValidateBundleLock(request.BundleLockFile, request.ExpectedChannel);
+                var expectedOriginChannel = ModuleBundleServerPointer.ExpectedOriginChannel(request.PointerContext, request.ExpectedChannel);
+                var bundle = ReadAndValidateBundleLock(request.BundleLockFile, expectedOriginChannel);
+                ModuleBundleServerPointer.ValidateForActivation(
+                    request.PointerContext,
+                    request.ExpectedChannel,
+                    request.ExpectedCurrentBundleRevision,
+                    request.ExpectedCurrentBundleLockSha256,
+                    bundle.BundleRevision,
+                    bundleLockSha256);
                 if (!String.Equals(bundle.ParentBundleRevision, request.ExpectedCurrentBundleRevision, StringComparison.Ordinal))
                     throw StaleBundleBase(bundle.ParentBundleRevision, request.ExpectedCurrentBundleRevision);
 
@@ -181,7 +191,7 @@ namespace KinojoMeterLauncher
                 {
                     SchemaVersion = 1,
                     Status = ActiveStatus,
-                    Channel = bundle.Channel,
+                    Channel = request.ExpectedChannel,
                     ProductVersion = bundle.ProductVersion,
                     BundleRevision = bundle.BundleRevision,
                     ParentBundleRevision = bundle.ParentBundleRevision,

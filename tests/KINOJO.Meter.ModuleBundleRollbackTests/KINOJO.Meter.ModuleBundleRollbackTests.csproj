@@ -16,6 +16,7 @@
     <Compile Include="..\..\launcher\ModulePackageVerifier.cs" Link="ModulePackageVerifier.cs" />
     <Compile Include="..\..\launcher\ModuleStagingInstaller.cs" Link="ModuleStagingInstaller.cs" />
     <Compile Include="..\..\launcher\ModuleStagingSelfTest.cs" Link="ModuleStagingSelfTest.cs" />
+    <Compile Include="..\..\launcher\ModuleBundleServerPointer.cs" Link="ModuleBundleServerPointer.cs" />
     <Compile Include="..\..\launcher\ModuleBundleActivator.cs" Link="ModuleBundleActivator.cs" />
     <Compile Include="..\..\launcher\ModuleBundleRollback.cs" Link="ModuleBundleRollback.cs" />
   </ItemGroup>
