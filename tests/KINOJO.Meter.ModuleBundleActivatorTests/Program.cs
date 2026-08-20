@@ -40,6 +40,10 @@ namespace KinojoMeterLauncher
                 Run("missing self-test leaves previous active bundle unchanged", () => MissingSelfTestKeepsPrevious(root));
                 Run("post-self-test staging tamper leaves previous active bundle unchanged", () => TamperedStageKeepsPrevious(root));
                 Run("wrong bundle lock SHA fails before active pointer change", () => WrongBundleShaKeepsPrevious(root));
+                Run("Stable promotion reuses the exact Staging-origin Bundle Lock SHA", () => StablePromotionReusesStagingLock(root));
+                Run("Stable rejects a Staging-origin Bundle without promotion authorization", () => StablePromotionAuthorizationRequired(root));
+                Run("Stable rejects a promotion receipt with a rebuilt Bundle Lock SHA", () => StablePromotionRejectsChangedSha(root));
+                Run("Stable rejects a stale Server pointer generation", () => StablePromotionRejectsStaleGeneration(root));
                 Console.WriteLine("Module active bundle tests passed: " + _passed);
                 return 0;
             }
@@ -185,6 +189,58 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("Wrong Bundle Lock SHA changed previous active pointer.");
         }
 
+        private static void StablePromotionReusesStagingLock(string root)
+        {
+            var testRoot = NewRoot(root, "stable-promotion");
+            var fixture = CreateFixture(testRoot, "B000048", "B000047", ModuleBundleActivator.RequiredActivationMode);
+            var request = StablePromotionRequest(fixture, "B000047", new String('b', 64), 5);
+            var result = ModuleBundleActivator.ActivateForTest(request, Path.Combine(testRoot, "modules"));
+            if (result == null || !result.Changed || result.BundleRevision != "B000048" || result.BundleLockSha256 != fixture.BundleLockSha256)
+                throw new InvalidOperationException("Stable promotion did not reuse the exact Staging Bundle Lock identity.");
+            var state = Json.Deserialize<ActiveModuleBundleState>(File.ReadAllText(result.ActiveBundleFile));
+            if (state == null || state.Channel != "stable" || state.BundleLockSha256 != fixture.BundleLockSha256)
+                throw new InvalidOperationException("Stable active state did not preserve serving channel and exact promoted SHA.");
+        }
+
+        private static void StablePromotionAuthorizationRequired(string root)
+        {
+            var testRoot = NewRoot(root, "stable-auth-required");
+            var fixture = CreateFixture(testRoot, "B000048", "B000047", ModuleBundleActivator.RequiredActivationMode);
+            var request = StablePromotionRequest(fixture, "B000047", new String('b', 64), 5);
+            request.PointerContext.Promotion = null;
+            ExpectFailure(
+                () => ModuleBundleActivator.ActivateForTest(request, Path.Combine(testRoot, "modules")),
+                ModuleBundleServerPointer.StablePromotionRequiredCode);
+            if (File.Exists(Path.Combine(testRoot, "modules", "active-bundle.json")))
+                throw new InvalidOperationException("Unauthorized Stable promotion changed the active pointer.");
+        }
+
+        private static void StablePromotionRejectsChangedSha(string root)
+        {
+            var testRoot = NewRoot(root, "stable-sha");
+            var fixture = CreateFixture(testRoot, "B000048", "B000047", ModuleBundleActivator.RequiredActivationMode);
+            var request = StablePromotionRequest(fixture, "B000047", new String('b', 64), 5);
+            request.PointerContext.Promotion.BundleLockSha256 = new String('0', 64);
+            ExpectFailure(
+                () => ModuleBundleActivator.ActivateForTest(request, Path.Combine(testRoot, "modules")),
+                ModuleBundleServerPointer.StablePromotionMismatchCode);
+            if (File.Exists(Path.Combine(testRoot, "modules", "active-bundle.json")))
+                throw new InvalidOperationException("Changed-SHA Stable promotion changed the active pointer.");
+        }
+
+        private static void StablePromotionRejectsStaleGeneration(string root)
+        {
+            var testRoot = NewRoot(root, "stable-generation");
+            var fixture = CreateFixture(testRoot, "B000048", "B000047", ModuleBundleActivator.RequiredActivationMode);
+            var request = StablePromotionRequest(fixture, "B000047", new String('b', 64), 5);
+            request.PointerContext.Promotion.StablePointerGeneration = 4;
+            ExpectFailure(
+                () => ModuleBundleActivator.ActivateForTest(request, Path.Combine(testRoot, "modules")),
+                ModuleBundleServerPointer.StablePromotionMismatchCode);
+            if (File.Exists(Path.Combine(testRoot, "modules", "active-bundle.json")))
+                throw new InvalidOperationException("Stale-generation Stable promotion changed the active pointer.");
+        }
+
         private static ModuleBundleActivationResult Activate(Fixture fixture, string expectedCurrent)
         {
             return ModuleBundleActivator.ActivateForTest(Request(fixture, expectedCurrent), Path.Combine(fixture.Root, "modules"));
@@ -199,6 +255,40 @@ namespace KinojoMeterLauncher
                 ExpectedChannel = "staging",
                 ExpectedCurrentBundleRevision = expectedCurrent
             };
+        }
+
+        private static ModuleBundleActivationRequest StablePromotionRequest(
+            Fixture fixture,
+            string expectedCurrentRevision,
+            string expectedCurrentSha256,
+            long pointerGeneration)
+        {
+            var request = Request(fixture, expectedCurrentRevision);
+            request.ExpectedChannel = "stable";
+            request.ExpectedCurrentBundleLockSha256 = expectedCurrentSha256;
+            request.PointerContext = new ModuleBundlePointerContext
+            {
+                ServingChannel = "stable",
+                BundleOriginChannel = "staging",
+                BundleRevision = "B000048",
+                BundleLockSha256 = fixture.BundleLockSha256,
+                PointerGeneration = pointerGeneration,
+                Promotion = new ModuleBundlePromotionAuthorization
+                {
+                    SchemaVersion = 1,
+                    PromotionId = "11111111-1111-4111-8111-111111111111",
+                    SourceChannel = "staging",
+                    TargetChannel = "stable",
+                    BundleRevision = "B000048",
+                    BundleLockSha256 = fixture.BundleLockSha256,
+                    StagingVerificationId = "22222222-2222-4222-8222-222222222222",
+                    PreviousStableBundleRevision = expectedCurrentRevision,
+                    PreviousStableBundleLockSha256 = expectedCurrentSha256,
+                    StablePointerGeneration = pointerGeneration,
+                    PromotedAtUtc = "2026-08-20T00:05:00Z"
+                }
+            };
+            return request;
         }
 
         private static Fixture CreateFixture(string root, string revision, string parent, string activationMode)

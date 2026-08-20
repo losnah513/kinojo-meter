@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'launcher/ModuleBundleActivator.cs'
+      - 'launcher/ModuleBundleServerPointer.cs'
       - 'launcher/ModuleStagingSelfTest.cs'
       - 'launcher/ModuleStagingInstaller.cs'
       - 'launcher/ModulePackageVerifier.cs'
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - 'launcher/ModuleBundleActivator.cs'
+      - 'launcher/ModuleBundleServerPointer.cs'
       - 'launcher/ModuleStagingSelfTest.cs'
       - 'launcher/ModuleStagingInstaller.cs'
       - 'launcher/ModulePackageVerifier.cs'
