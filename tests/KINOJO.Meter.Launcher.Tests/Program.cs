@@ -41,6 +41,7 @@ namespace KinojoMeterLauncher
                 Run("parse Server Meter launch operation", VerifyMeterLaunchOperationParsing);
                 Run("parse Catalog Pack update authorization", VerifyCatalogPackAuthorizationParsing);
                 Run("parse UI Asset Pack update authorization", VerifyUiAssetPackAuthorizationParsing);
+                Run("parse Meter Shell update authorization", VerifyShellModuleAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -106,6 +107,12 @@ namespace KinojoMeterLauncher
                     Run("download and activate UI Asset Pack independently", () => VerifyUiAssetIndividualUpdate(root, signingKey));
                     Run("revalidate UI Asset Pack without redownload", () => VerifyUiAssetIdempotent(root, signingKey));
                     Run("reject same UI Asset version with different SHA", () => VerifyUiAssetVersionShaConflict(root, signingKey));
+                    Run("accept Server-authorized Meter Shell release", VerifyShellReleaseContract);
+                    Run("reject malformed Meter Shell RSA-3072 signature", VerifyShellReleaseMalformedSignature);
+                    Run("reject Meter Shell signed URL outside exact path", VerifyShellReleaseWrongPath);
+                    Run("reject same Meter Shell version with different SHA", VerifyShellVersionShaConflict);
+                    Run("activate only self-tested Meter Shell against exact runtime Bundle", () => VerifyShellActivationBoundary(root));
+                    Run("enforce exact Meter Shell download host and path", VerifyShellDownloadBoundary);
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -170,6 +177,146 @@ namespace KinojoMeterLauncher
             response["authorized"] = false;
             if (LauncherApiClient.ParseUiAssetPackAuthorizationForTest(response).Authorized)
                 throw new InvalidOperationException("UI Asset Pack authorization ignored an explicit Server denial.");
+        }
+
+        private static void VerifyShellModuleAuthorizationParsing()
+        {
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "shellModule", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", LauncherVersion.Channel }, { "moduleId", "shell" },
+                    { "version", "0.3.0" }, { "minimumLauncherVersion", "1.1.1" },
+                    { "packageId", LauncherVersion.Channel + ":shell:0.3.0:" + new String('a', 16) },
+                    { "packagePath", "modules/shell/0.3.0/KinojoMeterShell_0.3.0_x64.zip" },
+                    { "fileName", "KinojoMeterShell_0.3.0_x64.zip" }, { "fileSize", 123L },
+                    { "sha256", new String('a', 64) }, { "packageManifestSha256", new String('b', 64) },
+                    { "contractSetVersion", 1 }, { "stateSchemaVersion", 1 },
+                    { "primaryArtifact", "KINOJO.Meter.Shell.exe" },
+                    { "downloadUrl", "https://example.invalid/fixture?token=test" },
+                    { "expiresAt", DateTimeOffset.UtcNow.AddMinutes(1).ToString("o") },
+                    { "integrityMode", "RSA_SHA256" }, { "signingKeyId", "fixture" },
+                    { "manifestSignature", Convert.ToBase64String(new byte[384]) }, { "pointerGeneration", 4L }
+                } }
+            };
+            var parsed = LauncherApiClient.ParseShellModuleAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null ||
+                parsed.Release.ModuleId != "shell" || parsed.Release.ContractSetVersion != 1 ||
+                parsed.Release.PointerGeneration != 4 || parsed.Release.PackageManifestSha256 != new String('b', 64))
+                throw new InvalidOperationException("Meter Shell authorization parsing failed.");
+            response["authorized"] = false;
+            if (LauncherApiClient.ParseShellModuleAuthorizationForTest(response).Authorized)
+                throw new InvalidOperationException("Meter Shell authorization ignored an explicit Server denial.");
+        }
+
+        private static void VerifyShellReleaseContract()
+        {
+            ShellModuleUpdater.ValidateReleaseForTest(ShellRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyShellReleaseWrongPath()
+        {
+            var release = ShellRelease();
+            release.DownloadUrl = release.DownloadUrl.Replace("/modules/shell/", "/modules/shell-lookalike/");
+            ExpectFailure(() => ShellModuleUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifyShellReleaseMalformedSignature()
+        {
+            var release = ShellRelease();
+            release.ManifestSignature = Convert.ToBase64String(new byte[383]);
+            ExpectFailure(() => ShellModuleUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifyShellVersionShaConflict()
+        {
+            var release = ShellRelease();
+            var current = new ActiveShellModuleState { ModuleVersion = release.Version, PackageSha256 = new String('f', 64) };
+            ExpectFailure(() => ShellModuleUpdater.RejectVersionConflictForTest(current, release));
+        }
+
+        private static void VerifyShellActivationBoundary(string root)
+        {
+            var receipt = Path.Combine(root, "shell-self-test.json");
+            File.WriteAllText(receipt, "{\"status\":\"SELF_TEST_PASSED\"}", new UTF8Encoding(false));
+            var release = ShellRelease();
+            var staged = new ModuleStagingInstallResult
+            {
+                ModuleId = "shell", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                StagedDirectory = Path.Combine(root, "shell-stage"),
+                InstallStatus = ModuleStagingInstaller.StagedStatus
+            };
+            var selfTest = new ModuleSelfTestResult
+            {
+                ModuleId = "shell", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
+            };
+            var bundle = new ActiveModuleBundleState
+            {
+                Channel = LauncherVersion.Channel, BundleRevision = "B000100",
+                BundleLockSha256 = new String('d', 64), ContractSetVersion = 1
+            };
+            var active = ShellModuleUpdater.ActivateForTest(release, staged, selfTest, bundle);
+            if (active == null || active.ModuleId != "shell" || active.RuntimeBundleRevision != "B000100" ||
+                active.RuntimeBundleLockSha256 != new String('d', 64) ||
+                active.SelfTestReceiptSha256 != Hash(File.ReadAllBytes(receipt)))
+                throw new InvalidOperationException("Meter Shell activation did not preserve exact runtime/self-test identity.");
+
+            selfTest.Status = "FAILED";
+            ExpectFailure(() => ShellModuleUpdater.ActivateForTest(release, staged, selfTest, bundle));
+        }
+
+        private static void VerifyShellDownloadBoundary()
+        {
+            var release = ShellRelease();
+            var uri = new Uri(release.DownloadUrl);
+            ModulePackageDownloadCache.ValidateRequestForTest(new ModulePackageDownloadRequest
+            {
+                ModuleId = "shell", ModuleVersion = release.Version, PackagePath = release.PackagePath,
+                ExpectedSha256 = release.Sha256, DownloadUri = uri,
+                ExpectedDownloadHost = uri.Host, ExpectedDownloadPath = uri.AbsolutePath,
+                ExpectedFileSize = release.FileSize
+            });
+            ExpectFailure(() => ModulePackageDownloadCache.ValidateRequestForTest(new ModulePackageDownloadRequest
+            {
+                ModuleId = "shell", ModuleVersion = release.Version, PackagePath = release.PackagePath,
+                ExpectedSha256 = release.Sha256,
+                DownloadUri = new Uri(release.DownloadUrl.Replace("josvoltpktvwysrasffq.supabase.co", "example.com")),
+                ExpectedDownloadHost = uri.Host, ExpectedDownloadPath = uri.AbsolutePath,
+                ExpectedFileSize = release.FileSize
+            }));
+        }
+
+        private static ShellModuleReleaseManifest ShellRelease()
+        {
+            var sha = new String('a', 64);
+            var version = "0.3.0";
+            var fileName = "KinojoMeterShell_" + version + "_x64.zip";
+            return new ShellModuleReleaseManifest
+            {
+                SchemaVersion = 1,
+                Channel = LauncherVersion.Channel,
+                ModuleId = "shell",
+                Version = version,
+                MinimumLauncherVersion = "1.1.1",
+                PackageId = LauncherVersion.Channel + ":shell:" + version + ":" + sha.Substring(0, 16),
+                PackagePath = "modules/shell/" + version + "/" + fileName,
+                FileName = fileName,
+                FileSize = 123,
+                Sha256 = sha,
+                PackageManifestSha256 = new String('b', 64),
+                ContractSetVersion = 1,
+                StateSchemaVersion = 1,
+                PrimaryArtifact = "KINOJO.Meter.Shell.exe",
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/shell/" +
+                    LauncherVersion.Channel + "/" + version + "/" + fileName + "?token=test",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
+                IntegrityMode = "RSA_SHA256",
+                SigningKeyId = "shell-test-key",
+                ManifestSignature = Convert.ToBase64String(new byte[384]),
+                PointerGeneration = 1
+            };
         }
 
         private static void VerifyUiAssetIndividualUpdate(string root, RSACryptoServiceProvider key)
