@@ -15,6 +15,9 @@ namespace KinojoMeterLauncher
         public string PackagePath { get; set; }
         public string ExpectedSha256 { get; set; }
         public Uri DownloadUri { get; set; }
+        public string ExpectedDownloadHost { get; set; }
+        public string ExpectedDownloadPath { get; set; }
+        public long ExpectedFileSize { get; set; }
     }
 
     internal sealed class ModulePackageCacheResult
@@ -121,8 +124,11 @@ namespace KinojoMeterLauncher
                     response.EnsureSuccessStatusCode();
                     var finalUri = response.RequestMessage == null ? request.DownloadUri : response.RequestMessage.RequestUri;
                     RequireHttps(finalUri);
+                    ValidateApprovedDownloadUri(request, finalUri);
 
                     var announced = response.Content.Headers.ContentLength;
+                    if (request.ExpectedFileSize > 0 && announced.HasValue && announced.Value != request.ExpectedFileSize)
+                        throw new InvalidOperationException("모듈 패키지 응답 크기가 Server release와 일치하지 않습니다.");
                     if (announced.HasValue && (announced.Value <= 0 || announced.Value > MaximumPackageBytes))
                         throw new InvalidOperationException("모듈 패키지 응답 크기가 허용 범위를 벗어났습니다.");
 
@@ -157,6 +163,8 @@ namespace KinojoMeterLauncher
 
                 if (total <= 0)
                     throw new InvalidOperationException("빈 모듈 패키지는 캐시할 수 없습니다.");
+                if (request.ExpectedFileSize > 0 && total != request.ExpectedFileSize)
+                    throw new InvalidOperationException("모듈 패키지 크기가 Server release와 일치하지 않습니다.");
 
                 var metadata = new ModulePackageCacheMetadata
                 {
@@ -295,6 +303,9 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("Bundle Lock 모듈 SHA-256 형식이 올바르지 않습니다.");
             ValidatePackagePath(request);
             RequireHttps(request.DownloadUri);
+            ValidateApprovedDownloadUri(request, request.DownloadUri);
+            if (request.ExpectedFileSize < 0 || request.ExpectedFileSize > MaximumPackageBytes)
+                throw new InvalidOperationException("모듈 패키지 Server release 크기가 허용 범위를 벗어났습니다.");
         }
 
         private static void ValidatePackagePath(ModulePackageDownloadRequest request)
@@ -325,6 +336,30 @@ namespace KinojoMeterLauncher
         {
             if (uri == null || !uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttps)
                 throw new InvalidOperationException("모듈 패키지는 Server가 승인한 HTTPS 주소에서만 내려받을 수 있습니다.");
+        }
+
+        private static void ValidateApprovedDownloadUri(ModulePackageDownloadRequest request, Uri uri)
+        {
+            if (request == null || uri == null) throw new InvalidOperationException("모듈 다운로드 주소가 없습니다.");
+            if (String.IsNullOrWhiteSpace(request.ExpectedDownloadHost) && String.IsNullOrWhiteSpace(request.ExpectedDownloadPath)) return;
+            if (String.IsNullOrWhiteSpace(request.ExpectedDownloadHost) || String.IsNullOrWhiteSpace(request.ExpectedDownloadPath) ||
+                !String.Equals(uri.Host, request.ExpectedDownloadHost, StringComparison.OrdinalIgnoreCase) ||
+                !String.Equals(uri.AbsolutePath, request.ExpectedDownloadPath, StringComparison.Ordinal) ||
+                !HasSignedToken(uri))
+                throw new InvalidOperationException("모듈 패키지 signed URL이 Server 승인 경계를 벗어났습니다.");
+        }
+
+        private static bool HasSignedToken(Uri uri)
+        {
+            if (uri == null) return false;
+            foreach (var item in uri.Query.TrimStart('?').Split('&'))
+            {
+                var parts = item.Split(new[] { '=' }, 2);
+                if (parts.Length == 2 &&
+                    String.Equals(Uri.UnescapeDataString(parts[0]), "token", StringComparison.Ordinal) &&
+                    !String.IsNullOrWhiteSpace(Uri.UnescapeDataString(parts[1]))) return true;
+            }
+            return false;
         }
 
         private static void SafeDeleteDirectory(string path)

@@ -978,6 +978,7 @@ namespace KinojoMeterLauncher
                 using (var installer = new CorePackageInstaller())
                 using (var catalogInstaller = new CatalogPackInstaller())
                 using (var uiAssetInstaller = new UiAssetPackInstaller())
+                using (var shellUpdater = new ShellModuleUpdater())
                 {
                     _installationId = LauncherPaths.GetOrCreateInstallationId();
                     var current = installer.ReadActiveState();
@@ -1043,15 +1044,28 @@ namespace KinojoMeterLauncher
                         api.ProjectHost,
                         _cancellation.Token);
                     var uiAssetChanged = uiAssetResult != null && uiAssetResult.Changed;
+                    SetOperationState("Meter Shell 확인 중", "Server가 승인한 Shell 모듈과 private runtime 호환성을 확인하고 있습니다.", false, 99);
+                    var shellAuthorization = await api.AuthorizeShellModuleUpdateAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        ShellModuleUpdateCoordinator.CurrentStatePayload(shellUpdater));
+                    var shellResult = await ShellModuleUpdateCoordinator.ApplyAsync(
+                        shellUpdater,
+                        shellAuthorization,
+                        api.ProjectHost,
+                        _cancellation.Token);
+                    var shellChanged = shellResult != null && shellResult.Changed;
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        uiAssetChanged
+                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        shellChanged
+                            ? "최신 Core, Catalog Pack, UI Asset Pack과 Meter Shell의 독립 업데이트·무결성 검증을 완료했습니다."
+                            : (uiAssetChanged
                             ? "최신 Core, Catalog Pack과 UI Asset Pack의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (changedCatalogs > 0
                                 ? "최신 Core와 Catalog Pack " + changedCatalogs + "개의 독립 업데이트·무결성 검증을 완료했습니다."
-                                : (_preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core, Catalog Pack과 UI Asset Pack 파일 무결성 검증까지 완료했습니다.")),
+                                : (_preparedCore.Changed ? "최신 Core 업데이트와 파일 무결성 검증을 완료했습니다." : "최신 Core, Catalog Pack, UI Asset Pack과 Meter Shell 파일 무결성 검증까지 완료했습니다."))),
                         false,
                         100);
                     return true;
