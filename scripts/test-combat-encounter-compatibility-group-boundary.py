@@ -78,7 +78,7 @@ for source in [updater, api]:
     assert "Process.Start(" not in source, "Stage 6-8 must not cut over the operating process"
 
 for forbidden in ["active-combat.json", "active-encounter.json", "CombatModuleUpdater", "EncounterModuleUpdater"]:
-    assert forbidden not in updater + paths, f"Stage 6-8 must keep the pair atomic: {forbidden}"
+    assert forbidden not in updater, f"Stage 6-8 group updater must keep its bootstrap pair atomic: {forbidden}"
 
 for forbidden in ["ModuleActiveBundleFile", "ModuleActivePrivateRuntimeFile", "ModuleActiveCaptureFile", "ModuleActiveProtocolFile", "ModuleActiveSyncFile"]:
     assert forbidden not in updater, f"group updater must not overwrite parent or Sync state: {forbidden}"

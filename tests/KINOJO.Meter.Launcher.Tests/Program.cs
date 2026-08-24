@@ -47,6 +47,7 @@ namespace KinojoMeterLauncher
                 Run("parse Protocol Engine update authorization", VerifyProtocolAuthorizationParsing);
                 Run("parse Sync Engine update authorization", VerifySyncAuthorizationParsing);
                 Run("parse Combat Encounter compatibility group authorization", VerifyCombatEncounterAuthorizationParsing);
+                Run("parse Combat Encounter individual module authorization", VerifyCombatEncounterIndividualAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -149,6 +150,12 @@ namespace KinojoMeterLauncher
                     Run("reject same Combat version with different SHA in compatibility group", VerifyCombatEncounterVersionShaConflict);
                     Run("reject Combat Encounter group for another active Protocol", () => VerifyCombatEncounterProtocolBoundary(root));
                     Run("activate Combat and Encounter through one compatibility pointer", () => VerifyCombatEncounterActivationBoundary(root));
+                    Run("accept Server-authorized Combat individual update", VerifyCombatIndividualReleaseContract);
+                    Run("accept Server-authorized Encounter individual update", VerifyEncounterIndividualReleaseContract);
+                    Run("reject Combat individual transition that also changes Encounter", () => VerifyCombatIndividualMultipleChangeBoundary(root));
+                    Run("activate only Combat and preserve Encounter compatibility", () => VerifyCombatIndividualActivationBoundary(root));
+                    Run("activate only Encounter and preserve Combat compatibility", () => VerifyEncounterIndividualActivationBoundary(root));
+                    Run("keep Combat pointer valid after Encounter advances", () => VerifySequentialCombatEncounterIndividualBoundary(root));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -407,6 +414,28 @@ namespace KinojoMeterLauncher
                 parsed.Release.ParentProtocolPointerGeneration != release.ParentProtocolPointerGeneration ||
                 parsed.Release.PointerGeneration != release.PointerGeneration)
                 throw new InvalidOperationException("Combat·Encounter 호환 그룹 authorization parsing failed.");
+        }
+
+        private static void VerifyCombatEncounterIndividualAuthorizationParsing()
+        {
+            var authorization = IndividualAuthorization("combat", null);
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "combatEncounterIndividualUpdate", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 },
+                    { "moduleId", authorization.ModuleId },
+                    { "pointerGeneration", authorization.PointerGeneration },
+                    { "compatibilityGroup", CombatEncounterReleasePayload(authorization.CompatibilityGroup) }
+                } }
+            };
+            var parsed = LauncherApiClient.ParseCombatEncounterIndividualModuleAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.ModuleId != "combat" ||
+                parsed.PointerGeneration != authorization.PointerGeneration || parsed.CompatibilityGroup == null ||
+                parsed.CompatibilityGroup.CompatibilityGroupId != authorization.CompatibilityGroup.CompatibilityGroupId ||
+                parsed.CompatibilityGroup.CombatModule == null || parsed.CompatibilityGroup.EncounterModule == null)
+                throw new InvalidOperationException("Combat·Encounter individual authorization parsing failed.");
         }
 
         private static void VerifyCaptureReleaseContract()
@@ -923,6 +952,119 @@ namespace KinojoMeterLauncher
                 active.EncounterVersion != release.EncounterModule.Version || active.EncounterPackageSha256 != release.EncounterModule.Sha256 ||
                 active.ParentProtocolPointerGeneration != release.ParentProtocolPointerGeneration || active.PointerGeneration != release.PointerGeneration)
                 throw new InvalidOperationException("Combat·Encounter 호환 그룹이 두 모듈의 exact identity를 한 포인터에 보존하지 못했습니다.");
+        }
+
+        private static void VerifyCombatIndividualReleaseContract()
+        {
+            CombatEncounterIndividualModuleUpdater.ValidateAuthorizationForTest(
+                IndividualAuthorization("combat", null),
+                "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyEncounterIndividualReleaseContract()
+        {
+            CombatEncounterIndividualModuleUpdater.ValidateAuthorizationForTest(
+                IndividualAuthorization("encounter", null),
+                "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyCombatIndividualMultipleChangeBoundary(string root)
+        {
+            var current = ActiveCombatEncounterGroup(root);
+            var authorization = IndividualAuthorization("combat", current);
+            authorization.CompatibilityGroup.EncounterModule = GroupModule("encounter", "0.3.9", '9');
+            authorization.CompatibilityGroup.CompatibilityGroupId =
+                CombatEncounterCompatibilityGroupUpdater.CompatibilityGroupIdForTest(authorization.CompatibilityGroup);
+            ExpectFailure(() => CombatEncounterIndividualModuleUpdater.RequireTransitionForTest(current, authorization));
+        }
+
+        private static void VerifyCombatIndividualActivationBoundary(string root)
+        {
+            var current = ActiveCombatEncounterGroup(root);
+            var authorization = IndividualAuthorization("combat", current);
+            var target = authorization.CompatibilityGroup.CombatModule;
+            var transition = CombatEncounterIndividualModuleUpdater.ActivateForTest(
+                current, authorization, GroupStaged(root, target), GroupSelfTest(root, target));
+            if (transition == null || transition.Item1 == null || transition.Item2 == null ||
+                transition.Item1.ModuleId != "combat" || transition.Item1.ModuleVersion != target.Version ||
+                transition.Item1.PointerGeneration != authorization.PointerGeneration ||
+                transition.Item2.CombatVersion != target.Version ||
+                transition.Item2.CombatPackageSha256 != target.Sha256 ||
+                transition.Item2.EncounterVersion != current.EncounterVersion ||
+                transition.Item2.EncounterPackageSha256 != current.EncounterPackageSha256 ||
+                transition.Item2.CombatPointerGeneration != authorization.PointerGeneration ||
+                transition.Item2.EncounterPointerGeneration != current.EncounterPointerGeneration)
+                throw new InvalidOperationException("Combat individual activation이 Encounter identity를 보존하지 못했습니다.");
+        }
+
+        private static void VerifyEncounterIndividualActivationBoundary(string root)
+        {
+            var current = ActiveCombatEncounterGroup(root);
+            var authorization = IndividualAuthorization("encounter", current);
+            var target = authorization.CompatibilityGroup.EncounterModule;
+            var transition = CombatEncounterIndividualModuleUpdater.ActivateForTest(
+                current, authorization, GroupStaged(root, target), GroupSelfTest(root, target));
+            if (transition == null || transition.Item1 == null || transition.Item2 == null ||
+                transition.Item1.ModuleId != "encounter" || transition.Item1.ModuleVersion != target.Version ||
+                transition.Item1.PointerGeneration != authorization.PointerGeneration ||
+                transition.Item2.EncounterVersion != target.Version ||
+                transition.Item2.EncounterPackageSha256 != target.Sha256 ||
+                transition.Item2.CombatVersion != current.CombatVersion ||
+                transition.Item2.CombatPackageSha256 != current.CombatPackageSha256 ||
+                transition.Item2.EncounterPointerGeneration != authorization.PointerGeneration ||
+                transition.Item2.CombatPointerGeneration != current.CombatPointerGeneration)
+                throw new InvalidOperationException("Encounter individual activation이 Combat identity를 보존하지 못했습니다.");
+        }
+
+        private static void VerifySequentialCombatEncounterIndividualBoundary(string root)
+        {
+            var bootstrap = ActiveCombatEncounterGroup(root);
+            var combatAuthorization = IndividualAuthorization("combat", bootstrap);
+            var combatTarget = combatAuthorization.CompatibilityGroup.CombatModule;
+            var combat = CombatEncounterIndividualModuleUpdater.ActivateForTest(
+                bootstrap, combatAuthorization, GroupStaged(root, combatTarget), GroupSelfTest(root, combatTarget));
+            var encounterAuthorization = IndividualAuthorization("encounter", combat.Item2);
+            var encounterTarget = encounterAuthorization.CompatibilityGroup.EncounterModule;
+            var encounter = CombatEncounterIndividualModuleUpdater.ActivateForTest(
+                combat.Item2, encounterAuthorization, GroupStaged(root, encounterTarget), GroupSelfTest(root, encounterTarget));
+            CombatEncounterIndividualModuleUpdater.VerifyAgainstGroupForTest(combat.Item1, encounter.Item2);
+            CombatEncounterIndividualModuleUpdater.VerifyAgainstGroupForTest(encounter.Item1, encounter.Item2);
+        }
+
+        private static ActiveCombatEncounterCompatibilityGroupState ActiveCombatEncounterGroup(string root)
+        {
+            var release = CombatEncounterRelease();
+            return CombatEncounterCompatibilityGroupUpdater.ActivateForTest(
+                release,
+                GroupStaged(root, release.CombatModule), GroupSelfTest(root, release.CombatModule),
+                GroupStaged(root, release.EncounterModule), GroupSelfTest(root, release.EncounterModule),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), ProtocolActiveCapture(), SyncActiveProtocol());
+        }
+
+        private static CombatEncounterIndividualModuleAuthorization IndividualAuthorization(
+            string moduleId,
+            ActiveCombatEncounterCompatibilityGroupState current)
+        {
+            var release = CombatEncounterRelease();
+            if (moduleId == "combat")
+                release.CombatModule = GroupModule("combat", "0.3.5", '8');
+            else
+                release.EncounterModule = GroupModule("encounter", "0.3.6", '9');
+            if (current != null)
+            {
+                if (moduleId == "combat")
+                    release.EncounterModule = GroupModule("encounter", current.EncounterVersion, current.EncounterPackageSha256[0]);
+                else
+                    release.CombatModule = GroupModule("combat", current.CombatVersion, current.CombatPackageSha256[0]);
+            }
+            release.CompatibilityGroupId = CombatEncounterCompatibilityGroupUpdater.CompatibilityGroupIdForTest(release);
+            return new CombatEncounterIndividualModuleAuthorization
+            {
+                Authorized = true,
+                ModuleId = moduleId,
+                PointerGeneration = 2,
+                CompatibilityGroup = release
+            };
         }
 
         private static CombatEncounterCompatibilityGroupReleaseManifest CombatEncounterRelease()

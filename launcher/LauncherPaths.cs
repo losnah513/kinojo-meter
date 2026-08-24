@@ -32,6 +32,8 @@ namespace KinojoMeterLauncher
         public static readonly string ModuleActiveProtocolFile = Path.Combine(ModuleRoot, "active-protocol.json");
         public static readonly string ModuleActiveSyncFile = Path.Combine(ModuleRoot, "active-sync.json");
         public static readonly string ModuleActiveCombatEncounterGroupFile = Path.Combine(ModuleRoot, "active-combat-encounter.json");
+        public static readonly string ModuleActiveCombatFile = Path.Combine(ModuleRoot, "active-combat.json");
+        public static readonly string ModuleActiveEncounterFile = Path.Combine(ModuleRoot, "active-encounter.json");
         public static readonly string ModuleActivationLockFile = Path.Combine(ModuleRoot, ".activation.lock");
         public static readonly string ModuleShellUpdateLockFile = Path.Combine(ModuleRoot, ".shell-update.lock");
         public static readonly string ModulePrivateRuntimeUpdateLockFile = Path.Combine(ModuleRoot, ".private-runtime-update.lock");
@@ -39,6 +41,8 @@ namespace KinojoMeterLauncher
         public static readonly string ModuleProtocolUpdateLockFile = Path.Combine(ModuleRoot, ".protocol-update.lock");
         public static readonly string ModuleSyncUpdateLockFile = Path.Combine(ModuleRoot, ".sync-update.lock");
         public static readonly string ModuleCombatEncounterUpdateLockFile = Path.Combine(ModuleRoot, ".combat-encounter-update.lock");
+        public static readonly string ModuleCombatUpdateLockFile = Path.Combine(ModuleRoot, ".combat-update.lock");
+        public static readonly string ModuleEncounterUpdateLockFile = Path.Combine(ModuleRoot, ".encounter-update.lock");
         public static readonly string ModuleRollback = Path.Combine(ModuleRoot, "rollback");
         public static readonly string ModulePreviousBundleFile = Path.Combine(ModuleRollback, "previous-bundle.json");
         public static readonly string ModuleRollbackPlanFile = Path.Combine(ModuleRollback, "rollback-plan.json");

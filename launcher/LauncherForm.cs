@@ -982,6 +982,8 @@ namespace KinojoMeterLauncher
                 using (var captureUpdater = new CaptureModuleUpdater())
                 using (var protocolUpdater = new ProtocolModuleUpdater())
                 using (var combatEncounterUpdater = new CombatEncounterCompatibilityGroupUpdater())
+                using (var combatUpdater = new CombatEncounterIndividualModuleUpdater("combat"))
+                using (var encounterUpdater = new CombatEncounterIndividualModuleUpdater("encounter"))
                 using (var syncUpdater = new SyncModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
@@ -1086,19 +1088,51 @@ namespace KinojoMeterLauncher
                         _cancellation.Token);
                     var protocolChanged = protocolResult != null && protocolResult.Changed;
                     SetOperationState("Combat·Encounter 호환 그룹 확인 중", "두 엔진의 Server 승인 조합과 exact parent chain을 확인하고 있습니다.", false, 99);
-                    var combatEncounterAuthorization = await api.AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+                    var combatEncounterChanged = false;
+                    if (CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater) == null)
+                    {
+                        var combatEncounterAuthorization = await api.AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+                            _login.SessionToken,
+                            _installationId,
+                            null,
+                            ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                            CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                            PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater));
+                        var combatEncounterResult = await CombatEncounterCompatibilityGroupUpdateCoordinator.ApplyAsync(
+                            combatEncounterUpdater,
+                            combatEncounterAuthorization,
+                            api.ProjectHost,
+                            _cancellation.Token);
+                        combatEncounterChanged = combatEncounterResult != null && combatEncounterResult.Changed;
+                    }
+                    SetOperationState("Combat Engine 개별 확인 중", "호환 그룹 안에서 Server 승인 Combat 패키지만 독립 확인하고 있습니다.", false, 99);
+                    var combatAuthorization = await api.AuthorizeCombatEncounterIndividualModuleUpdateAsync(
+                        "combat",
                         _login.SessionToken,
                         _installationId,
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(combatUpdater),
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(encounterUpdater),
                         CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater),
                         ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
                         CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
                         PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater));
-                    var combatEncounterResult = await CombatEncounterCompatibilityGroupUpdateCoordinator.ApplyAsync(
-                        combatEncounterUpdater,
-                        combatEncounterAuthorization,
-                        api.ProjectHost,
-                        _cancellation.Token);
-                    var combatEncounterChanged = combatEncounterResult != null && combatEncounterResult.Changed;
+                    var combatResult = await CombatEncounterIndividualModuleUpdateCoordinator.ApplyAsync(
+                        combatUpdater, combatAuthorization, api.ProjectHost, _cancellation.Token);
+                    var combatChanged = combatResult != null && combatResult.Changed;
+                    SetOperationState("Encounter Engine 개별 확인 중", "갱신된 Combat 호환 상태에서 Server 승인 Encounter 패키지만 독립 확인하고 있습니다.", false, 99);
+                    var encounterAuthorization = await api.AuthorizeCombatEncounterIndividualModuleUpdateAsync(
+                        "encounter",
+                        _login.SessionToken,
+                        _installationId,
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(encounterUpdater),
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(combatUpdater),
+                        CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater),
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater));
+                    var encounterResult = await CombatEncounterIndividualModuleUpdateCoordinator.ApplyAsync(
+                        encounterUpdater, encounterAuthorization, api.ProjectHost, _cancellation.Token);
+                    var encounterChanged = encounterResult != null && encounterResult.Changed;
                     SetOperationState("Sync Engine 확인 중", "활성 Protocol·Capture와 private runtime에 결합된 Server 승인 Sync 모듈을 확인하고 있습니다.", false, 99);
                     var syncAuthorization = await api.AuthorizeSyncModuleUpdateAsync(
                         _login.SessionToken,
@@ -1127,9 +1161,9 @@ namespace KinojoMeterLauncher
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || combatEncounterChanged || syncChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged || combatEncounterChanged || syncChanged
-                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol·Sync Engine, Combat·Encounter 호환 그룹과 Meter Shell의 업데이트·무결성 검증을 완료했습니다."
+                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || combatEncounterChanged || combatChanged || encounterChanged || syncChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged || combatEncounterChanged || combatChanged || encounterChanged || syncChanged
+                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol·Sync Engine, Combat·Encounter 개별 모듈과 Meter Shell의 업데이트·무결성 검증을 완료했습니다."
                             : (uiAssetChanged
                             ? "최신 Core, Catalog Pack과 UI Asset Pack의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (changedCatalogs > 0

@@ -273,6 +273,41 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<CombatEncounterIndividualModuleAuthorization> AuthorizeCombatEncounterIndividualModuleUpdateAsync(
+            string moduleId,
+            string sessionToken,
+            string installationId,
+            Dictionary<string, object> currentModule,
+            Dictionary<string, object> currentCounterpart,
+            Dictionary<string, object> currentGroup,
+            Dictionary<string, object> currentProtocolModule,
+            Dictionary<string, object> currentCaptureModule,
+            Dictionary<string, object> currentPrivateRuntime)
+        {
+            if (moduleId != "combat" && moduleId != "encounter")
+                throw new ArgumentException("Combat·Encounter individual moduleId가 올바르지 않습니다.", "moduleId");
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "combatEncounterIndividualUpdateAuthorization" },
+                { "moduleId", moduleId },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentModule", currentModule },
+                { "currentCounterpart", currentCounterpart },
+                { "currentCombatEncounterGroup", currentGroup },
+                { "currentProtocolModule", currentProtocolModule },
+                { "currentCaptureModule", currentCaptureModule },
+                { "currentPrivateRuntime", currentPrivateRuntime }
+            }).ConfigureAwait(false);
+
+            var authorization = ParseCombatEncounterIndividualModuleAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "Combat·Encounter 개별 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
         public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -426,6 +461,11 @@ namespace KinojoMeterLauncher
         internal static CombatEncounterCompatibilityGroupAuthorization ParseCombatEncounterCompatibilityGroupAuthorizationForTest(Dictionary<string, object> value)
         {
             return ParseCombatEncounterCompatibilityGroupAuthorization(value);
+        }
+
+        internal static CombatEncounterIndividualModuleAuthorization ParseCombatEncounterIndividualModuleAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParseCombatEncounterIndividualModuleAuthorization(value);
         }
 
         private static CatalogPackUpdateAuthorization ParseCatalogPackAuthorization(Dictionary<string, object> value)
@@ -807,6 +847,38 @@ namespace KinojoMeterLauncher
                 IntegrityMode = Text(value, "integrityMode", ""),
                 SigningKeyId = Text(value, "signingKeyId", ""),
                 ManifestSignature = Text(value, "manifestSignature", "")
+            };
+        }
+
+        private static CombatEncounterIndividualModuleAuthorization ParseCombatEncounterIndividualModuleAuthorization(Dictionary<string, object> value)
+        {
+            var update = Dict(value, "combatEncounterIndividualUpdate");
+            CombatEncounterCompatibilityGroupReleaseManifest group = null;
+            var moduleId = "";
+            var pointerGeneration = 0L;
+            if (update != null)
+            {
+                moduleId = Text(update, "moduleId", "");
+                pointerGeneration = Long(update, "pointerGeneration", 0);
+                var groupValue = Dict(update, "compatibilityGroup");
+                if (groupValue != null)
+                {
+                    var parsed = ParseCombatEncounterCompatibilityGroupAuthorization(new Dictionary<string, object>
+                    {
+                        { "authorized", true },
+                        { "combatEncounterGroup", groupValue }
+                    });
+                    group = parsed.Release;
+                }
+            }
+            return new CombatEncounterIndividualModuleAuthorization
+            {
+                Authorized = Bool(value, "authorized"),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                ModuleId = moduleId,
+                PointerGeneration = pointerGeneration,
+                CompatibilityGroup = group
             };
         }
 

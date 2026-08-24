@@ -99,6 +99,8 @@ namespace KinojoMeterLauncher
         public string EncounterStagedDirectory { get; set; }
         public string EncounterSelfTestReceiptSha256 { get; set; }
         public long PointerGeneration { get; set; }
+        public long CombatPointerGeneration { get; set; }
+        public long EncounterPointerGeneration { get; set; }
         public string ActivatedAtUtc { get; set; }
     }
 
@@ -409,6 +411,8 @@ namespace KinojoMeterLauncher
                 EncounterStagedDirectory = Path.GetFullPath(encounterStaged.StagedDirectory),
                 EncounterSelfTestReceiptSha256 = Sha256File(encounterSelfTest.ReceiptFile),
                 PointerGeneration = release.PointerGeneration,
+                CombatPointerGeneration = 0,
+                EncounterPointerGeneration = 0,
                 ActivatedAtUtc = DateTimeOffset.UtcNow.ToString("o")
             };
         }
@@ -816,6 +820,7 @@ namespace KinojoMeterLauncher
             return state == null ? null : new Dictionary<string, object>
             {
                 { "compatibilityGroupId", state.CompatibilityGroupId },
+                { "contractSetVersion", state.ContractSetVersion },
                 { "combatVersion", state.CombatVersion }, { "combatSha256", state.CombatPackageSha256 },
                 { "encounterVersion", state.EncounterVersion }, { "encounterSha256", state.EncounterPackageSha256 },
                 { "runtimeBundleRevision", state.RuntimeBundleRevision }, { "runtimeBundleLockSha256", state.RuntimeBundleLockSha256 },
@@ -825,7 +830,9 @@ namespace KinojoMeterLauncher
                 { "parentCaptureVersion", state.ParentCaptureVersion }, { "parentCaptureSha256", state.ParentCaptureSha256 },
                 { "parentCapturePointerGeneration", state.ParentCapturePointerGeneration },
                 { "parentProtocolVersion", state.ParentProtocolVersion }, { "parentProtocolSha256", state.ParentProtocolSha256 },
-                { "parentProtocolPointerGeneration", state.ParentProtocolPointerGeneration }, { "pointerGeneration", state.PointerGeneration }
+                { "parentProtocolPointerGeneration", state.ParentProtocolPointerGeneration }, { "pointerGeneration", state.PointerGeneration },
+                { "combatPointerGeneration", state.CombatPointerGeneration },
+                { "encounterPointerGeneration", state.EncounterPointerGeneration }
             };
         }
 

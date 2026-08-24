@@ -227,6 +227,8 @@ namespace KinojoMeterLauncher
                 using (var captureUpdater = new CaptureModuleUpdater())
                 using (var protocolUpdater = new ProtocolModuleUpdater())
                 using (var combatEncounterUpdater = new CombatEncounterCompatibilityGroupUpdater())
+                using (var combatUpdater = new CombatEncounterIndividualModuleUpdater("combat"))
+                using (var encounterUpdater = new CombatEncounterIndividualModuleUpdater("encounter"))
                 using (var syncUpdater = new SyncModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
@@ -297,18 +299,47 @@ namespace KinojoMeterLauncher
                         api.ProjectHost,
                         CancellationToken.None).ConfigureAwait(false);
 
-                    var combatEncounterAuthorization = await api.AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+                    if (CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater) == null)
+                    {
+                        var combatEncounterAuthorization = await api.AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+                            envelope.SessionToken,
+                            envelope.InstallationId,
+                            null,
+                            ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                            CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                            PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater)).ConfigureAwait(false);
+                        await CombatEncounterCompatibilityGroupUpdateCoordinator.ApplyAsync(
+                            combatEncounterUpdater,
+                            combatEncounterAuthorization,
+                            api.ProjectHost,
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    var combatAuthorization = await api.AuthorizeCombatEncounterIndividualModuleUpdateAsync(
+                        "combat",
                         envelope.SessionToken,
                         envelope.InstallationId,
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(combatUpdater),
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(encounterUpdater),
                         CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater),
                         ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
                         CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
                         PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater)).ConfigureAwait(false);
-                    await CombatEncounterCompatibilityGroupUpdateCoordinator.ApplyAsync(
-                        combatEncounterUpdater,
-                        combatEncounterAuthorization,
-                        api.ProjectHost,
-                        CancellationToken.None).ConfigureAwait(false);
+                    await CombatEncounterIndividualModuleUpdateCoordinator.ApplyAsync(
+                        combatUpdater, combatAuthorization, api.ProjectHost, CancellationToken.None).ConfigureAwait(false);
+
+                    var encounterAuthorization = await api.AuthorizeCombatEncounterIndividualModuleUpdateAsync(
+                        "encounter",
+                        envelope.SessionToken,
+                        envelope.InstallationId,
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(encounterUpdater),
+                        CombatEncounterIndividualModuleUpdateCoordinator.CurrentStatePayload(combatUpdater),
+                        CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater),
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater)).ConfigureAwait(false);
+                    await CombatEncounterIndividualModuleUpdateCoordinator.ApplyAsync(
+                        encounterUpdater, encounterAuthorization, api.ProjectHost, CancellationToken.None).ConfigureAwait(false);
 
                     var syncAuthorization = await api.AuthorizeSyncModuleUpdateAsync(
                         envelope.SessionToken,
