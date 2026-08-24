@@ -1,0 +1,61 @@
+name: Combat Encounter individual update boundary
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'launcher/CombatEncounterCompatibilityGroupUpdater.cs'
+      - 'launcher/CombatEncounterIndividualModuleUpdater.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'scripts/test-combat-encounter-individual-update-boundary.py'
+      - 'scripts/test-combat-encounter-compatibility-group-boundary.py'
+      - 'tests/KINOJO.Meter.Launcher.Tests/**'
+      - '.github/workflows/combat-encounter-individual-update-boundary.yml'
+  pull_request:
+    paths:
+      - 'launcher/CombatEncounterCompatibilityGroupUpdater.cs'
+      - 'launcher/CombatEncounterIndividualModuleUpdater.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'scripts/test-combat-encounter-individual-update-boundary.py'
+      - 'scripts/test-combat-encounter-compatibility-group-boundary.py'
+      - 'tests/KINOJO.Meter.Launcher.Tests/**'
+      - '.github/workflows/combat-encounter-individual-update-boundary.yml'
+  workflow_dispatch:
+
+jobs:
+  boundary:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: microsoft/setup-msbuild@v2
+      - name: Static boundary
+        run: |
+          python scripts/test-combat-encounter-individual-update-boundary.py
+          python scripts/test-combat-encounter-compatibility-group-boundary.py
+      - name: Build stable launcher
+        shell: pwsh
+        run: msbuild launcher/KINOJO.Meter.Launcher.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /m
+      - name: Build staging launcher
+        shell: pwsh
+        run: msbuild launcher/KINOJO.Meter.Launcher.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherChannel=staging /m
+      - name: Stable launcher package tests
+        shell: pwsh
+        run: |
+          msbuild tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /m
+          ./tests/KINOJO.Meter.Launcher.Tests/bin/x64/Release/net48/KINOJO.Meter.Launcher.Tests.exe
+      - name: Staging launcher package tests
+        shell: pwsh
+        run: |
+          msbuild tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:LauncherChannel=staging /m
+          ./tests/KINOJO.Meter.Launcher.Tests/bin/x64/Release/net48/KINOJO.Meter.Launcher.Tests.exe
