@@ -43,6 +43,7 @@ namespace KinojoMeterLauncher
                 Run("parse UI Asset Pack update authorization", VerifyUiAssetPackAuthorizationParsing);
                 Run("parse Meter Shell update authorization", VerifyShellModuleAuthorizationParsing);
                 Run("parse private runtime update authorization", VerifyPrivateRuntimeAuthorizationParsing);
+                Run("parse Capture Engine update authorization", VerifyCaptureAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -118,6 +119,12 @@ namespace KinojoMeterLauncher
                     Run("reject private runtime release for another Bundle", () => VerifyPrivateRuntimeBundleBoundary(root));
                     Run("activate private runtime whole package against exact Bundle", () => VerifyPrivateRuntimeActivationBoundary(root));
                     Run("build exact Shell and EngineHost process plan", () => VerifyPrivateRuntimeProcessPlan(root));
+                    Run("accept Server-authorized Capture Engine release", VerifyCaptureReleaseContract);
+                    Run("reject Capture Engine release outside exact signed path", VerifyCaptureReleaseWrongPath);
+                    Run("reject same Capture Engine version with different SHA", VerifyCaptureVersionShaConflict);
+                    Run("reject Capture Engine for another parent private runtime", () => VerifyCaptureParentBoundary(root));
+                    Run("activate Capture Engine against exact parent and Bundle", () => VerifyCaptureActivationBoundary(root));
+                    Run("build exact Capture override process plan", () => VerifyCaptureProcessPlan(root));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -247,6 +254,165 @@ namespace KinojoMeterLauncher
         private static void VerifyPrivateRuntimeReleaseContract()
         {
             PrivateRuntimePackageUpdater.ValidateReleaseForTest(PrivateRuntimeRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyCaptureAuthorizationParsing()
+        {
+            var release = CaptureRelease();
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "captureModule", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", release.Channel }, { "moduleId", release.ModuleId },
+                    { "version", release.Version }, { "minimumLauncherVersion", release.MinimumLauncherVersion },
+                    { "packageId", release.PackageId }, { "packagePath", release.PackagePath },
+                    { "fileName", release.FileName }, { "fileSize", release.FileSize }, { "sha256", release.Sha256 },
+                    { "packageManifestSha256", release.PackageManifestSha256 }, { "contractSetVersion", 1 },
+                    { "stateSchemaVersion", 0 }, { "primaryArtifact", release.PrimaryArtifact },
+                    { "runtimeBundleRevision", release.RuntimeBundleRevision },
+                    { "runtimeBundleLockSha256", release.RuntimeBundleLockSha256 },
+                    { "runtimeModuleSetHash", release.RuntimeModuleSetHash },
+                    { "parentPrivateRuntimeVersion", release.ParentPrivateRuntimeVersion },
+                    { "parentPrivateRuntimeSha256", release.ParentPrivateRuntimeSha256 },
+                    { "parentPrivateRuntimePointerGeneration", release.ParentPrivateRuntimePointerGeneration },
+                    { "downloadUrl", release.DownloadUrl }, { "expiresAt", release.ExpiresAt.ToString("o") },
+                    { "integrityMode", release.IntegrityMode }, { "signingKeyId", release.SigningKeyId },
+                    { "manifestSignature", release.ManifestSignature }, { "pointerGeneration", 5L }
+                } }
+            };
+            var parsed = LauncherApiClient.ParseCaptureModuleAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null ||
+                parsed.Release.ModuleId != "capture" || parsed.Release.StateSchemaVersion != 0 ||
+                parsed.Release.ParentPrivateRuntimeVersion != "0.3.0" ||
+                parsed.Release.ParentPrivateRuntimePointerGeneration != 7 || parsed.Release.PointerGeneration != 5)
+                throw new InvalidOperationException("Capture Engine authorization parsing failed.");
+        }
+
+        private static void VerifyCaptureReleaseContract()
+        {
+            CaptureModuleUpdater.ValidateReleaseForTest(CaptureRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyCaptureReleaseWrongPath()
+        {
+            var release = CaptureRelease();
+            release.DownloadUrl = release.DownloadUrl.Replace("/modules/capture/", "/modules/capture-lookalike/");
+            ExpectFailure(() => CaptureModuleUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifyCaptureVersionShaConflict()
+        {
+            var release = CaptureRelease();
+            var current = new ActiveCaptureModuleState { ModuleVersion = release.Version, PackageSha256 = new String('f', 64) };
+            ExpectFailure(() => CaptureModuleUpdater.RejectVersionConflictForTest(current, release));
+        }
+
+        private static void VerifyCaptureParentBoundary(string root)
+        {
+            var release = CaptureRelease();
+            var runtime = CapturePrivateRuntime();
+            runtime.PointerGeneration++;
+            ExpectFailure(() => CaptureModuleUpdater.ActivateForTest(
+                release, CaptureStaged(root, release), CaptureSelfTest(root, release), PrivateRuntimeBundle(), runtime));
+        }
+
+        private static void VerifyCaptureActivationBoundary(string root)
+        {
+            var release = CaptureRelease();
+            var active = CaptureModuleUpdater.ActivateForTest(
+                release, CaptureStaged(root, release), CaptureSelfTest(root, release), PrivateRuntimeBundle(), CapturePrivateRuntime());
+            if (active == null || active.ModuleId != "capture" || active.StateSchemaVersion != 0 ||
+                active.RuntimeModuleSetHash != release.RuntimeModuleSetHash ||
+                active.ParentPrivateRuntimeVersion != release.ParentPrivateRuntimeVersion ||
+                active.ParentPrivateRuntimeSha256 != release.ParentPrivateRuntimeSha256 ||
+                active.ParentPrivateRuntimePointerGeneration != release.ParentPrivateRuntimePointerGeneration)
+                throw new InvalidOperationException("Capture Engine activation lost exact parent/Bundle identity.");
+        }
+
+        private static void VerifyCaptureProcessPlan(string root)
+        {
+            var shellRoot = Path.Combine(root, "capture-plan-shell");
+            var runtimeRoot = Path.Combine(root, "capture-plan-runtime");
+            var captureRoot = Path.Combine(root, "capture-plan-capture");
+            Directory.CreateDirectory(shellRoot); Directory.CreateDirectory(runtimeRoot); Directory.CreateDirectory(captureRoot);
+            File.WriteAllBytes(Path.Combine(shellRoot, "KINOJO.Meter.Shell.exe"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(runtimeRoot, "KINOJO.Meter.EngineHost.exe"), new byte[] { 2 });
+            File.WriteAllBytes(Path.Combine(captureRoot, "KINOJO.Meter.Capture.dll"), new byte[] { 3 });
+            var shell = new ActiveShellModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Shell.exe", StagedDirectory = shellRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64)
+            };
+            var runtime = CapturePrivateRuntime();
+            runtime.StagedDirectory = runtimeRoot;
+            runtime.PrimaryArtifact = "KINOJO.Meter.EngineHost.exe";
+            var capture = new ActiveCaptureModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Capture.dll", StagedDirectory = captureRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64), ParentPrivateRuntimeVersion = runtime.ModuleVersion,
+                ParentPrivateRuntimeSha256 = runtime.PackageSha256,
+                ParentPrivateRuntimePointerGeneration = runtime.PointerGeneration
+            };
+            var plan = PrivateRuntimeProcessPlanBuilder.Build(shell, runtime, capture);
+            if (!plan.CaptureOverrideActive || !plan.CaptureAssembly.EndsWith("KINOJO.Meter.Capture.dll", StringComparison.Ordinal) ||
+                plan.RuntimeModuleSetHash != runtime.RuntimeModuleSetHash)
+                throw new InvalidOperationException("Capture override process plan did not preserve exact identity.");
+            capture.ParentPrivateRuntimeSha256 = new String('f', 64);
+            ExpectFailure(() => PrivateRuntimeProcessPlanBuilder.Build(shell, runtime, capture));
+        }
+
+        private static CaptureModuleReleaseManifest CaptureRelease()
+        {
+            const string version = "0.3.1";
+            var sha = new String('c', 64);
+            var fileName = "KinojoCapture_" + version + "_x64.zip";
+            return new CaptureModuleReleaseManifest
+            {
+                SchemaVersion = 1, Channel = LauncherVersion.Channel, ModuleId = "capture", Version = version,
+                MinimumLauncherVersion = "1.1.1", PackageId = LauncherVersion.Channel + ":capture:" + version + ":" + sha.Substring(0, 16),
+                PackagePath = "modules/capture/" + version + "/" + fileName, FileName = fileName, FileSize = 123,
+                Sha256 = sha, PackageManifestSha256 = new String('b', 64), ContractSetVersion = 1, StateSchemaVersion = 0,
+                PrimaryArtifact = "KINOJO.Meter.Capture.dll", RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64),
+                ParentPrivateRuntimeVersion = "0.3.0", ParentPrivateRuntimeSha256 = new String('a', 64),
+                ParentPrivateRuntimePointerGeneration = 7,
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/capture/" +
+                    LauncherVersion.Channel + "/" + version + "/" + fileName + "?token=test",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), IntegrityMode = "RSA_SHA256", SigningKeyId = "capture-test-key",
+                ManifestSignature = Convert.ToBase64String(new byte[384]), PointerGeneration = 5
+            };
+        }
+
+        private static ActivePrivateRuntimeState CapturePrivateRuntime()
+        {
+            return new ActivePrivateRuntimeState
+            {
+                Channel = LauncherVersion.Channel, ModuleVersion = "0.3.0", PackageSha256 = new String('a', 64),
+                PointerGeneration = 7, RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64)
+            };
+        }
+
+        private static ModuleStagingInstallResult CaptureStaged(string root, CaptureModuleReleaseManifest release)
+        {
+            return new ModuleStagingInstallResult
+            {
+                ModuleId = "capture", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                StagedDirectory = Path.Combine(root, "capture-stage"), InstallStatus = ModuleStagingInstaller.StagedStatus
+            };
+        }
+
+        private static ModuleSelfTestResult CaptureSelfTest(string root, CaptureModuleReleaseManifest release)
+        {
+            var receipt = Path.Combine(root, "capture-self-test.json");
+            File.WriteAllText(receipt, "{\"status\":\"SELF_TEST_PASSED\"}", new UTF8Encoding(false));
+            return new ModuleSelfTestResult
+            {
+                ModuleId = "capture", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
+            };
         }
 
         private static void VerifyPrivateRuntimeBundleBoundary(string root)
