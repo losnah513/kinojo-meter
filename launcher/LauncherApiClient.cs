@@ -246,6 +246,33 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<CombatEncounterCompatibilityGroupAuthorization> AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+            string sessionToken,
+            string installationId,
+            Dictionary<string, object> currentGroup,
+            Dictionary<string, object> currentProtocolModule,
+            Dictionary<string, object> currentCaptureModule,
+            Dictionary<string, object> currentPrivateRuntime)
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "combatEncounterCompatibilityGroupAuthorization" },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentCombatEncounterGroup", currentGroup },
+                { "currentProtocolModule", currentProtocolModule },
+                { "currentCaptureModule", currentCaptureModule },
+                { "currentPrivateRuntime", currentPrivateRuntime }
+            }).ConfigureAwait(false);
+
+            var authorization = ParseCombatEncounterCompatibilityGroupAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "Combat·Encounter 호환 그룹 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
         public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -394,6 +421,11 @@ namespace KinojoMeterLauncher
         internal static SyncModuleUpdateAuthorization ParseSyncModuleAuthorizationForTest(Dictionary<string, object> value)
         {
             return ParseSyncModuleAuthorization(value);
+        }
+
+        internal static CombatEncounterCompatibilityGroupAuthorization ParseCombatEncounterCompatibilityGroupAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParseCombatEncounterCompatibilityGroupAuthorization(value);
         }
 
         private static CatalogPackUpdateAuthorization ParseCatalogPackAuthorization(Dictionary<string, object> value)
@@ -708,6 +740,73 @@ namespace KinojoMeterLauncher
                 Code = Text(value, "code", ""),
                 Message = Text(value, "message", ""),
                 Release = parsed
+            };
+        }
+
+        private static CombatEncounterCompatibilityGroupAuthorization ParseCombatEncounterCompatibilityGroupAuthorization(Dictionary<string, object> value)
+        {
+            var release = Dict(value, "combatEncounterGroup");
+            CombatEncounterCompatibilityGroupReleaseManifest parsed = null;
+            if (release != null)
+            {
+                parsed = new CombatEncounterCompatibilityGroupReleaseManifest
+                {
+                    SchemaVersion = Int(release, "schemaVersion", 1),
+                    Channel = Text(release, "channel", LauncherVersion.Channel),
+                    CompatibilityGroupId = Text(release, "compatibilityGroupId", "").ToLowerInvariant(),
+                    MinimumLauncherVersion = Text(release, "minimumLauncherVersion", ""),
+                    ContractSetVersion = Int(release, "contractSetVersion", 0),
+                    RuntimeBundleRevision = Text(release, "runtimeBundleRevision", ""),
+                    RuntimeBundleLockSha256 = Text(release, "runtimeBundleLockSha256", "").ToLowerInvariant(),
+                    RuntimeModuleSetHash = Text(release, "runtimeModuleSetHash", "").ToLowerInvariant(),
+                    ParentPrivateRuntimeVersion = Text(release, "parentPrivateRuntimeVersion", ""),
+                    ParentPrivateRuntimeSha256 = Text(release, "parentPrivateRuntimeSha256", "").ToLowerInvariant(),
+                    ParentPrivateRuntimePointerGeneration = Long(release, "parentPrivateRuntimePointerGeneration", 0),
+                    ParentCaptureVersion = Text(release, "parentCaptureVersion", ""),
+                    ParentCaptureSha256 = Text(release, "parentCaptureSha256", "").ToLowerInvariant(),
+                    ParentCapturePointerGeneration = Long(release, "parentCapturePointerGeneration", 0),
+                    ParentProtocolVersion = Text(release, "parentProtocolVersion", ""),
+                    ParentProtocolSha256 = Text(release, "parentProtocolSha256", "").ToLowerInvariant(),
+                    ParentProtocolPointerGeneration = Long(release, "parentProtocolPointerGeneration", 0),
+                    CombatModule = ParseCombatEncounterModule(Dict(release, "combatModule")),
+                    EncounterModule = ParseCombatEncounterModule(Dict(release, "encounterModule")),
+                    PointerGeneration = Long(release, "pointerGeneration", 0),
+                    ReleaseNote = Text(release, "releaseNote", "")
+                };
+            }
+            return new CombatEncounterCompatibilityGroupAuthorization
+            {
+                Authorized = Bool(value, "authorized"),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                Release = parsed
+            };
+        }
+
+        private static CombatEncounterModuleReleaseManifest ParseCombatEncounterModule(Dictionary<string, object> value)
+        {
+            if (value == null) return null;
+            DateTimeOffset expiresAt;
+            if (!DateTimeOffset.TryParse(Text(value, "expiresAt", ""), out expiresAt)) expiresAt = DateTimeOffset.MinValue;
+            return new CombatEncounterModuleReleaseManifest
+            {
+                SchemaVersion = Int(value, "schemaVersion", 1),
+                ModuleId = Text(value, "moduleId", ""),
+                Version = Text(value, "version", ""),
+                PackageId = Text(value, "packageId", ""),
+                PackagePath = Text(value, "packagePath", ""),
+                FileName = Text(value, "fileName", ""),
+                FileSize = Long(value, "fileSize", 0),
+                Sha256 = Text(value, "sha256", "").ToLowerInvariant(),
+                PackageManifestSha256 = Text(value, "packageManifestSha256", "").ToLowerInvariant(),
+                ContractSetVersion = Int(value, "contractSetVersion", 0),
+                StateSchemaVersion = Int(value, "stateSchemaVersion", 0),
+                PrimaryArtifact = Text(value, "primaryArtifact", ""),
+                DownloadUrl = Text(value, "downloadUrl", ""),
+                ExpiresAt = expiresAt,
+                IntegrityMode = Text(value, "integrityMode", ""),
+                SigningKeyId = Text(value, "signingKeyId", ""),
+                ManifestSignature = Text(value, "manifestSignature", "")
             };
         }
 

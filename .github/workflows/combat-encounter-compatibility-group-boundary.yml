@@ -1,0 +1,47 @@
+name: Combat Encounter compatibility group boundary
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
+      - 'launcher/CombatEncounterCompatibilityGroupUpdater.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.Launcher.Tests/**'
+      - 'scripts/test-combat-encounter-compatibility-group-boundary.py'
+      - '.github/workflows/combat-encounter-compatibility-group-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/LauncherPaths.cs'
+      - 'launcher/LauncherApiClient.cs'
+      - 'launcher/LauncherForm.cs'
+      - 'launcher/CoreUpdateHandoffMode.cs'
+      - 'launcher/CombatEncounterCompatibilityGroupUpdater.cs'
+      - 'launcher/KINOJO.Meter.Launcher.csproj'
+      - 'tests/KINOJO.Meter.Launcher.Tests/**'
+      - 'scripts/test-combat-encounter-compatibility-group-boundary.py'
+      - '.github/workflows/combat-encounter-compatibility-group-boundary.yml'
+
+jobs:
+  boundary:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        channel: [stable, staging]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/test-combat-encounter-compatibility-group-boundary.py
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and run Launcher regression tests
+        shell: pwsh
+        run: |
+          dotnet build tests/KINOJO.Meter.Launcher.Tests/KINOJO.Meter.Launcher.Tests.csproj -c Release -p:LauncherChannel=${{ matrix.channel }}
+          & tests/KINOJO.Meter.Launcher.Tests/bin/Release/net48/KINOJO.Meter.Launcher.Tests.exe
