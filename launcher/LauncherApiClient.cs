@@ -288,7 +288,7 @@ namespace KinojoMeterLauncher
                 throw new ArgumentException("Combat·Encounter individual moduleId가 올바르지 않습니다.", "moduleId");
             var result = await PostAsync(new Dictionary<string, object>
             {
-                { "action", "combatEncounterIndividualUpdateAuthorization" },
+                { "action", "combatEncounterIndividualAuthorization" },
                 { "moduleId", moduleId },
                 { "sessionToken", sessionToken ?? "" },
                 { "installationId", installationId ?? "" },
