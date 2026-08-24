@@ -226,6 +226,7 @@ namespace KinojoMeterLauncher
                 using (var privateRuntimeUpdater = new PrivateRuntimePackageUpdater())
                 using (var captureUpdater = new CaptureModuleUpdater())
                 using (var protocolUpdater = new ProtocolModuleUpdater())
+                using (var combatEncounterUpdater = new CombatEncounterCompatibilityGroupUpdater())
                 using (var syncUpdater = new SyncModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
@@ -293,6 +294,19 @@ namespace KinojoMeterLauncher
                     await ProtocolModuleUpdateCoordinator.ApplyAsync(
                         protocolUpdater,
                         protocolAuthorization,
+                        api.ProjectHost,
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    var combatEncounterAuthorization = await api.AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+                        envelope.SessionToken,
+                        envelope.InstallationId,
+                        CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater),
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater)).ConfigureAwait(false);
+                    await CombatEncounterCompatibilityGroupUpdateCoordinator.ApplyAsync(
+                        combatEncounterUpdater,
+                        combatEncounterAuthorization,
                         api.ProjectHost,
                         CancellationToken.None).ConfigureAwait(false);
 

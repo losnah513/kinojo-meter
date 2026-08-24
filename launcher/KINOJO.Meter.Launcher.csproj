@@ -55,6 +55,7 @@
     <Compile Include="CaptureModuleUpdater.cs" />
     <Compile Include="ProtocolModuleUpdater.cs" />
     <Compile Include="SyncModuleUpdater.cs" />
+    <Compile Include="CombatEncounterCompatibilityGroupUpdater.cs" />
     <Compile Include="CatalogPackUpdater.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />

@@ -46,6 +46,7 @@ namespace KinojoMeterLauncher
                 Run("parse Capture Engine update authorization", VerifyCaptureAuthorizationParsing);
                 Run("parse Protocol Engine update authorization", VerifyProtocolAuthorizationParsing);
                 Run("parse Sync Engine update authorization", VerifySyncAuthorizationParsing);
+                Run("parse Combat Encounter compatibility group authorization", VerifyCombatEncounterAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -142,6 +143,12 @@ namespace KinojoMeterLauncher
                     Run("reject Sync Engine for another active Protocol", () => VerifySyncProtocolBoundary(root));
                     Run("activate Sync Engine against exact Protocol parent and Bundle", () => VerifySyncActivationBoundary(root));
                     Run("build exact Sync override process plan", () => VerifySyncProcessPlan(root));
+                    Run("accept Server-authorized Combat Encounter compatibility group", VerifyCombatEncounterReleaseContract);
+                    Run("reject Combat Encounter package outside exact signed path", VerifyCombatEncounterWrongPath);
+                    Run("reject mismatched Combat Encounter compatibility identity", VerifyCombatEncounterIdentityMismatch);
+                    Run("reject same Combat version with different SHA in compatibility group", VerifyCombatEncounterVersionShaConflict);
+                    Run("reject Combat Encounter group for another active Protocol", () => VerifyCombatEncounterProtocolBoundary(root));
+                    Run("activate Combat and Encounter through one compatibility pointer", () => VerifyCombatEncounterActivationBoundary(root));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -382,6 +389,24 @@ namespace KinojoMeterLauncher
                 parsed.Release.ParentProtocolVersion != "0.3.2" ||
                 parsed.Release.ParentProtocolPointerGeneration != 6 || parsed.Release.PointerGeneration != 8)
                 throw new InvalidOperationException("Sync Engine authorization parsing failed.");
+        }
+
+        private static void VerifyCombatEncounterAuthorizationParsing()
+        {
+            var release = CombatEncounterRelease();
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "combatEncounterGroup", CombatEncounterReleasePayload(release) }
+            };
+            var parsed = LauncherApiClient.ParseCombatEncounterCompatibilityGroupAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null ||
+                parsed.Release.CompatibilityGroupId != release.CompatibilityGroupId ||
+                parsed.Release.CombatModule == null || parsed.Release.CombatModule.ModuleId != "combat" ||
+                parsed.Release.EncounterModule == null || parsed.Release.EncounterModule.ModuleId != "encounter" ||
+                parsed.Release.ParentProtocolPointerGeneration != release.ParentProtocolPointerGeneration ||
+                parsed.Release.PointerGeneration != release.PointerGeneration)
+                throw new InvalidOperationException("Combat·Encounter 호환 그룹 authorization parsing failed.");
         }
 
         private static void VerifyCaptureReleaseContract()
@@ -836,6 +861,165 @@ namespace KinojoMeterLauncher
             return new ModuleSelfTestResult
             {
                 ModuleId = "sync", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
+            };
+        }
+
+        private static void VerifyCombatEncounterReleaseContract()
+        {
+            CombatEncounterCompatibilityGroupUpdater.ValidateReleaseForTest(
+                CombatEncounterRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyCombatEncounterWrongPath()
+        {
+            var release = CombatEncounterRelease();
+            release.EncounterModule.DownloadUrl = release.EncounterModule.DownloadUrl.Replace("/modules/encounter/", "/modules/encounter-lookalike/");
+            ExpectFailure(() => CombatEncounterCompatibilityGroupUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifyCombatEncounterIdentityMismatch()
+        {
+            var release = CombatEncounterRelease();
+            release.CompatibilityGroupId = new String('0', 64);
+            ExpectFailure(() => CombatEncounterCompatibilityGroupUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifyCombatEncounterVersionShaConflict()
+        {
+            var release = CombatEncounterRelease();
+            var current = new ActiveCombatEncounterCompatibilityGroupState
+            {
+                CombatVersion = release.CombatModule.Version,
+                CombatPackageSha256 = new String('1', 64),
+                EncounterVersion = release.EncounterModule.Version,
+                EncounterPackageSha256 = release.EncounterModule.Sha256
+            };
+            ExpectFailure(() => CombatEncounterCompatibilityGroupUpdater.RejectVersionConflictForTest(current, release));
+        }
+
+        private static void VerifyCombatEncounterProtocolBoundary(string root)
+        {
+            var release = CombatEncounterRelease();
+            var protocol = SyncActiveProtocol();
+            protocol.PointerGeneration++;
+            ExpectFailure(() => CombatEncounterCompatibilityGroupUpdater.ActivateForTest(
+                release,
+                GroupStaged(root, release.CombatModule), GroupSelfTest(root, release.CombatModule),
+                GroupStaged(root, release.EncounterModule), GroupSelfTest(root, release.EncounterModule),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), ProtocolActiveCapture(), protocol));
+        }
+
+        private static void VerifyCombatEncounterActivationBoundary(string root)
+        {
+            var release = CombatEncounterRelease();
+            var active = CombatEncounterCompatibilityGroupUpdater.ActivateForTest(
+                release,
+                GroupStaged(root, release.CombatModule), GroupSelfTest(root, release.CombatModule),
+                GroupStaged(root, release.EncounterModule), GroupSelfTest(root, release.EncounterModule),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), ProtocolActiveCapture(), SyncActiveProtocol());
+            if (active == null || active.CompatibilityGroupId != release.CompatibilityGroupId ||
+                active.CombatVersion != release.CombatModule.Version || active.CombatPackageSha256 != release.CombatModule.Sha256 ||
+                active.EncounterVersion != release.EncounterModule.Version || active.EncounterPackageSha256 != release.EncounterModule.Sha256 ||
+                active.ParentProtocolPointerGeneration != release.ParentProtocolPointerGeneration || active.PointerGeneration != release.PointerGeneration)
+                throw new InvalidOperationException("Combat·Encounter 호환 그룹이 두 모듈의 exact identity를 한 포인터에 보존하지 못했습니다.");
+        }
+
+        private static CombatEncounterCompatibilityGroupReleaseManifest CombatEncounterRelease()
+        {
+            var release = new CombatEncounterCompatibilityGroupReleaseManifest
+            {
+                SchemaVersion = 1,
+                Channel = LauncherVersion.Channel,
+                MinimumLauncherVersion = "1.1.1",
+                ContractSetVersion = 1,
+                RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64),
+                ParentPrivateRuntimeVersion = "0.3.0",
+                ParentPrivateRuntimeSha256 = new String('a', 64),
+                ParentPrivateRuntimePointerGeneration = 7,
+                ParentCaptureVersion = "0.3.1",
+                ParentCaptureSha256 = new String('c', 64),
+                ParentCapturePointerGeneration = 5,
+                ParentProtocolVersion = "0.3.2",
+                ParentProtocolSha256 = new String('f', 64),
+                ParentProtocolPointerGeneration = 6,
+                CombatModule = GroupModule("combat", "0.3.3", '4'),
+                EncounterModule = GroupModule("encounter", "0.3.4", '5'),
+                PointerGeneration = 9
+            };
+            release.CompatibilityGroupId = CombatEncounterCompatibilityGroupUpdater.CompatibilityGroupIdForTest(release);
+            return release;
+        }
+
+        private static CombatEncounterModuleReleaseManifest GroupModule(string moduleId, string version, char shaChar)
+        {
+            var sha = new String(shaChar, 64);
+            var name = moduleId == "combat" ? "KinojoCombat_" + version + "_x64.zip" : "KinojoEncounter_" + version + "_x64.zip";
+            return new CombatEncounterModuleReleaseManifest
+            {
+                SchemaVersion = 1, ModuleId = moduleId, Version = version,
+                PackageId = LauncherVersion.Channel + ":" + moduleId + ":" + version + ":" + sha.Substring(0, 16),
+                PackagePath = "modules/" + moduleId + "/" + version + "/" + name,
+                FileName = name, FileSize = 321, Sha256 = sha, PackageManifestSha256 = new String(moduleId == "combat" ? '6' : '7', 64),
+                ContractSetVersion = 1, StateSchemaVersion = 1,
+                PrimaryArtifact = moduleId == "combat" ? "KINOJO.Meter.Combat.dll" : "KINOJO.Meter.Encounter.dll",
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/" + moduleId + "/" + LauncherVersion.Channel + "/" + version + "/" + name + "?token=test",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), IntegrityMode = "RSA_SHA256",
+                SigningKeyId = moduleId + "-test-key", ManifestSignature = Convert.ToBase64String(new byte[384])
+            };
+        }
+
+        private static Dictionary<string, object> CombatEncounterReleasePayload(CombatEncounterCompatibilityGroupReleaseManifest release)
+        {
+            return new Dictionary<string, object>
+            {
+                { "schemaVersion", release.SchemaVersion }, { "channel", release.Channel },
+                { "compatibilityGroupId", release.CompatibilityGroupId }, { "minimumLauncherVersion", release.MinimumLauncherVersion },
+                { "contractSetVersion", release.ContractSetVersion }, { "runtimeBundleRevision", release.RuntimeBundleRevision },
+                { "runtimeBundleLockSha256", release.RuntimeBundleLockSha256 }, { "runtimeModuleSetHash", release.RuntimeModuleSetHash },
+                { "parentPrivateRuntimeVersion", release.ParentPrivateRuntimeVersion }, { "parentPrivateRuntimeSha256", release.ParentPrivateRuntimeSha256 },
+                { "parentPrivateRuntimePointerGeneration", release.ParentPrivateRuntimePointerGeneration },
+                { "parentCaptureVersion", release.ParentCaptureVersion }, { "parentCaptureSha256", release.ParentCaptureSha256 },
+                { "parentCapturePointerGeneration", release.ParentCapturePointerGeneration },
+                { "parentProtocolVersion", release.ParentProtocolVersion }, { "parentProtocolSha256", release.ParentProtocolSha256 },
+                { "parentProtocolPointerGeneration", release.ParentProtocolPointerGeneration },
+                { "combatModule", GroupModulePayload(release.CombatModule) }, { "encounterModule", GroupModulePayload(release.EncounterModule) },
+                { "pointerGeneration", release.PointerGeneration }
+            };
+        }
+
+        private static Dictionary<string, object> GroupModulePayload(CombatEncounterModuleReleaseManifest module)
+        {
+            return new Dictionary<string, object>
+            {
+                { "schemaVersion", module.SchemaVersion }, { "moduleId", module.ModuleId }, { "version", module.Version },
+                { "packageId", module.PackageId }, { "packagePath", module.PackagePath }, { "fileName", module.FileName },
+                { "fileSize", module.FileSize }, { "sha256", module.Sha256 }, { "packageManifestSha256", module.PackageManifestSha256 },
+                { "contractSetVersion", module.ContractSetVersion }, { "stateSchemaVersion", module.StateSchemaVersion },
+                { "primaryArtifact", module.PrimaryArtifact }, { "downloadUrl", module.DownloadUrl },
+                { "expiresAt", module.ExpiresAt.ToString("o") }, { "integrityMode", module.IntegrityMode },
+                { "signingKeyId", module.SigningKeyId }, { "manifestSignature", module.ManifestSignature }
+            };
+        }
+
+        private static ModuleStagingInstallResult GroupStaged(string root, CombatEncounterModuleReleaseManifest module)
+        {
+            return new ModuleStagingInstallResult
+            {
+                ModuleId = module.ModuleId, ModuleVersion = module.Version, ArchiveSha256 = module.Sha256,
+                StagedDirectory = Path.Combine(root, module.ModuleId + "-group-stage"), InstallStatus = ModuleStagingInstaller.StagedStatus
+            };
+        }
+
+        private static ModuleSelfTestResult GroupSelfTest(string root, CombatEncounterModuleReleaseManifest module)
+        {
+            var receipt = Path.Combine(root, module.ModuleId + "-group-self-test.json");
+            File.WriteAllText(receipt, "{\"status\":\"SELF_TEST_PASSED\"}", new UTF8Encoding(false));
+            return new ModuleSelfTestResult
+            {
+                ModuleId = module.ModuleId, ModuleVersion = module.Version, ArchiveSha256 = module.Sha256,
                 ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
             };
         }

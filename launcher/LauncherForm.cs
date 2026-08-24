@@ -981,6 +981,7 @@ namespace KinojoMeterLauncher
                 using (var privateRuntimeUpdater = new PrivateRuntimePackageUpdater())
                 using (var captureUpdater = new CaptureModuleUpdater())
                 using (var protocolUpdater = new ProtocolModuleUpdater())
+                using (var combatEncounterUpdater = new CombatEncounterCompatibilityGroupUpdater())
                 using (var syncUpdater = new SyncModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
@@ -1084,6 +1085,20 @@ namespace KinojoMeterLauncher
                         api.ProjectHost,
                         _cancellation.Token);
                     var protocolChanged = protocolResult != null && protocolResult.Changed;
+                    SetOperationState("Combat·Encounter 호환 그룹 확인 중", "두 엔진의 Server 승인 조합과 exact parent chain을 확인하고 있습니다.", false, 99);
+                    var combatEncounterAuthorization = await api.AuthorizeCombatEncounterCompatibilityGroupUpdateAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        CombatEncounterCompatibilityGroupUpdateCoordinator.CurrentStatePayload(combatEncounterUpdater),
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater));
+                    var combatEncounterResult = await CombatEncounterCompatibilityGroupUpdateCoordinator.ApplyAsync(
+                        combatEncounterUpdater,
+                        combatEncounterAuthorization,
+                        api.ProjectHost,
+                        _cancellation.Token);
+                    var combatEncounterChanged = combatEncounterResult != null && combatEncounterResult.Changed;
                     SetOperationState("Sync Engine 확인 중", "활성 Protocol·Capture와 private runtime에 결합된 Server 승인 Sync 모듈을 확인하고 있습니다.", false, 99);
                     var syncAuthorization = await api.AuthorizeSyncModuleUpdateAsync(
                         _login.SessionToken,
@@ -1112,9 +1127,9 @@ namespace KinojoMeterLauncher
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || syncChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged || syncChanged
-                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol·Sync Engine과 Meter Shell의 독립 업데이트·무결성 검증을 완료했습니다."
+                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || combatEncounterChanged || syncChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged || combatEncounterChanged || syncChanged
+                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol·Sync Engine, Combat·Encounter 호환 그룹과 Meter Shell의 업데이트·무결성 검증을 완료했습니다."
                             : (uiAssetChanged
                             ? "최신 Core, Catalog Pack과 UI Asset Pack의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (changedCatalogs > 0
