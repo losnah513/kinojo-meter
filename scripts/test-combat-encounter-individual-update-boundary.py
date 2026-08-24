@@ -38,8 +38,11 @@ assert updater.index("ExclusiveFile(_syncLock)") < updater.index("ExclusiveFile(
 assert updater.index("ExclusiveFile(_groupLock)") < updater.index("ExclusiveFile(_combatLock)")
 assert updater.index("ExclusiveFile(_combatLock)") < updater.index("ExclusiveFile(_encounterLock)")
 
+authorization_action = "combatEncounterIndividualAuthorization"
+assert len(authorization_action) <= 40, "Edge action names must fit clean(body.action, 40)"
+
 for token in [
-    "combatEncounterIndividualUpdateAuthorization",
+    authorization_action,
     "currentModule",
     "currentCounterpart",
     "currentCombatEncounterGroup",
