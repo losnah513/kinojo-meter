@@ -516,6 +516,8 @@ namespace KinojoMeterLauncher
         public bool CaptureOverrideActive { get; set; }
         public string ProtocolAssembly { get; set; }
         public bool ProtocolOverrideActive { get; set; }
+        public string SyncAssembly { get; set; }
+        public bool SyncOverrideActive { get; set; }
         public string RuntimeBundleRevision { get; set; }
         public string RuntimeBundleLockSha256 { get; set; }
         public string RuntimeModuleSetHash { get; set; }
@@ -525,7 +527,7 @@ namespace KinojoMeterLauncher
     {
         internal static PrivateRuntimeProcessPlan Build(ActiveShellModuleState shell, ActivePrivateRuntimeState runtime)
         {
-            return Build(shell, runtime, null, null);
+            return Build(shell, runtime, null, null, null);
         }
 
         internal static PrivateRuntimeProcessPlan Build(
@@ -533,7 +535,7 @@ namespace KinojoMeterLauncher
             ActivePrivateRuntimeState runtime,
             ActiveCaptureModuleState capture)
         {
-            return Build(shell, runtime, capture, null);
+            return Build(shell, runtime, capture, null, null);
         }
 
         internal static PrivateRuntimeProcessPlan Build(
@@ -541,6 +543,16 @@ namespace KinojoMeterLauncher
             ActivePrivateRuntimeState runtime,
             ActiveCaptureModuleState capture,
             ActiveProtocolModuleState protocol)
+        {
+            return Build(shell, runtime, capture, protocol, null);
+        }
+
+        internal static PrivateRuntimeProcessPlan Build(
+            ActiveShellModuleState shell,
+            ActivePrivateRuntimeState runtime,
+            ActiveCaptureModuleState capture,
+            ActiveProtocolModuleState protocol,
+            ActiveSyncModuleState sync)
         {
             if (shell == null || runtime == null ||
                 !String.Equals(shell.Channel, runtime.Channel, StringComparison.Ordinal) ||
@@ -587,6 +599,29 @@ namespace KinojoMeterLauncher
                 if (!File.Exists(protocolAssembly))
                     throw new InvalidOperationException("Protocol override DLL이 검증된 Staging 슬롯에 없습니다.");
             }
+            string syncAssembly = null;
+            if (sync != null)
+            {
+                if (capture == null || protocol == null ||
+                    !String.Equals(sync.Channel, runtime.Channel, StringComparison.Ordinal) ||
+                    !String.Equals(sync.RuntimeBundleRevision, runtime.RuntimeBundleRevision, StringComparison.Ordinal) ||
+                    !String.Equals(sync.RuntimeBundleLockSha256, runtime.RuntimeBundleLockSha256, StringComparison.Ordinal) ||
+                    !String.Equals(sync.RuntimeModuleSetHash, runtime.RuntimeModuleSetHash, StringComparison.Ordinal) ||
+                    !String.Equals(sync.ParentPrivateRuntimeVersion, runtime.ModuleVersion, StringComparison.Ordinal) ||
+                    !String.Equals(sync.ParentPrivateRuntimeSha256, runtime.PackageSha256, StringComparison.Ordinal) ||
+                    sync.ParentPrivateRuntimePointerGeneration != runtime.PointerGeneration ||
+                    !String.Equals(sync.ParentCaptureVersion, capture.ModuleVersion, StringComparison.Ordinal) ||
+                    !String.Equals(sync.ParentCaptureSha256, capture.PackageSha256, StringComparison.Ordinal) ||
+                    sync.ParentCapturePointerGeneration != capture.PointerGeneration ||
+                    !String.Equals(sync.ParentProtocolVersion, protocol.ModuleVersion, StringComparison.Ordinal) ||
+                    !String.Equals(sync.ParentProtocolSha256, protocol.PackageSha256, StringComparison.Ordinal) ||
+                    sync.ParentProtocolPointerGeneration != protocol.PointerGeneration ||
+                    !String.Equals(sync.PrimaryArtifact, "KINOJO.Meter.Sync.dll", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Sync override가 exact Protocol/Capture/private runtime/Bundle identity와 일치하지 않습니다.");
+                syncAssembly = Path.GetFullPath(Path.Combine(sync.StagedDirectory, sync.PrimaryArtifact));
+                if (!File.Exists(syncAssembly))
+                    throw new InvalidOperationException("Sync override DLL이 검증된 Staging 슬롯에 없습니다.");
+            }
             return new PrivateRuntimeProcessPlan
             {
                 ShellExecutable = shellExecutable,
@@ -595,6 +630,8 @@ namespace KinojoMeterLauncher
                 CaptureOverrideActive = capture != null,
                 ProtocolAssembly = protocolAssembly,
                 ProtocolOverrideActive = protocol != null,
+                SyncAssembly = syncAssembly,
+                SyncOverrideActive = sync != null,
                 RuntimeBundleRevision = runtime.RuntimeBundleRevision,
                 RuntimeBundleLockSha256 = runtime.RuntimeBundleLockSha256,
                 RuntimeModuleSetHash = runtime.RuntimeModuleSetHash

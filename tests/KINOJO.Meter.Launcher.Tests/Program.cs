@@ -45,6 +45,7 @@ namespace KinojoMeterLauncher
                 Run("parse private runtime update authorization", VerifyPrivateRuntimeAuthorizationParsing);
                 Run("parse Capture Engine update authorization", VerifyCaptureAuthorizationParsing);
                 Run("parse Protocol Engine update authorization", VerifyProtocolAuthorizationParsing);
+                Run("parse Sync Engine update authorization", VerifySyncAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -133,6 +134,14 @@ namespace KinojoMeterLauncher
                     Run("reject Protocol Engine for another active Capture", () => VerifyProtocolCaptureBoundary(root));
                     Run("activate Protocol Engine against exact Capture parent and Bundle", () => VerifyProtocolActivationBoundary(root));
                     Run("build exact Protocol override process plan", () => VerifyProtocolProcessPlan(root));
+                    Run("accept Server-authorized Sync Engine release", VerifySyncReleaseContract);
+                    Run("reject Sync Engine release outside exact signed path", VerifySyncReleaseWrongPath);
+                    Run("reject same Sync Engine version with different SHA", VerifySyncVersionShaConflict);
+                    Run("reject Sync Engine for another parent private runtime", () => VerifySyncParentBoundary(root));
+                    Run("reject Sync Engine for another active Capture", () => VerifySyncCaptureBoundary(root));
+                    Run("reject Sync Engine for another active Protocol", () => VerifySyncProtocolBoundary(root));
+                    Run("activate Sync Engine against exact Protocol parent and Bundle", () => VerifySyncActivationBoundary(root));
+                    Run("build exact Sync override process plan", () => VerifySyncProcessPlan(root));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -332,6 +341,47 @@ namespace KinojoMeterLauncher
                 parsed.Release.ParentCaptureVersion != "0.3.1" ||
                 parsed.Release.ParentCapturePointerGeneration != 5 || parsed.Release.PointerGeneration != 6)
                 throw new InvalidOperationException("Protocol Engine authorization parsing failed.");
+        }
+
+        private static void VerifySyncAuthorizationParsing()
+        {
+            var release = SyncRelease();
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "syncModule", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", release.Channel }, { "moduleId", release.ModuleId },
+                    { "version", release.Version }, { "minimumLauncherVersion", release.MinimumLauncherVersion },
+                    { "packageId", release.PackageId }, { "packagePath", release.PackagePath },
+                    { "fileName", release.FileName }, { "fileSize", release.FileSize }, { "sha256", release.Sha256 },
+                    { "packageManifestSha256", release.PackageManifestSha256 }, { "contractSetVersion", 1 },
+                    { "stateSchemaVersion", 1 }, { "primaryArtifact", release.PrimaryArtifact },
+                    { "runtimeBundleRevision", release.RuntimeBundleRevision },
+                    { "runtimeBundleLockSha256", release.RuntimeBundleLockSha256 },
+                    { "runtimeModuleSetHash", release.RuntimeModuleSetHash },
+                    { "parentPrivateRuntimeVersion", release.ParentPrivateRuntimeVersion },
+                    { "parentPrivateRuntimeSha256", release.ParentPrivateRuntimeSha256 },
+                    { "parentPrivateRuntimePointerGeneration", release.ParentPrivateRuntimePointerGeneration },
+                    { "parentCaptureVersion", release.ParentCaptureVersion },
+                    { "parentCaptureSha256", release.ParentCaptureSha256 },
+                    { "parentCapturePointerGeneration", release.ParentCapturePointerGeneration },
+                    { "parentProtocolVersion", release.ParentProtocolVersion },
+                    { "parentProtocolSha256", release.ParentProtocolSha256 },
+                    { "parentProtocolPointerGeneration", release.ParentProtocolPointerGeneration },
+                    { "downloadUrl", release.DownloadUrl }, { "expiresAt", release.ExpiresAt.ToString("o") },
+                    { "integrityMode", release.IntegrityMode }, { "signingKeyId", release.SigningKeyId },
+                    { "manifestSignature", release.ManifestSignature }, { "pointerGeneration", 8L }
+                } }
+            };
+            var parsed = LauncherApiClient.ParseSyncModuleAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null ||
+                parsed.Release.ModuleId != "sync" || parsed.Release.StateSchemaVersion != 1 ||
+                parsed.Release.ParentPrivateRuntimeVersion != "0.3.0" ||
+                parsed.Release.ParentCaptureVersion != "0.3.1" ||
+                parsed.Release.ParentProtocolVersion != "0.3.2" ||
+                parsed.Release.ParentProtocolPointerGeneration != 6 || parsed.Release.PointerGeneration != 8)
+                throw new InvalidOperationException("Sync Engine authorization parsing failed.");
         }
 
         private static void VerifyCaptureReleaseContract()
@@ -609,6 +659,183 @@ namespace KinojoMeterLauncher
             return new ModuleSelfTestResult
             {
                 ModuleId = "protocol", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
+            };
+        }
+
+        private static void VerifySyncReleaseContract()
+        {
+            SyncModuleUpdater.ValidateReleaseForTest(SyncRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifySyncReleaseWrongPath()
+        {
+            var release = SyncRelease();
+            release.DownloadUrl = release.DownloadUrl.Replace("/modules/sync/", "/modules/sync-lookalike/");
+            ExpectFailure(() => SyncModuleUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifySyncVersionShaConflict()
+        {
+            var release = SyncRelease();
+            var current = new ActiveSyncModuleState { ModuleVersion = release.Version, PackageSha256 = new String('1', 64) };
+            ExpectFailure(() => SyncModuleUpdater.RejectVersionConflictForTest(current, release));
+        }
+
+        private static void VerifySyncParentBoundary(string root)
+        {
+            var release = SyncRelease();
+            var runtime = CapturePrivateRuntime();
+            runtime.PointerGeneration++;
+            ExpectFailure(() => SyncModuleUpdater.ActivateForTest(
+                release, SyncStaged(root, release), SyncSelfTest(root, release),
+                PrivateRuntimeBundle(), runtime, ProtocolActiveCapture(), SyncActiveProtocol()));
+        }
+
+        private static void VerifySyncCaptureBoundary(string root)
+        {
+            var release = SyncRelease();
+            var capture = ProtocolActiveCapture();
+            capture.PointerGeneration++;
+            ExpectFailure(() => SyncModuleUpdater.ActivateForTest(
+                release, SyncStaged(root, release), SyncSelfTest(root, release),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), capture, SyncActiveProtocol()));
+        }
+
+        private static void VerifySyncProtocolBoundary(string root)
+        {
+            var release = SyncRelease();
+            var protocol = SyncActiveProtocol();
+            protocol.PointerGeneration++;
+            ExpectFailure(() => SyncModuleUpdater.ActivateForTest(
+                release, SyncStaged(root, release), SyncSelfTest(root, release),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), ProtocolActiveCapture(), protocol));
+        }
+
+        private static void VerifySyncActivationBoundary(string root)
+        {
+            var release = SyncRelease();
+            var active = SyncModuleUpdater.ActivateForTest(
+                release, SyncStaged(root, release), SyncSelfTest(root, release),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), ProtocolActiveCapture(), SyncActiveProtocol());
+            if (active == null || active.ModuleId != "sync" || active.StateSchemaVersion != 1 ||
+                active.RuntimeModuleSetHash != release.RuntimeModuleSetHash ||
+                active.ParentPrivateRuntimeVersion != release.ParentPrivateRuntimeVersion ||
+                active.ParentPrivateRuntimeSha256 != release.ParentPrivateRuntimeSha256 ||
+                active.ParentPrivateRuntimePointerGeneration != release.ParentPrivateRuntimePointerGeneration ||
+                active.ParentCaptureVersion != release.ParentCaptureVersion ||
+                active.ParentCaptureSha256 != release.ParentCaptureSha256 ||
+                active.ParentCapturePointerGeneration != release.ParentCapturePointerGeneration ||
+                active.ParentProtocolVersion != release.ParentProtocolVersion ||
+                active.ParentProtocolSha256 != release.ParentProtocolSha256 ||
+                active.ParentProtocolPointerGeneration != release.ParentProtocolPointerGeneration)
+                throw new InvalidOperationException("Sync Engine activation lost exact Protocol/Capture/private runtime/Bundle identity.");
+        }
+
+        private static void VerifySyncProcessPlan(string root)
+        {
+            var shellRoot = Path.Combine(root, "sync-plan-shell");
+            var runtimeRoot = Path.Combine(root, "sync-plan-runtime");
+            var captureRoot = Path.Combine(root, "sync-plan-capture");
+            var protocolRoot = Path.Combine(root, "sync-plan-protocol");
+            var syncRoot = Path.Combine(root, "sync-plan-sync");
+            Directory.CreateDirectory(shellRoot); Directory.CreateDirectory(runtimeRoot);
+            Directory.CreateDirectory(captureRoot); Directory.CreateDirectory(protocolRoot); Directory.CreateDirectory(syncRoot);
+            File.WriteAllBytes(Path.Combine(shellRoot, "KINOJO.Meter.Shell.exe"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(runtimeRoot, "KINOJO.Meter.EngineHost.exe"), new byte[] { 2 });
+            File.WriteAllBytes(Path.Combine(captureRoot, "KINOJO.Meter.Capture.dll"), new byte[] { 3 });
+            File.WriteAllBytes(Path.Combine(protocolRoot, "KINOJO.Meter.Protocol.dll"), new byte[] { 4 });
+            File.WriteAllBytes(Path.Combine(syncRoot, "KINOJO.Meter.Sync.dll"), new byte[] { 5 });
+            var shell = new ActiveShellModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Shell.exe", StagedDirectory = shellRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64)
+            };
+            var runtime = CapturePrivateRuntime();
+            runtime.StagedDirectory = runtimeRoot;
+            runtime.PrimaryArtifact = "KINOJO.Meter.EngineHost.exe";
+            var capture = ProtocolActiveCapture();
+            capture.StagedDirectory = captureRoot;
+            capture.PrimaryArtifact = "KINOJO.Meter.Capture.dll";
+            var protocol = SyncActiveProtocol();
+            protocol.StagedDirectory = protocolRoot;
+            protocol.PrimaryArtifact = "KINOJO.Meter.Protocol.dll";
+            var sync = new ActiveSyncModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Sync.dll", StagedDirectory = syncRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64), ParentPrivateRuntimeVersion = runtime.ModuleVersion,
+                ParentPrivateRuntimeSha256 = runtime.PackageSha256,
+                ParentPrivateRuntimePointerGeneration = runtime.PointerGeneration,
+                ParentCaptureVersion = capture.ModuleVersion, ParentCaptureSha256 = capture.PackageSha256,
+                ParentCapturePointerGeneration = capture.PointerGeneration,
+                ParentProtocolVersion = protocol.ModuleVersion, ParentProtocolSha256 = protocol.PackageSha256,
+                ParentProtocolPointerGeneration = protocol.PointerGeneration
+            };
+            var plan = PrivateRuntimeProcessPlanBuilder.Build(shell, runtime, capture, protocol, sync);
+            if (!plan.SyncOverrideActive || !plan.SyncAssembly.EndsWith("KINOJO.Meter.Sync.dll", StringComparison.Ordinal) ||
+                !plan.ProtocolOverrideActive || !plan.CaptureOverrideActive || plan.RuntimeModuleSetHash != runtime.RuntimeModuleSetHash)
+                throw new InvalidOperationException("Sync override process plan did not preserve exact dependency identity.");
+            sync.ParentProtocolSha256 = new String('1', 64);
+            ExpectFailure(() => PrivateRuntimeProcessPlanBuilder.Build(shell, runtime, capture, protocol, sync));
+        }
+
+        private static SyncModuleReleaseManifest SyncRelease()
+        {
+            const string version = "0.3.3";
+            var sha = new String('9', 64);
+            var fileName = "KinojoSync_" + version + "_x64.zip";
+            return new SyncModuleReleaseManifest
+            {
+                SchemaVersion = 1, Channel = LauncherVersion.Channel, ModuleId = "sync", Version = version,
+                MinimumLauncherVersion = "1.1.1", PackageId = LauncherVersion.Channel + ":sync:" + version + ":" + sha.Substring(0, 16),
+                PackagePath = "modules/sync/" + version + "/" + fileName, FileName = fileName, FileSize = 123,
+                Sha256 = sha, PackageManifestSha256 = new String('8', 64), ContractSetVersion = 1, StateSchemaVersion = 1,
+                PrimaryArtifact = "KINOJO.Meter.Sync.dll", RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64),
+                ParentPrivateRuntimeVersion = "0.3.0", ParentPrivateRuntimeSha256 = new String('a', 64),
+                ParentPrivateRuntimePointerGeneration = 7,
+                ParentCaptureVersion = "0.3.1", ParentCaptureSha256 = new String('c', 64),
+                ParentCapturePointerGeneration = 5,
+                ParentProtocolVersion = "0.3.2", ParentProtocolSha256 = new String('f', 64),
+                ParentProtocolPointerGeneration = 6,
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/sync/" +
+                    LauncherVersion.Channel + "/" + version + "/" + fileName + "?token=test",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), IntegrityMode = "RSA_SHA256", SigningKeyId = "sync-test-key",
+                ManifestSignature = Convert.ToBase64String(new byte[384]), PointerGeneration = 8
+            };
+        }
+
+        private static ActiveProtocolModuleState SyncActiveProtocol()
+        {
+            return new ActiveProtocolModuleState
+            {
+                Channel = LauncherVersion.Channel, ModuleVersion = "0.3.2", PackageSha256 = new String('f', 64),
+                PointerGeneration = 6, RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64),
+                ParentPrivateRuntimeVersion = "0.3.0", ParentPrivateRuntimeSha256 = new String('a', 64),
+                ParentPrivateRuntimePointerGeneration = 7,
+                ParentCaptureVersion = "0.3.1", ParentCaptureSha256 = new String('c', 64),
+                ParentCapturePointerGeneration = 5
+            };
+        }
+
+        private static ModuleStagingInstallResult SyncStaged(string root, SyncModuleReleaseManifest release)
+        {
+            return new ModuleStagingInstallResult
+            {
+                ModuleId = "sync", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                StagedDirectory = Path.Combine(root, "sync-stage"), InstallStatus = ModuleStagingInstaller.StagedStatus
+            };
+        }
+
+        private static ModuleSelfTestResult SyncSelfTest(string root, SyncModuleReleaseManifest release)
+        {
+            var receipt = Path.Combine(root, "sync-self-test.json");
+            File.WriteAllText(receipt, "{\"status\":\"SELF_TEST_PASSED\"}", new UTF8Encoding(false));
+            return new ModuleSelfTestResult
+            {
+                ModuleId = "sync", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
                 ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
             };
         }

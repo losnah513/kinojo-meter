@@ -226,6 +226,7 @@ namespace KinojoMeterLauncher
                 using (var privateRuntimeUpdater = new PrivateRuntimePackageUpdater())
                 using (var captureUpdater = new CaptureModuleUpdater())
                 using (var protocolUpdater = new ProtocolModuleUpdater())
+                using (var syncUpdater = new SyncModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
                     var previous = installer.ReadActiveState();
@@ -292,6 +293,19 @@ namespace KinojoMeterLauncher
                     await ProtocolModuleUpdateCoordinator.ApplyAsync(
                         protocolUpdater,
                         protocolAuthorization,
+                        api.ProjectHost,
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    var syncAuthorization = await api.AuthorizeSyncModuleUpdateAsync(
+                        envelope.SessionToken,
+                        envelope.InstallationId,
+                        SyncModuleUpdateCoordinator.CurrentStatePayload(syncUpdater),
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater)).ConfigureAwait(false);
+                    await SyncModuleUpdateCoordinator.ApplyAsync(
+                        syncUpdater,
+                        syncAuthorization,
                         api.ProjectHost,
                         CancellationToken.None).ConfigureAwait(false);
 
