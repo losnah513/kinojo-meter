@@ -352,4 +352,69 @@ namespace KinojoMeterLauncher
         public bool Changed { get; set; }
         public bool Downloaded { get; set; }
     }
+
+    internal sealed class PrivateRuntimeReleaseManifest
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string ModuleId { get; set; }
+        public string Version { get; set; }
+        public string MinimumLauncherVersion { get; set; }
+        public string PackageId { get; set; }
+        public string PackagePath { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string Sha256 { get; set; }
+        public string PackageManifestSha256 { get; set; }
+        public int ContractSetVersion { get; set; }
+        public int StateSchemaVersion { get; set; }
+        public string PrimaryArtifact { get; set; }
+        public string RuntimeBundleRevision { get; set; }
+        public string RuntimeBundleLockSha256 { get; set; }
+        public string RuntimeModuleSetHash { get; set; }
+        public string DownloadUrl { get; set; }
+        public DateTimeOffset ExpiresAt { get; set; }
+        public string IntegrityMode { get; set; }
+        public string SigningKeyId { get; set; }
+        public string ManifestSignature { get; set; }
+        public long PointerGeneration { get; set; }
+        public string ReleaseNote { get; set; }
+    }
+
+    internal sealed class PrivateRuntimeUpdateAuthorization
+    {
+        public bool Authorized { get; set; }
+        public string Code { get; set; }
+        public string Message { get; set; }
+        public PrivateRuntimeReleaseManifest Release { get; set; }
+    }
+
+    internal sealed class ActivePrivateRuntimeState
+    {
+        public int SchemaVersion { get; set; }
+        public string Channel { get; set; }
+        public string ModuleId { get; set; }
+        public string ModuleVersion { get; set; }
+        public string PackagePath { get; set; }
+        public string PackageSha256 { get; set; }
+        public string PackageManifestSha256 { get; set; }
+        public int ContractSetVersion { get; set; }
+        public int StateSchemaVersion { get; set; }
+        public string PrimaryArtifact { get; set; }
+        public string StagedDirectory { get; set; }
+        public string SelfTestReceiptSha256 { get; set; }
+        public string RuntimeBundleRevision { get; set; }
+        public string RuntimeBundleLockSha256 { get; set; }
+        public string RuntimeModuleSetHash { get; set; }
+        public long PointerGeneration { get; set; }
+        public string ActivatedAtUtc { get; set; }
+    }
+
+    internal sealed class PrivateRuntimeInstallResult
+    {
+        public ActivePrivateRuntimeState Active { get; set; }
+        public ActivePrivateRuntimeState Previous { get; set; }
+        public bool Changed { get; set; }
+        public bool Downloaded { get; set; }
+    }
 }

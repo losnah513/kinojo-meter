@@ -42,6 +42,7 @@ namespace KinojoMeterLauncher
                 Run("parse Catalog Pack update authorization", VerifyCatalogPackAuthorizationParsing);
                 Run("parse UI Asset Pack update authorization", VerifyUiAssetPackAuthorizationParsing);
                 Run("parse Meter Shell update authorization", VerifyShellModuleAuthorizationParsing);
+                Run("parse private runtime update authorization", VerifyPrivateRuntimeAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -113,6 +114,10 @@ namespace KinojoMeterLauncher
                     Run("reject same Meter Shell version with different SHA", VerifyShellVersionShaConflict);
                     Run("activate only self-tested Meter Shell against exact runtime Bundle", () => VerifyShellActivationBoundary(root));
                     Run("enforce exact Meter Shell download host and path", VerifyShellDownloadBoundary);
+                    Run("accept Server-authorized private runtime release", VerifyPrivateRuntimeReleaseContract);
+                    Run("reject private runtime release for another Bundle", () => VerifyPrivateRuntimeBundleBoundary(root));
+                    Run("activate private runtime whole package against exact Bundle", () => VerifyPrivateRuntimeActivationBoundary(root));
+                    Run("build exact Shell and EngineHost process plan", () => VerifyPrivateRuntimeProcessPlan(root));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -208,6 +213,136 @@ namespace KinojoMeterLauncher
             response["authorized"] = false;
             if (LauncherApiClient.ParseShellModuleAuthorizationForTest(response).Authorized)
                 throw new InvalidOperationException("Meter Shell authorization ignored an explicit Server denial.");
+        }
+
+        private static void VerifyPrivateRuntimeAuthorizationParsing()
+        {
+            var release = PrivateRuntimeRelease();
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "privateRuntime", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", release.Channel }, { "moduleId", release.ModuleId },
+                    { "version", release.Version }, { "minimumLauncherVersion", release.MinimumLauncherVersion },
+                    { "packageId", release.PackageId }, { "packagePath", release.PackagePath },
+                    { "fileName", release.FileName }, { "fileSize", release.FileSize }, { "sha256", release.Sha256 },
+                    { "packageManifestSha256", release.PackageManifestSha256 }, { "contractSetVersion", 1 },
+                    { "stateSchemaVersion", 1 }, { "primaryArtifact", release.PrimaryArtifact },
+                    { "runtimeBundleRevision", release.RuntimeBundleRevision },
+                    { "runtimeBundleLockSha256", release.RuntimeBundleLockSha256 },
+                    { "runtimeModuleSetHash", release.RuntimeModuleSetHash },
+                    { "downloadUrl", release.DownloadUrl }, { "expiresAt", release.ExpiresAt.ToString("o") },
+                    { "integrityMode", release.IntegrityMode }, { "signingKeyId", release.SigningKeyId },
+                    { "manifestSignature", release.ManifestSignature }, { "pointerGeneration", 3L }
+                } }
+            };
+            var parsed = LauncherApiClient.ParsePrivateRuntimeAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null ||
+                parsed.Release.ModuleId != "private-runtime" || parsed.Release.RuntimeBundleRevision != "B000100" ||
+                parsed.Release.RuntimeModuleSetHash != new String('e', 64) || parsed.Release.PointerGeneration != 3)
+                throw new InvalidOperationException("private runtime authorization parsing failed.");
+        }
+
+        private static void VerifyPrivateRuntimeReleaseContract()
+        {
+            PrivateRuntimePackageUpdater.ValidateReleaseForTest(PrivateRuntimeRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyPrivateRuntimeBundleBoundary(string root)
+        {
+            var release = PrivateRuntimeRelease();
+            var staged = PrivateRuntimeStaged(root, release);
+            var selfTest = PrivateRuntimeSelfTest(root, release);
+            var bundle = PrivateRuntimeBundle();
+            release.RuntimeBundleRevision = "B000101";
+            ExpectFailure(() => PrivateRuntimePackageUpdater.ActivateForTest(release, staged, selfTest, bundle));
+        }
+
+        private static void VerifyPrivateRuntimeActivationBoundary(string root)
+        {
+            var release = PrivateRuntimeRelease();
+            var active = PrivateRuntimePackageUpdater.ActivateForTest(
+                release, PrivateRuntimeStaged(root, release), PrivateRuntimeSelfTest(root, release), PrivateRuntimeBundle());
+            if (active == null || active.ModuleId != "private-runtime" ||
+                active.RuntimeBundleRevision != release.RuntimeBundleRevision ||
+                active.RuntimeBundleLockSha256 != release.RuntimeBundleLockSha256 ||
+                active.RuntimeModuleSetHash != release.RuntimeModuleSetHash)
+                throw new InvalidOperationException("private runtime activation lost exact Bundle identity.");
+        }
+
+        private static void VerifyPrivateRuntimeProcessPlan(string root)
+        {
+            var shellRoot = Path.Combine(root, "plan-shell");
+            var runtimeRoot = Path.Combine(root, "plan-runtime");
+            Directory.CreateDirectory(shellRoot); Directory.CreateDirectory(runtimeRoot);
+            File.WriteAllBytes(Path.Combine(shellRoot, "KINOJO.Meter.Shell.exe"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(runtimeRoot, "KINOJO.Meter.EngineHost.exe"), new byte[] { 2 });
+            var shell = new ActiveShellModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Shell.exe", StagedDirectory = shellRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64)
+            };
+            var runtime = new ActivePrivateRuntimeState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.EngineHost.exe", StagedDirectory = runtimeRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64)
+            };
+            var plan = PrivateRuntimeProcessPlanBuilder.Build(shell, runtime);
+            if (!plan.ShellExecutable.EndsWith("KINOJO.Meter.Shell.exe", StringComparison.Ordinal) ||
+                !plan.EngineHostExecutable.EndsWith("KINOJO.Meter.EngineHost.exe", StringComparison.Ordinal))
+                throw new InvalidOperationException("split process plan did not preserve exact executable paths.");
+            runtime.RuntimeBundleLockSha256 = new String('f', 64);
+            ExpectFailure(() => PrivateRuntimeProcessPlanBuilder.Build(shell, runtime));
+        }
+
+        private static PrivateRuntimeReleaseManifest PrivateRuntimeRelease()
+        {
+            const string version = "0.3.0";
+            var sha = new String('a', 64);
+            var fileName = "KinojoPrivateRuntime_" + version + "_x64.zip";
+            return new PrivateRuntimeReleaseManifest
+            {
+                SchemaVersion = 1, Channel = LauncherVersion.Channel, ModuleId = "private-runtime", Version = version,
+                MinimumLauncherVersion = "1.1.1", PackageId = LauncherVersion.Channel + ":private-runtime:" + version + ":" + sha.Substring(0, 16),
+                PackagePath = "modules/private-runtime/" + version + "/" + fileName, FileName = fileName, FileSize = 123,
+                Sha256 = sha, PackageManifestSha256 = new String('b', 64), ContractSetVersion = 1, StateSchemaVersion = 1,
+                PrimaryArtifact = "KINOJO.Meter.EngineHost.exe", RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64),
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/private-runtime/" +
+                    LauncherVersion.Channel + "/" + version + "/" + fileName + "?token=test",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), IntegrityMode = "RSA_SHA256", SigningKeyId = "runtime-test-key",
+                ManifestSignature = Convert.ToBase64String(new byte[384]), PointerGeneration = 1
+            };
+        }
+
+        private static ActiveModuleBundleState PrivateRuntimeBundle()
+        {
+            return new ActiveModuleBundleState
+            {
+                Channel = LauncherVersion.Channel, BundleRevision = "B000100", BundleLockSha256 = new String('d', 64),
+                ModuleSetHash = new String('e', 64), ContractSetVersion = 1
+            };
+        }
+
+        private static ModuleStagingInstallResult PrivateRuntimeStaged(string root, PrivateRuntimeReleaseManifest release)
+        {
+            return new ModuleStagingInstallResult
+            {
+                ModuleId = "private-runtime", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                StagedDirectory = Path.Combine(root, "private-runtime-stage"), InstallStatus = ModuleStagingInstaller.StagedStatus
+            };
+        }
+
+        private static ModuleSelfTestResult PrivateRuntimeSelfTest(string root, PrivateRuntimeReleaseManifest release)
+        {
+            var receipt = Path.Combine(root, "private-runtime-self-test.json");
+            File.WriteAllText(receipt, "{\"status\":\"SELF_TEST_PASSED\"}", new UTF8Encoding(false));
+            return new ModuleSelfTestResult
+            {
+                ModuleId = "private-runtime", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
+            };
         }
 
         private static void VerifyShellReleaseContract()

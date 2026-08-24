@@ -150,6 +150,27 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<PrivateRuntimeUpdateAuthorization> AuthorizePrivateRuntimeUpdateAsync(
+            string sessionToken,
+            string installationId,
+            Dictionary<string, object> currentPrivateRuntime)
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "privateRuntimeUpdateAuthorization" },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentPrivateRuntime", currentPrivateRuntime }
+            }).ConfigureAwait(false);
+
+            var authorization = ParsePrivateRuntimeAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "private runtime 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
         public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -280,6 +301,11 @@ namespace KinojoMeterLauncher
             return ParseShellModuleAuthorization(value);
         }
 
+        internal static PrivateRuntimeUpdateAuthorization ParsePrivateRuntimeAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParsePrivateRuntimeAuthorization(value);
+        }
+
         private static CatalogPackUpdateAuthorization ParseCatalogPackAuthorization(Dictionary<string, object> value)
         {
             var releases = new List<CatalogPackReleaseManifest>();
@@ -389,6 +415,51 @@ namespace KinojoMeterLauncher
                 };
             }
             return new ShellModuleUpdateAuthorization
+            {
+                Authorized = Bool(value, "authorized"),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                Release = parsed
+            };
+        }
+
+        private static PrivateRuntimeUpdateAuthorization ParsePrivateRuntimeAuthorization(Dictionary<string, object> value)
+        {
+            var release = Dict(value, "privateRuntime");
+            PrivateRuntimeReleaseManifest parsed = null;
+            if (release != null)
+            {
+                DateTimeOffset expiresAt;
+                if (!DateTimeOffset.TryParse(Text(release, "expiresAt", ""), out expiresAt)) expiresAt = DateTimeOffset.MinValue;
+                parsed = new PrivateRuntimeReleaseManifest
+                {
+                    SchemaVersion = Int(release, "schemaVersion", 1),
+                    Channel = Text(release, "channel", LauncherVersion.Channel),
+                    ModuleId = Text(release, "moduleId", ""),
+                    Version = Text(release, "version", ""),
+                    MinimumLauncherVersion = Text(release, "minimumLauncherVersion", ""),
+                    PackageId = Text(release, "packageId", ""),
+                    PackagePath = Text(release, "packagePath", ""),
+                    FileName = Text(release, "fileName", ""),
+                    FileSize = Long(release, "fileSize", 0),
+                    Sha256 = Text(release, "sha256", "").ToLowerInvariant(),
+                    PackageManifestSha256 = Text(release, "packageManifestSha256", "").ToLowerInvariant(),
+                    ContractSetVersion = Int(release, "contractSetVersion", 0),
+                    StateSchemaVersion = Int(release, "stateSchemaVersion", 0),
+                    PrimaryArtifact = Text(release, "primaryArtifact", ""),
+                    RuntimeBundleRevision = Text(release, "runtimeBundleRevision", ""),
+                    RuntimeBundleLockSha256 = Text(release, "runtimeBundleLockSha256", "").ToLowerInvariant(),
+                    RuntimeModuleSetHash = Text(release, "runtimeModuleSetHash", "").ToLowerInvariant(),
+                    DownloadUrl = Text(release, "downloadUrl", ""),
+                    ExpiresAt = expiresAt,
+                    IntegrityMode = Text(release, "integrityMode", ""),
+                    SigningKeyId = Text(release, "signingKeyId", ""),
+                    ManifestSignature = Text(release, "manifestSignature", ""),
+                    PointerGeneration = Long(release, "pointerGeneration", 0),
+                    ReleaseNote = Text(release, "releaseNote", "")
+                };
+            }
+            return new PrivateRuntimeUpdateAuthorization
             {
                 Authorized = Bool(value, "authorized"),
                 Code = Text(value, "code", ""),
