@@ -514,6 +514,8 @@ namespace KinojoMeterLauncher
         public string EngineHostExecutable { get; set; }
         public string CaptureAssembly { get; set; }
         public bool CaptureOverrideActive { get; set; }
+        public string ProtocolAssembly { get; set; }
+        public bool ProtocolOverrideActive { get; set; }
         public string RuntimeBundleRevision { get; set; }
         public string RuntimeBundleLockSha256 { get; set; }
         public string RuntimeModuleSetHash { get; set; }
@@ -523,13 +525,22 @@ namespace KinojoMeterLauncher
     {
         internal static PrivateRuntimeProcessPlan Build(ActiveShellModuleState shell, ActivePrivateRuntimeState runtime)
         {
-            return Build(shell, runtime, null);
+            return Build(shell, runtime, null, null);
         }
 
         internal static PrivateRuntimeProcessPlan Build(
             ActiveShellModuleState shell,
             ActivePrivateRuntimeState runtime,
             ActiveCaptureModuleState capture)
+        {
+            return Build(shell, runtime, capture, null);
+        }
+
+        internal static PrivateRuntimeProcessPlan Build(
+            ActiveShellModuleState shell,
+            ActivePrivateRuntimeState runtime,
+            ActiveCaptureModuleState capture,
+            ActiveProtocolModuleState protocol)
         {
             if (shell == null || runtime == null ||
                 !String.Equals(shell.Channel, runtime.Channel, StringComparison.Ordinal) ||
@@ -556,12 +567,34 @@ namespace KinojoMeterLauncher
                 if (!File.Exists(captureAssembly))
                     throw new InvalidOperationException("Capture override DLL이 검증된 Staging 슬롯에 없습니다.");
             }
+            string protocolAssembly = null;
+            if (protocol != null)
+            {
+                if (capture == null ||
+                    !String.Equals(protocol.Channel, runtime.Channel, StringComparison.Ordinal) ||
+                    !String.Equals(protocol.RuntimeBundleRevision, runtime.RuntimeBundleRevision, StringComparison.Ordinal) ||
+                    !String.Equals(protocol.RuntimeBundleLockSha256, runtime.RuntimeBundleLockSha256, StringComparison.Ordinal) ||
+                    !String.Equals(protocol.RuntimeModuleSetHash, runtime.RuntimeModuleSetHash, StringComparison.Ordinal) ||
+                    !String.Equals(protocol.ParentPrivateRuntimeVersion, runtime.ModuleVersion, StringComparison.Ordinal) ||
+                    !String.Equals(protocol.ParentPrivateRuntimeSha256, runtime.PackageSha256, StringComparison.Ordinal) ||
+                    protocol.ParentPrivateRuntimePointerGeneration != runtime.PointerGeneration ||
+                    !String.Equals(protocol.ParentCaptureVersion, capture.ModuleVersion, StringComparison.Ordinal) ||
+                    !String.Equals(protocol.ParentCaptureSha256, capture.PackageSha256, StringComparison.Ordinal) ||
+                    protocol.ParentCapturePointerGeneration != capture.PointerGeneration ||
+                    !String.Equals(protocol.PrimaryArtifact, "KINOJO.Meter.Protocol.dll", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Protocol override가 exact Capture/private runtime/Bundle identity와 일치하지 않습니다.");
+                protocolAssembly = Path.GetFullPath(Path.Combine(protocol.StagedDirectory, protocol.PrimaryArtifact));
+                if (!File.Exists(protocolAssembly))
+                    throw new InvalidOperationException("Protocol override DLL이 검증된 Staging 슬롯에 없습니다.");
+            }
             return new PrivateRuntimeProcessPlan
             {
                 ShellExecutable = shellExecutable,
                 EngineHostExecutable = engineHostExecutable,
                 CaptureAssembly = captureAssembly,
                 CaptureOverrideActive = capture != null,
+                ProtocolAssembly = protocolAssembly,
+                ProtocolOverrideActive = protocol != null,
                 RuntimeBundleRevision = runtime.RuntimeBundleRevision,
                 RuntimeBundleLockSha256 = runtime.RuntimeBundleLockSha256,
                 RuntimeModuleSetHash = runtime.RuntimeModuleSetHash

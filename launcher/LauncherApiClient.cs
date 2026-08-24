@@ -194,6 +194,31 @@ namespace KinojoMeterLauncher
             return authorization;
         }
 
+        public async Task<ProtocolModuleUpdateAuthorization> AuthorizeProtocolModuleUpdateAsync(
+            string sessionToken,
+            string installationId,
+            Dictionary<string, object> currentProtocolModule,
+            Dictionary<string, object> currentCaptureModule,
+            Dictionary<string, object> currentPrivateRuntime)
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "protocolUpdateAuthorization" },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentProtocolModule", currentProtocolModule },
+                { "currentCaptureModule", currentCaptureModule },
+                { "currentPrivateRuntime", currentPrivateRuntime }
+            }).ConfigureAwait(false);
+
+            var authorization = ParseProtocolModuleAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "Protocol Engine 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
         public async Task<LauncherUpdateCheckResult> CheckLauncherUpdateAsync()
         {
             var result = await PostAsync(new Dictionary<string, object>
@@ -332,6 +357,11 @@ namespace KinojoMeterLauncher
         internal static CaptureModuleUpdateAuthorization ParseCaptureModuleAuthorizationForTest(Dictionary<string, object> value)
         {
             return ParseCaptureModuleAuthorization(value);
+        }
+
+        internal static ProtocolModuleUpdateAuthorization ParseProtocolModuleAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParseProtocolModuleAuthorization(value);
         }
 
         private static CatalogPackUpdateAuthorization ParseCatalogPackAuthorization(Dictionary<string, object> value)
@@ -536,6 +566,57 @@ namespace KinojoMeterLauncher
                 };
             }
             return new CaptureModuleUpdateAuthorization
+            {
+                Authorized = Bool(value, "authorized"),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                Release = parsed
+            };
+        }
+
+        private static ProtocolModuleUpdateAuthorization ParseProtocolModuleAuthorization(Dictionary<string, object> value)
+        {
+            var release = Dict(value, "protocolModule");
+            ProtocolModuleReleaseManifest parsed = null;
+            if (release != null)
+            {
+                DateTimeOffset expiresAt;
+                if (!DateTimeOffset.TryParse(Text(release, "expiresAt", ""), out expiresAt)) expiresAt = DateTimeOffset.MinValue;
+                parsed = new ProtocolModuleReleaseManifest
+                {
+                    SchemaVersion = Int(release, "schemaVersion", 1),
+                    Channel = Text(release, "channel", LauncherVersion.Channel),
+                    ModuleId = Text(release, "moduleId", ""),
+                    Version = Text(release, "version", ""),
+                    MinimumLauncherVersion = Text(release, "minimumLauncherVersion", ""),
+                    PackageId = Text(release, "packageId", ""),
+                    PackagePath = Text(release, "packagePath", ""),
+                    FileName = Text(release, "fileName", ""),
+                    FileSize = Long(release, "fileSize", 0),
+                    Sha256 = Text(release, "sha256", "").ToLowerInvariant(),
+                    PackageManifestSha256 = Text(release, "packageManifestSha256", "").ToLowerInvariant(),
+                    ContractSetVersion = Int(release, "contractSetVersion", 0),
+                    StateSchemaVersion = Int(release, "stateSchemaVersion", 0),
+                    PrimaryArtifact = Text(release, "primaryArtifact", ""),
+                    RuntimeBundleRevision = Text(release, "runtimeBundleRevision", ""),
+                    RuntimeBundleLockSha256 = Text(release, "runtimeBundleLockSha256", "").ToLowerInvariant(),
+                    RuntimeModuleSetHash = Text(release, "runtimeModuleSetHash", "").ToLowerInvariant(),
+                    ParentPrivateRuntimeVersion = Text(release, "parentPrivateRuntimeVersion", ""),
+                    ParentPrivateRuntimeSha256 = Text(release, "parentPrivateRuntimeSha256", "").ToLowerInvariant(),
+                    ParentPrivateRuntimePointerGeneration = Long(release, "parentPrivateRuntimePointerGeneration", 0),
+                    ParentCaptureVersion = Text(release, "parentCaptureVersion", ""),
+                    ParentCaptureSha256 = Text(release, "parentCaptureSha256", "").ToLowerInvariant(),
+                    ParentCapturePointerGeneration = Long(release, "parentCapturePointerGeneration", 0),
+                    DownloadUrl = Text(release, "downloadUrl", ""),
+                    ExpiresAt = expiresAt,
+                    IntegrityMode = Text(release, "integrityMode", ""),
+                    SigningKeyId = Text(release, "signingKeyId", ""),
+                    ManifestSignature = Text(release, "manifestSignature", ""),
+                    PointerGeneration = Long(release, "pointerGeneration", 0),
+                    ReleaseNote = Text(release, "releaseNote", "")
+                };
+            }
+            return new ProtocolModuleUpdateAuthorization
             {
                 Authorized = Bool(value, "authorized"),
                 Code = Text(value, "code", ""),

@@ -980,6 +980,7 @@ namespace KinojoMeterLauncher
                 using (var uiAssetInstaller = new UiAssetPackInstaller())
                 using (var privateRuntimeUpdater = new PrivateRuntimePackageUpdater())
                 using (var captureUpdater = new CaptureModuleUpdater())
+                using (var protocolUpdater = new ProtocolModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
                     _installationId = LauncherPaths.GetOrCreateInstallationId();
@@ -1069,6 +1070,19 @@ namespace KinojoMeterLauncher
                         api.ProjectHost,
                         _cancellation.Token);
                     var captureChanged = captureResult != null && captureResult.Changed;
+                    SetOperationState("Protocol Engine 확인 중", "활성 Capture와 private runtime에 결합된 Server 승인 Protocol 모듈을 확인하고 있습니다.", false, 99);
+                    var protocolAuthorization = await api.AuthorizeProtocolModuleUpdateAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater));
+                    var protocolResult = await ProtocolModuleUpdateCoordinator.ApplyAsync(
+                        protocolUpdater,
+                        protocolAuthorization,
+                        api.ProjectHost,
+                        _cancellation.Token);
+                    var protocolChanged = protocolResult != null && protocolResult.Changed;
                     SetOperationState("Meter Shell 확인 중", "Server가 승인한 Shell 모듈과 private runtime 호환성을 확인하고 있습니다.", false, 99);
                     var shellAuthorization = await api.AuthorizeShellModuleUpdateAsync(
                         _login.SessionToken,
@@ -1083,9 +1097,9 @@ namespace KinojoMeterLauncher
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        shellChanged || privateRuntimeChanged || captureChanged
-                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture Engine과 Meter Shell의 독립 업데이트·무결성 검증을 완료했습니다."
+                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged
+                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol Engine과 Meter Shell의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (uiAssetChanged
                             ? "최신 Core, Catalog Pack과 UI Asset Pack의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (changedCatalogs > 0
