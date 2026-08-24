@@ -89,12 +89,9 @@ for token in [
 for source in [updater, api, runtime]:
     assert "Process.Start(" not in source, "6-6 must not cut over process launch"
 
-for forbidden in [
-    "SyncModuleUpdater",
-    "CombatUpdateAuthorization",
-    "SyncUpdateAuthorization",
-]:
-    assert forbidden not in updater + api, f"6-6 crossed a later individual module boundary: {forbidden}"
+assert "SyncModuleUpdater" not in updater, "Protocol updater must remain independent from Sync"
+for forbidden in ["CombatUpdateAuthorization", "EncounterUpdateAuthorization"]:
+    assert forbidden not in updater + api, f"Protocol/Sync stages crossed the Combat·Encounter boundary: {forbidden}"
 
 for forbidden in ["ModuleActivePrivateRuntimeFile", "ModuleActiveBundleFile", "ModuleActiveCaptureFile"]:
     assert forbidden not in updater, f"Protocol updater must not overwrite parent state: {forbidden}"

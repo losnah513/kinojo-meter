@@ -981,6 +981,7 @@ namespace KinojoMeterLauncher
                 using (var privateRuntimeUpdater = new PrivateRuntimePackageUpdater())
                 using (var captureUpdater = new CaptureModuleUpdater())
                 using (var protocolUpdater = new ProtocolModuleUpdater())
+                using (var syncUpdater = new SyncModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
                     _installationId = LauncherPaths.GetOrCreateInstallationId();
@@ -1083,6 +1084,20 @@ namespace KinojoMeterLauncher
                         api.ProjectHost,
                         _cancellation.Token);
                     var protocolChanged = protocolResult != null && protocolResult.Changed;
+                    SetOperationState("Sync Engine 확인 중", "활성 Protocol·Capture와 private runtime에 결합된 Server 승인 Sync 모듈을 확인하고 있습니다.", false, 99);
+                    var syncAuthorization = await api.AuthorizeSyncModuleUpdateAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        SyncModuleUpdateCoordinator.CurrentStatePayload(syncUpdater),
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater));
+                    var syncResult = await SyncModuleUpdateCoordinator.ApplyAsync(
+                        syncUpdater,
+                        syncAuthorization,
+                        api.ProjectHost,
+                        _cancellation.Token);
+                    var syncChanged = syncResult != null && syncResult.Changed;
                     SetOperationState("Meter Shell 확인 중", "Server가 승인한 Shell 모듈과 private runtime 호환성을 확인하고 있습니다.", false, 99);
                     var shellAuthorization = await api.AuthorizeShellModuleUpdateAsync(
                         _login.SessionToken,
@@ -1097,9 +1112,9 @@ namespace KinojoMeterLauncher
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
                     SetOperationState(
-                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
-                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged
-                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol Engine과 Meter Shell의 독립 업데이트·무결성 검증을 완료했습니다."
+                        _preparedCore.Changed || changedCatalogs > 0 || uiAssetChanged || privateRuntimeChanged || captureChanged || protocolChanged || syncChanged || shellChanged ? "업데이트가 완료되었습니다" : "현재 최신 버전입니다",
+                        shellChanged || privateRuntimeChanged || captureChanged || protocolChanged || syncChanged
+                            ? "최신 Core, Catalog Pack, UI Asset Pack, private runtime, Capture·Protocol·Sync Engine과 Meter Shell의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (uiAssetChanged
                             ? "최신 Core, Catalog Pack과 UI Asset Pack의 독립 업데이트·무결성 검증을 완료했습니다."
                             : (changedCatalogs > 0
