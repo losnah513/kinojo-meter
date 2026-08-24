@@ -30,6 +30,7 @@
     <Compile Include="..\..\launcher\ModuleBundleActivator.cs" Link="ModuleBundleActivator.cs" />
     <Compile Include="..\..\launcher\ShellModuleUpdater.cs" Link="ShellModuleUpdater.cs" />
     <Compile Include="..\..\launcher\PrivateRuntimePackageUpdater.cs" Link="PrivateRuntimePackageUpdater.cs" />
+    <Compile Include="..\..\launcher\CaptureModuleUpdater.cs" Link="CaptureModuleUpdater.cs" />
     <Compile Include="..\..\launcher\LauncherModels.cs" Link="LauncherModels.cs" />
     <Compile Include="..\..\launcher\LauncherPaths.cs" Link="LauncherPaths.cs" />
     <Compile Include="..\..\launcher\LauncherVisualControls.cs" Link="LauncherVisualControls.cs" />
