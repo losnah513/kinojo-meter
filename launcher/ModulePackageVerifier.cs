@@ -105,7 +105,7 @@ namespace KinojoMeterLauncher
 
         private static readonly string[] ModuleIds =
         {
-            "contracts", "capture", "protocol", "combat", "encounter", "sync", "shell"
+            "contracts", "capture", "protocol", "combat", "encounter", "sync", "shell", "private-runtime"
         };
 
         private static readonly Dictionary<string, string[]> Dependencies = new Dictionary<string, string[]>(StringComparer.Ordinal)
@@ -116,7 +116,8 @@ namespace KinojoMeterLauncher
             { "combat", new[] { "contracts", "protocol" } },
             { "encounter", new[] { "contracts" } },
             { "sync", new[] { "contracts", "capture", "protocol", "combat" } },
-            { "shell", new[] { "contracts", "capture", "protocol", "combat", "encounter", "sync" } }
+            { "shell", new[] { "contracts", "capture", "protocol", "combat", "encounter", "sync" } },
+            { "private-runtime", new[] { "contracts", "capture", "protocol", "combat", "encounter", "shell", "sync" } }
         };
 
         private static readonly Dictionary<string, string> PrimaryArtifacts = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -127,7 +128,8 @@ namespace KinojoMeterLauncher
             { "combat", "KINOJO.Meter.Combat.dll" },
             { "encounter", "KINOJO.Meter.Encounter.dll" },
             { "sync", "KINOJO.Meter.Sync.dll" },
-            { "shell", "KINOJO.Meter.Shell.exe" }
+            { "shell", "KINOJO.Meter.Shell.exe" },
+            { "private-runtime", "KINOJO.Meter.EngineHost.exe" }
         };
 
         private static readonly Dictionary<string, string> PrimaryKinds = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -138,7 +140,8 @@ namespace KinojoMeterLauncher
             { "combat", "DLL" },
             { "encounter", "DLL" },
             { "sync", "DLL" },
-            { "shell", "EXE" }
+            { "shell", "EXE" },
+            { "private-runtime", "EXE" }
         };
 
         private static readonly Dictionary<string, string> LoadTargets = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -149,7 +152,8 @@ namespace KinojoMeterLauncher
             { "combat", "ENGINE_HOST_PROCESS" },
             { "encounter", "ENGINE_HOST_PROCESS" },
             { "sync", "ENGINE_HOST_PROCESS" },
-            { "shell", "SHELL_PROCESS" }
+            { "shell", "SHELL_PROCESS" },
+            { "private-runtime", "ENGINE_HOST_PROCESS" }
         };
 
         private static readonly Dictionary<string, string> StateModes = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -160,7 +164,8 @@ namespace KinojoMeterLauncher
             { "combat", "OWNED" },
             { "encounter", "OWNED" },
             { "sync", "OWNED" },
-            { "shell", "OWNED" }
+            { "shell", "OWNED" },
+            { "private-runtime", "OWNED" }
         };
 
         public static ModulePackageVerificationResult Verify(ModulePackageVerificationRequest request)
