@@ -29,10 +29,12 @@ namespace KinojoMeterLauncher
         public static readonly string ModuleActiveShellFile = Path.Combine(ModuleRoot, "active-shell.json");
         public static readonly string ModuleActivePrivateRuntimeFile = Path.Combine(ModuleRoot, "active-private-runtime.json");
         public static readonly string ModuleActiveCaptureFile = Path.Combine(ModuleRoot, "active-capture.json");
+        public static readonly string ModuleActiveProtocolFile = Path.Combine(ModuleRoot, "active-protocol.json");
         public static readonly string ModuleActivationLockFile = Path.Combine(ModuleRoot, ".activation.lock");
         public static readonly string ModuleShellUpdateLockFile = Path.Combine(ModuleRoot, ".shell-update.lock");
         public static readonly string ModulePrivateRuntimeUpdateLockFile = Path.Combine(ModuleRoot, ".private-runtime-update.lock");
         public static readonly string ModuleCaptureUpdateLockFile = Path.Combine(ModuleRoot, ".capture-update.lock");
+        public static readonly string ModuleProtocolUpdateLockFile = Path.Combine(ModuleRoot, ".protocol-update.lock");
         public static readonly string ModuleRollback = Path.Combine(ModuleRoot, "rollback");
         public static readonly string ModulePreviousBundleFile = Path.Combine(ModuleRollback, "previous-bundle.json");
         public static readonly string ModuleRollbackPlanFile = Path.Combine(ModuleRollback, "rollback-plan.json");

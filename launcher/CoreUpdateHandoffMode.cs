@@ -225,6 +225,7 @@ namespace KinojoMeterLauncher
                 using (var uiAssetInstaller = new UiAssetPackInstaller())
                 using (var privateRuntimeUpdater = new PrivateRuntimePackageUpdater())
                 using (var captureUpdater = new CaptureModuleUpdater())
+                using (var protocolUpdater = new ProtocolModuleUpdater())
                 using (var shellUpdater = new ShellModuleUpdater())
                 {
                     var previous = installer.ReadActiveState();
@@ -279,6 +280,18 @@ namespace KinojoMeterLauncher
                     await CaptureModuleUpdateCoordinator.ApplyAsync(
                         captureUpdater,
                         captureAuthorization,
+                        api.ProjectHost,
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    var protocolAuthorization = await api.AuthorizeProtocolModuleUpdateAsync(
+                        envelope.SessionToken,
+                        envelope.InstallationId,
+                        ProtocolModuleUpdateCoordinator.CurrentStatePayload(protocolUpdater),
+                        CaptureModuleUpdateCoordinator.CurrentStatePayload(captureUpdater),
+                        PrivateRuntimeUpdateCoordinator.CurrentStatePayload(privateRuntimeUpdater)).ConfigureAwait(false);
+                    await ProtocolModuleUpdateCoordinator.ApplyAsync(
+                        protocolUpdater,
+                        protocolAuthorization,
                         api.ProjectHost,
                         CancellationToken.None).ConfigureAwait(false);
 

@@ -44,6 +44,7 @@ namespace KinojoMeterLauncher
                 Run("parse Meter Shell update authorization", VerifyShellModuleAuthorizationParsing);
                 Run("parse private runtime update authorization", VerifyPrivateRuntimeAuthorizationParsing);
                 Run("parse Capture Engine update authorization", VerifyCaptureAuthorizationParsing);
+                Run("parse Protocol Engine update authorization", VerifyProtocolAuthorizationParsing);
                 Run("parse hidden Core update handoff arguments", VerifyCoreUpdateHandoffArguments);
                 Run("keep handoff secrets out of command line", VerifyCoreUpdateHandoffCommandLineBoundary);
                 Run("parse redirected Core update handoff envelope", VerifyCoreUpdateHandoffEnvelope);
@@ -125,6 +126,13 @@ namespace KinojoMeterLauncher
                     Run("reject Capture Engine for another parent private runtime", () => VerifyCaptureParentBoundary(root));
                     Run("activate Capture Engine against exact parent and Bundle", () => VerifyCaptureActivationBoundary(root));
                     Run("build exact Capture override process plan", () => VerifyCaptureProcessPlan(root));
+                    Run("accept Server-authorized Protocol Engine release", VerifyProtocolReleaseContract);
+                    Run("reject Protocol Engine release outside exact signed path", VerifyProtocolReleaseWrongPath);
+                    Run("reject same Protocol Engine version with different SHA", VerifyProtocolVersionShaConflict);
+                    Run("reject Protocol Engine for another parent private runtime", () => VerifyProtocolParentBoundary(root));
+                    Run("reject Protocol Engine for another active Capture", () => VerifyProtocolCaptureBoundary(root));
+                    Run("activate Protocol Engine against exact Capture parent and Bundle", () => VerifyProtocolActivationBoundary(root));
+                    Run("build exact Protocol override process plan", () => VerifyProtocolProcessPlan(root));
                 }
                 Console.WriteLine("Launcher package tests passed: " + _passed);
                 return 0;
@@ -289,6 +297,43 @@ namespace KinojoMeterLauncher
                 throw new InvalidOperationException("Capture Engine authorization parsing failed.");
         }
 
+        private static void VerifyProtocolAuthorizationParsing()
+        {
+            var release = ProtocolRelease();
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "protocolModule", new Dictionary<string, object>
+                {
+                    { "schemaVersion", 1 }, { "channel", release.Channel }, { "moduleId", release.ModuleId },
+                    { "version", release.Version }, { "minimumLauncherVersion", release.MinimumLauncherVersion },
+                    { "packageId", release.PackageId }, { "packagePath", release.PackagePath },
+                    { "fileName", release.FileName }, { "fileSize", release.FileSize }, { "sha256", release.Sha256 },
+                    { "packageManifestSha256", release.PackageManifestSha256 }, { "contractSetVersion", 1 },
+                    { "stateSchemaVersion", 0 }, { "primaryArtifact", release.PrimaryArtifact },
+                    { "runtimeBundleRevision", release.RuntimeBundleRevision },
+                    { "runtimeBundleLockSha256", release.RuntimeBundleLockSha256 },
+                    { "runtimeModuleSetHash", release.RuntimeModuleSetHash },
+                    { "parentPrivateRuntimeVersion", release.ParentPrivateRuntimeVersion },
+                    { "parentPrivateRuntimeSha256", release.ParentPrivateRuntimeSha256 },
+                    { "parentPrivateRuntimePointerGeneration", release.ParentPrivateRuntimePointerGeneration },
+                    { "parentCaptureVersion", release.ParentCaptureVersion },
+                    { "parentCaptureSha256", release.ParentCaptureSha256 },
+                    { "parentCapturePointerGeneration", release.ParentCapturePointerGeneration },
+                    { "downloadUrl", release.DownloadUrl }, { "expiresAt", release.ExpiresAt.ToString("o") },
+                    { "integrityMode", release.IntegrityMode }, { "signingKeyId", release.SigningKeyId },
+                    { "manifestSignature", release.ManifestSignature }, { "pointerGeneration", 6L }
+                } }
+            };
+            var parsed = LauncherApiClient.ParseProtocolModuleAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.Release == null ||
+                parsed.Release.ModuleId != "protocol" || parsed.Release.StateSchemaVersion != 0 ||
+                parsed.Release.ParentPrivateRuntimeVersion != "0.3.0" ||
+                parsed.Release.ParentCaptureVersion != "0.3.1" ||
+                parsed.Release.ParentCapturePointerGeneration != 5 || parsed.Release.PointerGeneration != 6)
+                throw new InvalidOperationException("Protocol Engine authorization parsing failed.");
+        }
+
         private static void VerifyCaptureReleaseContract()
         {
             CaptureModuleUpdater.ValidateReleaseForTest(CaptureRelease(), "josvoltpktvwysrasffq.supabase.co");
@@ -411,6 +456,159 @@ namespace KinojoMeterLauncher
             return new ModuleSelfTestResult
             {
                 ModuleId = "capture", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
+            };
+        }
+
+        private static void VerifyProtocolReleaseContract()
+        {
+            ProtocolModuleUpdater.ValidateReleaseForTest(ProtocolRelease(), "josvoltpktvwysrasffq.supabase.co");
+        }
+
+        private static void VerifyProtocolReleaseWrongPath()
+        {
+            var release = ProtocolRelease();
+            release.DownloadUrl = release.DownloadUrl.Replace("/modules/protocol/", "/modules/protocol-lookalike/");
+            ExpectFailure(() => ProtocolModuleUpdater.ValidateReleaseForTest(release, "josvoltpktvwysrasffq.supabase.co"));
+        }
+
+        private static void VerifyProtocolVersionShaConflict()
+        {
+            var release = ProtocolRelease();
+            var current = new ActiveProtocolModuleState { ModuleVersion = release.Version, PackageSha256 = new String('1', 64) };
+            ExpectFailure(() => ProtocolModuleUpdater.RejectVersionConflictForTest(current, release));
+        }
+
+        private static void VerifyProtocolParentBoundary(string root)
+        {
+            var release = ProtocolRelease();
+            var runtime = CapturePrivateRuntime();
+            runtime.PointerGeneration++;
+            ExpectFailure(() => ProtocolModuleUpdater.ActivateForTest(
+                release, ProtocolStaged(root, release), ProtocolSelfTest(root, release),
+                PrivateRuntimeBundle(), runtime, ProtocolActiveCapture()));
+        }
+
+        private static void VerifyProtocolCaptureBoundary(string root)
+        {
+            var release = ProtocolRelease();
+            var capture = ProtocolActiveCapture();
+            capture.PointerGeneration++;
+            ExpectFailure(() => ProtocolModuleUpdater.ActivateForTest(
+                release, ProtocolStaged(root, release), ProtocolSelfTest(root, release),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), capture));
+        }
+
+        private static void VerifyProtocolActivationBoundary(string root)
+        {
+            var release = ProtocolRelease();
+            var active = ProtocolModuleUpdater.ActivateForTest(
+                release, ProtocolStaged(root, release), ProtocolSelfTest(root, release),
+                PrivateRuntimeBundle(), CapturePrivateRuntime(), ProtocolActiveCapture());
+            if (active == null || active.ModuleId != "protocol" || active.StateSchemaVersion != 0 ||
+                active.RuntimeModuleSetHash != release.RuntimeModuleSetHash ||
+                active.ParentPrivateRuntimeVersion != release.ParentPrivateRuntimeVersion ||
+                active.ParentPrivateRuntimeSha256 != release.ParentPrivateRuntimeSha256 ||
+                active.ParentPrivateRuntimePointerGeneration != release.ParentPrivateRuntimePointerGeneration ||
+                active.ParentCaptureVersion != release.ParentCaptureVersion ||
+                active.ParentCaptureSha256 != release.ParentCaptureSha256 ||
+                active.ParentCapturePointerGeneration != release.ParentCapturePointerGeneration)
+                throw new InvalidOperationException("Protocol Engine activation lost exact Capture/private runtime/Bundle identity.");
+        }
+
+        private static void VerifyProtocolProcessPlan(string root)
+        {
+            var shellRoot = Path.Combine(root, "protocol-plan-shell");
+            var runtimeRoot = Path.Combine(root, "protocol-plan-runtime");
+            var captureRoot = Path.Combine(root, "protocol-plan-capture");
+            var protocolRoot = Path.Combine(root, "protocol-plan-protocol");
+            Directory.CreateDirectory(shellRoot); Directory.CreateDirectory(runtimeRoot);
+            Directory.CreateDirectory(captureRoot); Directory.CreateDirectory(protocolRoot);
+            File.WriteAllBytes(Path.Combine(shellRoot, "KINOJO.Meter.Shell.exe"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(runtimeRoot, "KINOJO.Meter.EngineHost.exe"), new byte[] { 2 });
+            File.WriteAllBytes(Path.Combine(captureRoot, "KINOJO.Meter.Capture.dll"), new byte[] { 3 });
+            File.WriteAllBytes(Path.Combine(protocolRoot, "KINOJO.Meter.Protocol.dll"), new byte[] { 4 });
+            var shell = new ActiveShellModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Shell.exe", StagedDirectory = shellRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64)
+            };
+            var runtime = CapturePrivateRuntime();
+            runtime.StagedDirectory = runtimeRoot;
+            runtime.PrimaryArtifact = "KINOJO.Meter.EngineHost.exe";
+            var capture = ProtocolActiveCapture();
+            capture.StagedDirectory = captureRoot;
+            capture.PrimaryArtifact = "KINOJO.Meter.Capture.dll";
+            var protocol = new ActiveProtocolModuleState
+            {
+                Channel = LauncherVersion.Channel, PrimaryArtifact = "KINOJO.Meter.Protocol.dll", StagedDirectory = protocolRoot,
+                RuntimeBundleRevision = "B000100", RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64), ParentPrivateRuntimeVersion = runtime.ModuleVersion,
+                ParentPrivateRuntimeSha256 = runtime.PackageSha256,
+                ParentPrivateRuntimePointerGeneration = runtime.PointerGeneration,
+                ParentCaptureVersion = capture.ModuleVersion, ParentCaptureSha256 = capture.PackageSha256,
+                ParentCapturePointerGeneration = capture.PointerGeneration
+            };
+            var plan = PrivateRuntimeProcessPlanBuilder.Build(shell, runtime, capture, protocol);
+            if (!plan.ProtocolOverrideActive || !plan.ProtocolAssembly.EndsWith("KINOJO.Meter.Protocol.dll", StringComparison.Ordinal) ||
+                !plan.CaptureOverrideActive || plan.RuntimeModuleSetHash != runtime.RuntimeModuleSetHash)
+                throw new InvalidOperationException("Protocol override process plan did not preserve exact dependency identity.");
+            protocol.ParentCaptureSha256 = new String('1', 64);
+            ExpectFailure(() => PrivateRuntimeProcessPlanBuilder.Build(shell, runtime, capture, protocol));
+        }
+
+        private static ProtocolModuleReleaseManifest ProtocolRelease()
+        {
+            const string version = "0.3.2";
+            var sha = new String('f', 64);
+            var fileName = "KinojoProtocol_" + version + "_x64.zip";
+            return new ProtocolModuleReleaseManifest
+            {
+                SchemaVersion = 1, Channel = LauncherVersion.Channel, ModuleId = "protocol", Version = version,
+                MinimumLauncherVersion = "1.1.1", PackageId = LauncherVersion.Channel + ":protocol:" + version + ":" + sha.Substring(0, 16),
+                PackagePath = "modules/protocol/" + version + "/" + fileName, FileName = fileName, FileSize = 123,
+                Sha256 = sha, PackageManifestSha256 = new String('b', 64), ContractSetVersion = 1, StateSchemaVersion = 0,
+                PrimaryArtifact = "KINOJO.Meter.Protocol.dll", RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64),
+                ParentPrivateRuntimeVersion = "0.3.0", ParentPrivateRuntimeSha256 = new String('a', 64),
+                ParentPrivateRuntimePointerGeneration = 7,
+                ParentCaptureVersion = "0.3.1", ParentCaptureSha256 = new String('c', 64),
+                ParentCapturePointerGeneration = 5,
+                DownloadUrl = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/protocol/" +
+                    LauncherVersion.Channel + "/" + version + "/" + fileName + "?token=test",
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), IntegrityMode = "RSA_SHA256", SigningKeyId = "protocol-test-key",
+                ManifestSignature = Convert.ToBase64String(new byte[384]), PointerGeneration = 6
+            };
+        }
+
+        private static ActiveCaptureModuleState ProtocolActiveCapture()
+        {
+            return new ActiveCaptureModuleState
+            {
+                Channel = LauncherVersion.Channel, ModuleVersion = "0.3.1", PackageSha256 = new String('c', 64),
+                PointerGeneration = 5, RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64), RuntimeModuleSetHash = new String('e', 64),
+                ParentPrivateRuntimeVersion = "0.3.0", ParentPrivateRuntimeSha256 = new String('a', 64),
+                ParentPrivateRuntimePointerGeneration = 7
+            };
+        }
+
+        private static ModuleStagingInstallResult ProtocolStaged(string root, ProtocolModuleReleaseManifest release)
+        {
+            return new ModuleStagingInstallResult
+            {
+                ModuleId = "protocol", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
+                StagedDirectory = Path.Combine(root, "protocol-stage"), InstallStatus = ModuleStagingInstaller.StagedStatus
+            };
+        }
+
+        private static ModuleSelfTestResult ProtocolSelfTest(string root, ProtocolModuleReleaseManifest release)
+        {
+            var receipt = Path.Combine(root, "protocol-self-test.json");
+            File.WriteAllText(receipt, "{\"status\":\"SELF_TEST_PASSED\"}", new UTF8Encoding(false));
+            return new ModuleSelfTestResult
+            {
+                ModuleId = "protocol", ModuleVersion = release.Version, ArchiveSha256 = release.Sha256,
                 ReceiptFile = receipt, Status = ModuleStagingSelfTest.PassedStatus
             };
         }
