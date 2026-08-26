@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -12,6 +13,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using System.Windows.Automation;
 using System.Windows.Forms;
 
 namespace KinojoMeterLauncher
@@ -32,8 +34,11 @@ namespace KinojoMeterLauncher
         private static int _passed;
 
         [STAThread]
-        private static int Main()
+        private static int Main(string[] args)
         {
+            if (args != null && args.Length > 0)
+                return RunCommand(args);
+
             var root = Path.Combine(Path.GetTempPath(), "kinojo-launcher-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             try
@@ -175,6 +180,141 @@ namespace KinojoMeterLauncher
                 try { Directory.Delete(root, true); }
                 catch { }
             }
+        }
+
+        private static int RunCommand(string[] args)
+        {
+            try
+            {
+                if (args.Length != 3 || !String.Equals(args[0], "--verify-joint-runtime", StringComparison.Ordinal))
+                    throw new ArgumentException("Usage: --verify-joint-runtime <shell-executable> <engine-host-executable>");
+                VerifyJointRuntimeEvidence(args[1], args[2]);
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error);
+                return 1;
+            }
+        }
+
+        private static void VerifyJointRuntimeEvidence(string shellExecutable, string engineHostExecutable)
+        {
+            if (!String.Equals(LauncherVersion.Channel, "stable", StringComparison.Ordinal))
+                throw new InvalidOperationException("Joint Runtime evidence must use the Stable Launcher build profile.");
+
+            var shellPath = Path.GetFullPath(shellExecutable ?? "");
+            var hostPath = Path.GetFullPath(engineHostExecutable ?? "");
+            if (!File.Exists(shellPath) || !File.Exists(hostPath))
+                throw new FileNotFoundException("Joint Runtime evidence requires built Shell and EngineHost executables.");
+
+            var processPlan = new PrivateRuntimeProcessPlan
+            {
+                ShellExecutable = shellPath,
+                EngineHostExecutable = hostPath,
+                RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64)
+            };
+            var session = RuntimeLaunchCoordinator.BuildSessionPlanForTest(
+                processPlan,
+                RuntimeLaunchBundle(processPlan),
+                RuntimeLaunchLogin(),
+                "f0bc0c73-289e-4e4e-a379-aa1c48a88155",
+                "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName,
+                DateTime.UtcNow,
+                Guid.NewGuid(),
+                "joint_runtime_" + Guid.NewGuid().ToString("N"));
+            var result = RuntimeLaunchCoordinator.LaunchForTestAsync(
+                session,
+                new SystemRuntimeProcessLauncher(),
+                value => Task.Delay(value)).GetAwaiter().GetResult();
+
+            Process shell = null;
+            Process host = null;
+            long shellExitedAt = 0;
+            long hostExitedAt = 0;
+            try
+            {
+                shell = Process.GetProcessById(result.ShellProcessId);
+                host = Process.GetProcessById(result.EngineHostProcessId);
+                shell.EnableRaisingEvents = true;
+                host.EnableRaisingEvents = true;
+                shell.Exited += delegate { Interlocked.CompareExchange(ref shellExitedAt, Stopwatch.GetTimestamp(), 0); };
+                host.Exited += delegate { Interlocked.CompareExchange(ref hostExitedAt, Stopwatch.GetTimestamp(), 0); };
+
+                string healthEvidence;
+                WaitForJointRuntimeUiEvidence(shell, host, out healthEvidence);
+                if (!shell.CloseMainWindow())
+                    throw new InvalidOperationException("Shell main window did not accept the controlled close request.");
+                if (!host.WaitForExit(15000))
+                    throw new TimeoutException("EngineHost did not exit after the Shell controlled shutdown request.");
+                Interlocked.CompareExchange(ref hostExitedAt, Stopwatch.GetTimestamp(), 0);
+                if (!shell.WaitForExit(15000))
+                    throw new TimeoutException("Shell did not exit after EngineHost shutdown acknowledgement and disconnect.");
+                Interlocked.CompareExchange(ref shellExitedAt, Stopwatch.GetTimestamp(), 0);
+                if (host.ExitCode != 0 || shell.ExitCode != 0)
+                    throw new InvalidOperationException("Controlled shutdown exit codes were not Shell=0 and EngineHost=0.");
+                if (Volatile.Read(ref hostExitedAt) > Volatile.Read(ref shellExitedAt))
+                    throw new InvalidOperationException("Controlled shutdown order was not EngineHost then Shell.");
+
+                Console.WriteLine(
+                    "RUNTIME_JOINT_EVIDENCE_OK channel=stable launcherCoordinator=true shellPid=" + result.ShellProcessId +
+                    " engineHostPid=" + result.EngineHostProcessId + " ready=true health=" + healthEvidence +
+                    " shutdownAck=true exitOrder=ENGINE_HOST_THEN_SHELL shellExitCode=0 engineHostExitCode=0");
+            }
+            finally
+            {
+                if (shell != null)
+                {
+                    try
+                    {
+                        if (!shell.HasExited)
+                        {
+                            shell.CloseMainWindow();
+                            shell.WaitForExit(5000);
+                        }
+                    }
+                    catch { }
+                    shell.Dispose();
+                }
+                if (host != null) host.Dispose();
+            }
+        }
+
+        private static void WaitForJointRuntimeUiEvidence(Process shell, Process host, out string healthEvidence)
+        {
+            healthEvidence = "";
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (shell.HasExited || host.HasExited)
+                    throw new InvalidOperationException("A Runtime child process exited before READY/health evidence was visible.");
+                shell.Refresh();
+                var handle = shell.MainWindowHandle;
+                if (handle != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var window = AutomationElement.FromHandle(handle);
+                        var descendants = window.FindAll(TreeScope.Descendants, Condition.TrueCondition);
+                        var ready = false;
+                        for (var i = 0; i < descendants.Count; i++)
+                        {
+                            var name = descendants[i].Current.Name ?? "";
+                            if (name.StartsWith("EngineHost READY", StringComparison.Ordinal)) ready = true;
+                            if (name.StartsWith("EngineHost · ", StringComparison.Ordinal) &&
+                                name.IndexOf("HOST_FATAL", StringComparison.Ordinal) < 0 &&
+                                name.IndexOf("TIMEOUT", StringComparison.Ordinal) < 0)
+                                healthEvidence = name.Substring("EngineHost · ".Length);
+                        }
+                        if (ready && !String.IsNullOrWhiteSpace(healthEvidence)) return;
+                    }
+                    catch (ElementNotAvailableException) { }
+                }
+                Thread.Sleep(100);
+            }
+            throw new TimeoutException("Shell UI did not expose accepted EngineHost READY and healthy health evidence.");
         }
 
         private static void VerifyCatalogPackAuthorizationParsing()
