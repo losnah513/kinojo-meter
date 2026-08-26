@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -12,6 +13,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using System.Windows.Automation;
 using System.Windows.Forms;
 
 namespace KinojoMeterLauncher
@@ -32,8 +34,11 @@ namespace KinojoMeterLauncher
         private static int _passed;
 
         [STAThread]
-        private static int Main()
+        private static int Main(string[] args)
         {
+            if (args != null && args.Length > 0)
+                return RunCommand(args);
+
             var root = Path.Combine(Path.GetTempPath(), "kinojo-launcher-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             try
@@ -59,6 +64,9 @@ namespace KinojoMeterLauncher
                 Run("keep Server secrets out of Shell session", () => VerifyRuntimeLaunchShellSecretBoundary(root));
                 Run("reject split Runtime plan for another Bundle", () => VerifyRuntimeLaunchBundleMismatch(root));
                 Run("launch Shell and EngineHost through redirected stdin only", () => VerifyRuntimeLaunchProcessBoundary(root));
+                Run("handle Shell exit 20 as Launcher update takeover", VerifyRuntimeUpdateHandoffReturn);
+                Run("handle Shell exit 21 as character reconnect takeover", VerifyRuntimeCharacterChangedReturn);
+                Run("reject Runtime return before clean EngineHost shutdown", VerifyRuntimeUnexpectedReturn);
                 Run("accept six PASS KEY text elements", VerifyPassKeyLength);
                 Run("reject incomplete PASS KEY", VerifyIncompletePassKey);
                 Run("render compact Launcher UI layout contracts", VerifyLauncherUiLayoutContracts);
@@ -175,6 +183,186 @@ namespace KinojoMeterLauncher
                 try { Directory.Delete(root, true); }
                 catch { }
             }
+        }
+
+        private static int RunCommand(string[] args)
+        {
+            try
+            {
+                if (args.Length != 3 || !String.Equals(args[0], "--verify-joint-runtime", StringComparison.Ordinal))
+                    throw new ArgumentException("Usage: --verify-joint-runtime <shell-executable> <engine-host-executable>");
+                VerifyJointRuntimeEvidence(args[1], args[2]);
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error);
+                return 1;
+            }
+        }
+
+        private static void VerifyJointRuntimeEvidence(string shellExecutable, string engineHostExecutable)
+        {
+            if (!String.Equals(LauncherVersion.Channel, "stable", StringComparison.Ordinal))
+                throw new InvalidOperationException("Joint Runtime evidence must use the Stable Launcher build profile.");
+
+            var shellPath = Path.GetFullPath(shellExecutable ?? "");
+            var hostPath = Path.GetFullPath(engineHostExecutable ?? "");
+            if (!File.Exists(shellPath) || !File.Exists(hostPath))
+                throw new FileNotFoundException("Joint Runtime evidence requires built Shell and EngineHost executables.");
+
+            var processPlan = new PrivateRuntimeProcessPlan
+            {
+                ShellExecutable = shellPath,
+                EngineHostExecutable = hostPath,
+                RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64)
+            };
+            var session = RuntimeLaunchCoordinator.BuildSessionPlanForTest(
+                processPlan,
+                RuntimeLaunchBundle(processPlan),
+                RuntimeLaunchLogin(),
+                "f0bc0c73-289e-4e4e-a379-aa1c48a88155",
+                "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName,
+                DateTime.UtcNow,
+                Guid.NewGuid(),
+                "joint_runtime_" + Guid.NewGuid().ToString("N"));
+            var result = RuntimeLaunchCoordinator.LaunchForTestAsync(
+                session,
+                new SystemRuntimeProcessLauncher(),
+                value => Task.Delay(value)).GetAwaiter().GetResult();
+
+            Process shell = null;
+            Process host = null;
+            long shellExitedAt = 0;
+            long hostExitedAt = 0;
+            try
+            {
+                shell = Process.GetProcessById(result.ShellProcessId);
+                host = Process.GetProcessById(result.EngineHostProcessId);
+                shell.EnableRaisingEvents = true;
+                host.EnableRaisingEvents = true;
+                shell.Exited += delegate { Interlocked.CompareExchange(ref shellExitedAt, Stopwatch.GetTimestamp(), 0); };
+                host.Exited += delegate { Interlocked.CompareExchange(ref hostExitedAt, Stopwatch.GetTimestamp(), 0); };
+
+                string healthEvidence;
+                WaitForJointRuntimeUiEvidence(shell, host, out healthEvidence);
+                InvokeShellExitButton(shell);
+                if (!host.WaitForExit(15000))
+                    throw new TimeoutException(
+                        "EngineHost did not exit after the Shell controlled shutdown request. health=" +
+                        healthEvidence + " shellExited=" + shell.HasExited + " ui=" +
+                        String.Join(" | ", SnapshotRuntimeUiNames(shell)));
+                Interlocked.CompareExchange(ref hostExitedAt, Stopwatch.GetTimestamp(), 0);
+                if (!shell.WaitForExit(15000))
+                    throw new TimeoutException("Shell did not exit after EngineHost shutdown acknowledgement and disconnect.");
+                Interlocked.CompareExchange(ref shellExitedAt, Stopwatch.GetTimestamp(), 0);
+                if (host.ExitCode != 0 || shell.ExitCode != 0)
+                    throw new InvalidOperationException("Controlled shutdown exit codes were not Shell=0 and EngineHost=0.");
+                if (Volatile.Read(ref hostExitedAt) > Volatile.Read(ref shellExitedAt))
+                    throw new InvalidOperationException("Controlled shutdown order was not EngineHost then Shell.");
+
+                Console.WriteLine(
+                    "RUNTIME_JOINT_EVIDENCE_OK channel=stable launcherCoordinator=true shellPid=" + result.ShellProcessId +
+                    " engineHostPid=" + result.EngineHostProcessId + " ready=true health=" + healthEvidence +
+                    " shutdownAck=true exitOrder=ENGINE_HOST_THEN_SHELL shellExitCode=0 engineHostExitCode=0");
+            }
+            finally
+            {
+                if (shell != null)
+                {
+                    try
+                    {
+                        if (!shell.HasExited)
+                        {
+                            shell.CloseMainWindow();
+                            shell.WaitForExit(5000);
+                        }
+                    }
+                    catch { }
+                    shell.Dispose();
+                }
+                if (host != null) host.Dispose();
+                result.Dispose();
+            }
+        }
+
+        private static void WaitForJointRuntimeUiEvidence(Process shell, Process host, out string healthEvidence)
+        {
+            healthEvidence = "";
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (shell.HasExited || host.HasExited)
+                    throw new InvalidOperationException("A Runtime child process exited before READY/health evidence was visible.");
+                shell.Refresh();
+                var handle = shell.MainWindowHandle;
+                if (handle != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var window = AutomationElement.FromHandle(handle);
+                        var descendants = window.FindAll(TreeScope.Descendants, Condition.TrueCondition);
+                        var ready = false;
+                        for (var i = 0; i < descendants.Count; i++)
+                        {
+                            var name = descendants[i].Current.Name ?? "";
+                            if (name.StartsWith("EngineHost READY", StringComparison.Ordinal)) ready = true;
+                            if (name.StartsWith("EngineHost · ", StringComparison.Ordinal) &&
+                                !String.Equals(name, "EngineHost · 연결 대기", StringComparison.Ordinal) &&
+                                name.IndexOf("HOST_FATAL", StringComparison.Ordinal) < 0 &&
+                                name.IndexOf("TIMEOUT", StringComparison.Ordinal) < 0)
+                                healthEvidence = name.Substring("EngineHost · ".Length);
+                        }
+                        if (ready && !String.IsNullOrWhiteSpace(healthEvidence)) return;
+                    }
+                    catch (ElementNotAvailableException) { }
+                }
+                Thread.Sleep(100);
+            }
+            throw new TimeoutException(
+                "Shell UI did not expose accepted EngineHost READY and healthy health evidence. ui=" +
+                String.Join(" | ", SnapshotRuntimeUiNames(shell)));
+        }
+
+        private static IEnumerable<string> SnapshotRuntimeUiNames(Process shell)
+        {
+            try
+            {
+                shell.Refresh();
+                if (shell.MainWindowHandle == IntPtr.Zero) return new string[0];
+                var window = AutomationElement.FromHandle(shell.MainWindowHandle);
+                return window.FindAll(TreeScope.Descendants, Condition.TrueCondition)
+                    .Cast<AutomationElement>()
+                    .Select(value => value.Current.Name ?? "")
+                    .Where(value => !String.IsNullOrWhiteSpace(value))
+                    .Take(40)
+                    .ToArray();
+            }
+            catch
+            {
+                return new[] { "UI_AUTOMATION_UNAVAILABLE" };
+            }
+        }
+
+        private static void InvokeShellExitButton(Process shell)
+        {
+            shell.Refresh();
+            if (shell.MainWindowHandle == IntPtr.Zero)
+                throw new InvalidOperationException("Shell main window is unavailable for the controlled exit request.");
+            var window = AutomationElement.FromHandle(shell.MainWindowHandle);
+            var buttons = window.FindAll(
+                TreeScope.Descendants,
+                new AndCondition(
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
+                    new PropertyCondition(AutomationElement.NameProperty, "종료")));
+            if (buttons.Count != 1)
+                throw new InvalidOperationException("Shell approved exit button was not uniquely available.");
+            var pattern = buttons[0].GetCurrentPattern(InvokePattern.Pattern) as InvokePattern;
+            if (pattern == null)
+                throw new InvalidOperationException("Shell approved exit button does not expose InvokePattern.");
+            pattern.Invoke();
         }
 
         private static void VerifyCatalogPackAuthorizationParsing()
@@ -1300,18 +1488,47 @@ namespace KinojoMeterLauncher
                 Guid.NewGuid(),
                 "runtime_scope_0123456789abcdef");
             var launcher = new RuntimeProcessLauncherFixture();
-            var result = RuntimeLaunchCoordinator.LaunchForTestAsync(
+            using (var result = RuntimeLaunchCoordinator.LaunchForTestAsync(
                 session,
                 launcher,
-                value => Task.FromResult(0)).GetAwaiter().GetResult();
-            if (launcher.Specs.Count != 2 ||
-                !String.Equals(launcher.Specs[0].Target, "shell", StringComparison.Ordinal) ||
-                !String.Equals(launcher.Specs[1].Target, "engine-host", StringComparison.Ordinal) ||
-                launcher.Specs.Any(value => !value.RedirectStandardInput || !String.IsNullOrEmpty(value.Arguments)) ||
-                launcher.Children.Any(value => String.IsNullOrWhiteSpace(value.SessionLine) || !value.Disposed) ||
-                result.ShellProcessId != 1001 || result.EngineHostProcessId != 1002 ||
-                !String.Equals(result.RuntimeBundleRevision, processPlan.RuntimeBundleRevision, StringComparison.Ordinal))
-                throw new InvalidOperationException("Split Runtime process launch boundary is invalid.");
+                value => Task.FromResult(0)).GetAwaiter().GetResult())
+            {
+                if (launcher.Specs.Count != 2 ||
+                    !String.Equals(launcher.Specs[0].Target, "shell", StringComparison.Ordinal) ||
+                    !String.Equals(launcher.Specs[1].Target, "engine-host", StringComparison.Ordinal) ||
+                    launcher.Specs.Any(value => !value.RedirectStandardInput || !String.IsNullOrEmpty(value.Arguments)) ||
+                    launcher.Children.Any(value => String.IsNullOrWhiteSpace(value.SessionLine) || value.Disposed) ||
+                    result.ShellProcessId != 1001 || result.EngineHostProcessId != 1002 ||
+                    !String.Equals(result.RuntimeBundleRevision, processPlan.RuntimeBundleRevision, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Split Runtime process launch boundary is invalid.");
+            }
+            if (launcher.Children.Any(value => !value.Disposed))
+                throw new InvalidOperationException("Launcher did not release Runtime process handles after monitoring ownership ended.");
+        }
+
+        private static void VerifyRuntimeUpdateHandoffReturn()
+        {
+            var decision = SplitRuntimeLaunchResult.ClassifyReturnForTest(20, true, 0);
+            if (decision.Intent != RuntimeReturnIntent.LauncherUpdateHandoff || !decision.RestartInteractiveLauncher)
+                throw new InvalidOperationException("Shell exit 20 did not return control to the Launcher update flow.");
+        }
+
+        private static void VerifyRuntimeCharacterChangedReturn()
+        {
+            var decision = SplitRuntimeLaunchResult.ClassifyReturnForTest(21, true, 0);
+            if (decision.Intent != RuntimeReturnIntent.CharacterChanged || !decision.RestartInteractiveLauncher)
+                throw new InvalidOperationException("Shell exit 21 did not return control to the Launcher login flow.");
+        }
+
+        private static void VerifyRuntimeUnexpectedReturn()
+        {
+            var runningHost = SplitRuntimeLaunchResult.ClassifyReturnForTest(20, false, -1);
+            var failedHost = SplitRuntimeLaunchResult.ClassifyReturnForTest(20, true, 7);
+            var unknownShell = SplitRuntimeLaunchResult.ClassifyReturnForTest(99, true, 0);
+            if (runningHost.Intent != RuntimeReturnIntent.UnexpectedExit || runningHost.RestartInteractiveLauncher ||
+                failedHost.Intent != RuntimeReturnIntent.UnexpectedExit || failedHost.RestartInteractiveLauncher ||
+                unknownShell.Intent != RuntimeReturnIntent.UnexpectedExit || unknownShell.RestartInteractiveLauncher)
+                throw new InvalidOperationException("Unexpected Runtime return was allowed to restart the interactive Launcher.");
         }
 
         private static PrivateRuntimeProcessPlan RuntimeLaunchProcessPlan(string root)
@@ -2140,6 +2357,11 @@ namespace KinojoMeterLauncher
             {
                 SessionLine = line;
                 return Task.FromResult(0);
+            }
+
+            public bool WaitForExit(int milliseconds)
+            {
+                return HasExited;
             }
 
             public void Dispose()
