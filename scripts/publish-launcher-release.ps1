@@ -52,7 +52,19 @@ if ([string]$manifest.channel -cne $Channel -or [string]$manifest.cutoverState -
     throw 'Launcher publication channel, cutover state, or unsigned hobby trust contract is invalid.'
 }
 if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Launcher artifact is missing: $artifactPath" }
+if (-not (Test-Path -LiteralPath $checksumPath -PathType Leaf)) { throw "Launcher checksum is missing: $checksumPath" }
 Assert-EmbeddedLauncher $artifactPath ([string]$manifest.fileVersion)
+
+$size = (Get-Item -LiteralPath $artifactPath).Length
+$sha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$checksumLine = "$artifactName`t$size`t$sha256"
+$localChecksum = (Get-Content -LiteralPath $checksumPath -Raw).Trim()
+if ($localChecksum -cne $checksumLine) { throw 'Local Launcher checksum does not match the executable.' }
+
+$immutableSettingsRaw = & gh api "repos/$repository/immutable-releases" -H 'X-GitHub-Api-Version: 2026-03-10'
+if ($LASTEXITCODE -ne 0) { throw 'GitHub immutable release setting readback failed.' }
+$immutableSettings = ($immutableSettingsRaw -join "`n") | ConvertFrom-Json
+if ($immutableSettings.enabled -ne $true) { throw 'GitHub immutable releases must be enabled before Launcher publication.' }
 
 function Resolve-TagCommit([string]$Repository, [string]$Tag) {
     $raw = & gh api "repos/$Repository/git/ref/tags/$Tag" 2>$null
@@ -66,54 +78,74 @@ function Resolve-TagCommit([string]$Repository, [string]$Tag) {
     return [string]$tagObject.object.sha
 }
 
-$tagCommit = Resolve-TagCommit $repository $tag
-if ($tagCommit -and $tagCommit.ToLowerInvariant() -ne $ExpectedCommit.ToLowerInvariant()) {
-    throw "$tag is immutable and already points to $tagCommit. Bump launcher-version.json."
+function Read-Release([string]$Repository, [string]$Tag) {
+    $raw = & gh release view $Tag --repo $Repository --json tagName,targetCommitish,isDraft,isPrerelease,isImmutable,assets 2>$null
+    if ($LASTEXITCODE -ne 0 -or [String]::IsNullOrWhiteSpace(($raw -join "`n"))) { return $null }
+    return (($raw -join "`n") | ConvertFrom-Json)
 }
-if (-not $tagCommit) {
-    $releaseArguments = @('release', 'create', $tag, $artifactPath, '--repo', $repository, '--target', $ExpectedCommit,
+
+function Assert-ReleaseContract([object]$Release, [bool]$ExpectedDraft, [bool]$ExpectedImmutable) {
+    $expectedPrerelease = $Channel -eq 'staging'
+    if ($null -eq $Release -or [string]$Release.tagName -cne $tag -or
+        [bool]$Release.isDraft -ne $ExpectedDraft -or
+        [bool]$Release.isPrerelease -ne $expectedPrerelease -or
+        [bool]$Release.isImmutable -ne $ExpectedImmutable) {
+        throw 'Launcher Release state contract readback failed.'
+    }
+    $assetNames = @($Release.assets | ForEach-Object { [string]$_.name })
+    if ($assetNames.Count -ne 2 -or $assetNames -notcontains $artifactName -or $assetNames -notcontains $checksumName) {
+        throw 'Launcher Release must contain exactly the executable and checksum assets.'
+    }
+}
+
+function Assert-RemoteAssets([string]$Repository, [string]$Tag) {
+    $downloadRoot = Join-Path $env:RUNNER_TEMP ("kinojo-launcher-verify-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $downloadRoot | Out-Null
+    try {
+        & gh release download $Tag --repo $Repository --dir $downloadRoot --pattern $artifactName --pattern $checksumName
+        if ($LASTEXITCODE -ne 0) { throw 'Launcher remote asset download failed.' }
+        $remoteArtifact = Join-Path $downloadRoot $artifactName
+        $remoteChecksumPath = Join-Path $downloadRoot $checksumName
+        Assert-EmbeddedLauncher $remoteArtifact ([string]$manifest.fileVersion)
+        $remoteSize = (Get-Item -LiteralPath $remoteArtifact).Length
+        $remoteSha256 = (Get-FileHash -LiteralPath $remoteArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        $remoteChecksum = (Get-Content -LiteralPath $remoteChecksumPath -Raw).Trim()
+        if ($remoteSize -ne $size -or $remoteSha256 -cne $sha256 -or $remoteChecksum -cne $checksumLine) {
+            throw 'Launcher remote assets do not exactly match the local publication candidate.'
+        }
+    } finally {
+        Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$release = Read-Release $repository $tag
+if ($null -eq $release) {
+    $releaseArguments = @('release', 'create', $tag, $artifactPath, $checksumPath, '--repo', $repository,
+        '--target', $ExpectedCommit, '--draft',
         '--title', $(if ($Channel -eq 'staging') { "KINOJO Meter Launcher STAGING $version" } else { "KINOJO Meter Launcher $version" }),
         '--notes', [string]$manifest.releaseNote)
-    if ($Channel -eq 'staging') { $releaseArguments += '--prerelease' }
+    if ($Channel -eq 'staging') { $releaseArguments += @('--prerelease', '--latest=false') }
     & gh @releaseArguments
-    if ($LASTEXITCODE -ne 0) { throw 'Launcher GitHub Release creation failed.' }
-    $tagCommit = Resolve-TagCommit $repository $tag
-}
-if (-not $tagCommit -or $tagCommit.ToLowerInvariant() -ne $ExpectedCommit.ToLowerInvariant()) { throw 'Launcher tag readback failed.' }
-
-$downloadRoot = Join-Path $env:RUNNER_TEMP ("kinojo-launcher-verify-" + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $downloadRoot | Out-Null
-try {
-    $release = ((& gh release view $tag --repo $repository --json isDraft,isPrerelease,assets) -join "`n") | ConvertFrom-Json
-    $expectedPrerelease = $Channel -eq 'staging'
-    if ($LASTEXITCODE -ne 0 -or $release.isDraft -eq $true -or [bool]$release.isPrerelease -ne $expectedPrerelease) {
-        throw 'Launcher Release channel readback failed.'
-    }
-    $assetNames = @($release.assets | ForEach-Object { [string]$_.name })
-    if ($assetNames -notcontains $artifactName) {
-        & gh release upload $tag $artifactPath --repo $repository
-        if ($LASTEXITCODE -ne 0) { throw 'Launcher executable asset recovery failed.' }
-    }
-    & gh release download $tag --repo $repository --dir $downloadRoot --pattern $artifactName
-    if ($LASTEXITCODE -ne 0) { throw 'Launcher remote executable download failed.' }
-    $remoteArtifact = Join-Path $downloadRoot $artifactName
-    Assert-EmbeddedLauncher $remoteArtifact ([string]$manifest.fileVersion)
-    $size = (Get-Item -LiteralPath $remoteArtifact).Length
-    $sha256 = (Get-FileHash -LiteralPath $remoteArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
-    $checksumLine = "$artifactName`t$size`t$sha256"
-    @($checksumLine) | Set-Content -LiteralPath $checksumPath -Encoding ascii
-
-    if ($assetNames -contains $checksumName) {
-        & gh release download $tag --repo $repository --dir $downloadRoot --pattern $checksumName
-        if ($LASTEXITCODE -ne 0) { throw 'Launcher remote checksum download failed.' }
-        $remoteChecksum = (Get-Content -LiteralPath (Join-Path $downloadRoot $checksumName) -Raw).Trim()
-        if ($remoteChecksum -ne $checksumLine) { throw 'Existing Launcher checksum is immutable and does not match the published executable.' }
-    } else {
-        & gh release upload $tag $checksumPath --repo $repository
-        if ($LASTEXITCODE -ne 0) { throw 'Launcher checksum asset recovery failed.' }
-    }
-} finally {
-    Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher GitHub draft Release creation failed.' }
+    $release = Read-Release $repository $tag
 }
 
-Write-Host "Launcher release verified: channel=$Channel $repository $tag @ $ExpectedCommit size=$size sha256=$sha256"
+if ($release.isDraft -eq $true) {
+    if ([string]$release.targetCommitish -cne $ExpectedCommit) {
+        throw 'Existing Launcher draft targets another commit. Delete the draft or bump the version.'
+    }
+    Assert-ReleaseContract $release $true $false
+    Assert-RemoteAssets $repository $tag
+    & gh release edit $tag --repo $repository --draft=false
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher GitHub draft publication failed.' }
+}
+
+$tagCommit = Resolve-TagCommit $repository $tag
+if (-not $tagCommit -or $tagCommit.ToLowerInvariant() -ne $ExpectedCommit.ToLowerInvariant()) {
+    throw 'Launcher immutable tag readback failed.'
+}
+$release = Read-Release $repository $tag
+Assert-ReleaseContract $release $false $true
+Assert-RemoteAssets $repository $tag
+
+Write-Host "Immutable Launcher release verified: channel=$Channel $repository $tag @ $ExpectedCommit size=$size sha256=$sha256"

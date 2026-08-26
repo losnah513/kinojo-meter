@@ -28,6 +28,7 @@ concurrency:
       - 'scripts/build-launcher.ps1'
       - 'scripts/publish-launcher-release.ps1'
       - 'scripts/sync-launcher-release.ps1'
+      - 'scripts/test-stage84-launcher-staging-release-boundary.py'
       - 'scripts/verify-distribution-boundary.ps1'
       - '.github/workflows/launcher-build.yml'
       - 'KINOJO.Meter.sln'
@@ -42,6 +43,7 @@ concurrency:
       - 'scripts/build-launcher.ps1'
       - 'scripts/publish-launcher-release.ps1'
       - 'scripts/sync-launcher-release.ps1'
+      - 'scripts/test-stage84-launcher-staging-release-boundary.py'
       - 'scripts/verify-distribution-boundary.ps1'
       - '.github/workflows/launcher-build.yml'
       - 'KINOJO.Meter.sln'
@@ -95,6 +97,9 @@ jobs:
       - name: Verify public/private distribution boundary
         shell: pwsh
         run: ./scripts/verify-distribution-boundary.ps1
+      - name: Verify Stage 8-4 immutable STAGING publication boundary
+        shell: pwsh
+        run: python ./scripts/test-stage84-launcher-staging-release-boundary.py
       - name: Build public Launcher only
         shell: pwsh
         run: ./scripts/build-launcher.ps1 -Configuration Release -Channel '${{ matrix.channel }}'
