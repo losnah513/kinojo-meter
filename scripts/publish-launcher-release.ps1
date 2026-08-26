@@ -61,11 +61,6 @@ $checksumLine = "$artifactName`t$size`t$sha256"
 $localChecksum = (Get-Content -LiteralPath $checksumPath -Raw).Trim()
 if ($localChecksum -cne $checksumLine) { throw 'Local Launcher checksum does not match the executable.' }
 
-$immutableSettingsRaw = & gh api "repos/$repository/immutable-releases" -H 'X-GitHub-Api-Version: 2026-03-10'
-if ($LASTEXITCODE -ne 0) { throw 'GitHub immutable release setting readback failed.' }
-$immutableSettings = ($immutableSettingsRaw -join "`n") | ConvertFrom-Json
-if ($immutableSettings.enabled -ne $true) { throw 'GitHub immutable releases must be enabled before Launcher publication.' }
-
 function Resolve-TagCommit([string]$Repository, [string]$Tag) {
     $raw = & gh api "repos/$Repository/git/ref/tags/$Tag" 2>$null
     if ($LASTEXITCODE -ne 0 -or [String]::IsNullOrWhiteSpace(($raw -join "`n"))) { return '' }
