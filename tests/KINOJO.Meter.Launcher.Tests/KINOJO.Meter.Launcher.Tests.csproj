@@ -35,6 +35,7 @@
     <Compile Include="..\..\launcher\SyncModuleUpdater.cs" Link="SyncModuleUpdater.cs" />
     <Compile Include="..\..\launcher\CombatEncounterCompatibilityGroupUpdater.cs" Link="CombatEncounterCompatibilityGroupUpdater.cs" />
     <Compile Include="..\..\launcher\CombatEncounterIndividualModuleUpdater.cs" Link="CombatEncounterIndividualModuleUpdater.cs" />
+    <Compile Include="..\..\launcher\RuntimeLaunchCoordinator.cs" Link="RuntimeLaunchCoordinator.cs" />
     <Compile Include="..\..\launcher\LauncherModels.cs" Link="LauncherModels.cs" />
     <Compile Include="..\..\launcher\LauncherPaths.cs" Link="LauncherPaths.cs" />
     <Compile Include="..\..\launcher\LauncherVisualControls.cs" Link="LauncherVisualControls.cs" />
