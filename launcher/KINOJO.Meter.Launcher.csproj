@@ -57,6 +57,7 @@
     <Compile Include="SyncModuleUpdater.cs" />
     <Compile Include="CombatEncounterCompatibilityGroupUpdater.cs" />
     <Compile Include="CombatEncounterIndividualModuleUpdater.cs" />
+    <Compile Include="RuntimeLaunchCoordinator.cs" />
     <Compile Include="CatalogPackUpdater.cs" />
     <Compile Include="LauncherModels.cs" />
     <Compile Include="LauncherPaths.cs" />

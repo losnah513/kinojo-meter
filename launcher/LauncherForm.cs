@@ -55,6 +55,7 @@ namespace KinojoMeterLauncher
         private CoreInstallResult _preparedCore;
         private string _installationId;
         private MeterLaunchOperation _launchOperation;
+        private string _runtimeApiEndpoint;
         private bool _operationBusy;
 
         public LauncherForm(LauncherLoginResult login)
@@ -926,9 +927,29 @@ namespace KinojoMeterLauncher
             try
             {
                 if (!await RefreshLaunchOperationAsync(false)) return;
+                var runtimeLaunch = await RuntimeLaunchCoordinator.TryLaunchAsync(
+                    _login,
+                    _installationId,
+                    _runtimeApiEndpoint);
+                if (runtimeLaunch != null)
+                {
+                    _version.Text = "Runtime " + runtimeLaunch.RuntimeBundleRevision;
+                    _sidebarCore.Text = "Runtime " + runtimeLaunch.RuntimeBundleRevision;
+                    SessionHandedOff = true;
+                    _login.SessionToken = "";
+                    SetOperationState(
+                        "분리 Runtime 실행 완료",
+                        "검증된 Bundle의 Shell과 EngineHost가 새 Launcher session으로 실행되었습니다.",
+                        false,
+                        100);
+                    await Task.Delay(500);
+                    Close();
+                    return;
+                }
+
                 using (var installer = new CorePackageInstaller())
                 {
-                    SetOperationState("미터기 실행 확인 중", "Server 실행 허용 상태와 Core 준비 신호를 확인했습니다.", false, 92);
+                    SetOperationState("복구 Core 실행 확인 중", "활성 Bundle이 없어 검증된 0.2.x 복구 Core를 실행합니다.", false, 92);
                     await installer.LaunchAndVerifyAsync(_preparedCore, _login, _installationId);
                     _version.Text = "Core " + _preparedCore.Active.CoreVersion;
                     _sidebarCore.Text = "Core " + _preparedCore.Active.CoreVersion;
@@ -994,6 +1015,7 @@ namespace KinojoMeterLauncher
                         _login.SessionToken,
                         _installationId,
                         current == null ? "" : current.CoreVersion);
+                    _runtimeApiEndpoint = api.ApiEndpoint;
                     if (!authorization.Authorized || authorization.Release == null)
                         throw new InvalidOperationException(String.IsNullOrWhiteSpace(authorization.Message)
                             ? "현재 Core 다운로드가 허용되지 않았습니다."

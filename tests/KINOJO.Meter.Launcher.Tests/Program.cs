@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -54,6 +55,10 @@ namespace KinojoMeterLauncher
                 Run("reject mismatched Core update request id", VerifyCoreUpdateHandoffRequestMismatch);
                 Run("format takeover READY signal", VerifyCoreUpdateHandoffReadySignal);
                 Run("compare Core handoff semantic versions", VerifyCoreUpdateHandoffVersionComparison);
+                Run("build paired split Runtime Launcher sessions", () => VerifyRuntimeLaunchSessionPlan(root));
+                Run("keep Server secrets out of Shell session", () => VerifyRuntimeLaunchShellSecretBoundary(root));
+                Run("reject split Runtime plan for another Bundle", () => VerifyRuntimeLaunchBundleMismatch(root));
+                Run("launch Shell and EngineHost through redirected stdin only", () => VerifyRuntimeLaunchProcessBoundary(root));
                 Run("accept six PASS KEY text elements", VerifyPassKeyLength);
                 Run("reject incomplete PASS KEY", VerifyIncompletePassKey);
                 Run("render compact Launcher UI layout contracts", VerifyLauncherUiLayoutContracts);
@@ -1213,6 +1218,174 @@ namespace KinojoMeterLauncher
             ExpectFailure(() => PrivateRuntimeProcessPlanBuilder.Build(shell, runtime));
         }
 
+        private static void VerifyRuntimeLaunchSessionPlan(string root)
+        {
+            var processPlan = RuntimeLaunchProcessPlan(root);
+            var login = RuntimeLaunchLogin();
+            var installationId = "f0bc0c73-289e-4e4e-a379-aa1c48a88155";
+            var launchId = new Guid("04d6f069-b435-44aa-b66b-25757abec420");
+            var scope = "runtime_scope_0123456789abcdef";
+            var now = new DateTime(2026, 8, 26, 7, 0, 0, DateTimeKind.Utc);
+            var session = RuntimeLaunchCoordinator.BuildSessionPlanForTest(
+                processPlan,
+                RuntimeLaunchBundle(processPlan),
+                login,
+                installationId,
+                "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName,
+                now,
+                launchId,
+                scope);
+            var shell = DecodeRuntimeSessionLine(RuntimeLaunchCoordinator.ShellSessionPrefix, session.ShellSessionLine);
+            var host = DecodeRuntimeSessionLine(RuntimeLaunchCoordinator.EngineHostSessionPrefix, session.EngineHostSessionLine);
+            foreach (var key in new[] { "launchId", "ipcScopeToken", "issuedAtUtc", "launcherVersion", "installationId", "channel" })
+            {
+                if (!String.Equals(Convert.ToString(shell[key]), Convert.ToString(host[key]), StringComparison.Ordinal))
+                    throw new InvalidOperationException("Split Runtime paired session field mismatch: " + key);
+            }
+            if (!String.Equals(Convert.ToString(shell["launchId"]), launchId.ToString("D"), StringComparison.Ordinal) ||
+                !String.Equals(Convert.ToString(shell["ipcScopeToken"]), scope, StringComparison.Ordinal) ||
+                shell.ContainsKey("sessionToken") || shell.ContainsKey("apiEndpoint") ||
+                !shell.ContainsKey("account") || !shell.ContainsKey("characters"))
+                throw new InvalidOperationException("Shell session identity/UI-only boundary is invalid.");
+            if (!String.Equals(Convert.ToString(host["sessionToken"]), login.SessionToken, StringComparison.Ordinal) ||
+                !String.Equals(Convert.ToString(host["apiEndpoint"]), "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName, StringComparison.Ordinal) ||
+                !Convert.ToBoolean(host["isMeterAdmin"], CultureInfo.InvariantCulture) ||
+                !Convert.ToBoolean(host["diagnosticsAllowed"], CultureInfo.InvariantCulture) ||
+                host.ContainsKey("account") || host.ContainsKey("characters"))
+                throw new InvalidOperationException("EngineHost session secret/authority boundary is invalid.");
+        }
+
+        private static void VerifyRuntimeLaunchShellSecretBoundary(string root)
+        {
+            var processPlan = RuntimeLaunchProcessPlan(root);
+            var login = RuntimeLaunchLogin();
+            login.Account["sessionToken"] = "forbidden-shell-secret";
+            ExpectFailure(() => RuntimeLaunchCoordinator.BuildSessionPlanForTest(
+                processPlan,
+                RuntimeLaunchBundle(processPlan),
+                login,
+                "f0bc0c73-289e-4e4e-a379-aa1c48a88155",
+                "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName,
+                DateTime.UtcNow,
+                Guid.NewGuid(),
+                "runtime_scope_0123456789abcdef"));
+        }
+
+        private static void VerifyRuntimeLaunchBundleMismatch(string root)
+        {
+            var processPlan = RuntimeLaunchProcessPlan(root);
+            var bundle = RuntimeLaunchBundle(processPlan);
+            bundle.BundleLockSha256 = new String('0', 64);
+            ExpectFailure(() => RuntimeLaunchCoordinator.BuildSessionPlanForTest(
+                processPlan,
+                bundle,
+                RuntimeLaunchLogin(),
+                "f0bc0c73-289e-4e4e-a379-aa1c48a88155",
+                "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName,
+                DateTime.UtcNow,
+                Guid.NewGuid(),
+                "runtime_scope_0123456789abcdef"));
+        }
+
+        private static void VerifyRuntimeLaunchProcessBoundary(string root)
+        {
+            var processPlan = RuntimeLaunchProcessPlan(root);
+            var session = RuntimeLaunchCoordinator.BuildSessionPlanForTest(
+                processPlan,
+                RuntimeLaunchBundle(processPlan),
+                RuntimeLaunchLogin(),
+                "f0bc0c73-289e-4e4e-a379-aa1c48a88155",
+                "https://josvoltpktvwysrasffq.supabase.co/functions/v1/" + LauncherBuildProfile.FunctionName,
+                DateTime.UtcNow,
+                Guid.NewGuid(),
+                "runtime_scope_0123456789abcdef");
+            var launcher = new RuntimeProcessLauncherFixture();
+            var result = RuntimeLaunchCoordinator.LaunchForTestAsync(
+                session,
+                launcher,
+                value => Task.FromResult(0)).GetAwaiter().GetResult();
+            if (launcher.Specs.Count != 2 ||
+                !String.Equals(launcher.Specs[0].Target, "shell", StringComparison.Ordinal) ||
+                !String.Equals(launcher.Specs[1].Target, "engine-host", StringComparison.Ordinal) ||
+                launcher.Specs.Any(value => !value.RedirectStandardInput || !String.IsNullOrEmpty(value.Arguments)) ||
+                launcher.Children.Any(value => String.IsNullOrWhiteSpace(value.SessionLine) || !value.Disposed) ||
+                result.ShellProcessId != 1001 || result.EngineHostProcessId != 1002 ||
+                !String.Equals(result.RuntimeBundleRevision, processPlan.RuntimeBundleRevision, StringComparison.Ordinal))
+                throw new InvalidOperationException("Split Runtime process launch boundary is invalid.");
+        }
+
+        private static PrivateRuntimeProcessPlan RuntimeLaunchProcessPlan(string root)
+        {
+            var shellRoot = Path.Combine(root, "runtime-launch-shell");
+            var hostRoot = Path.Combine(root, "runtime-launch-host");
+            Directory.CreateDirectory(shellRoot);
+            Directory.CreateDirectory(hostRoot);
+            var shell = Path.Combine(shellRoot, "KINOJO.Meter.Shell.exe");
+            var host = Path.Combine(hostRoot, "KINOJO.Meter.EngineHost.exe");
+            File.WriteAllBytes(shell, new byte[] { 1 });
+            File.WriteAllBytes(host, new byte[] { 2 });
+            return new PrivateRuntimeProcessPlan
+            {
+                ShellExecutable = shell,
+                EngineHostExecutable = host,
+                RuntimeBundleRevision = "B000100",
+                RuntimeBundleLockSha256 = new String('d', 64),
+                RuntimeModuleSetHash = new String('e', 64)
+            };
+        }
+
+        private static ActiveModuleBundleState RuntimeLaunchBundle(PrivateRuntimeProcessPlan processPlan)
+        {
+            return new ActiveModuleBundleState
+            {
+                SchemaVersion = 1,
+                Status = ModuleBundleActivator.ActiveStatus,
+                Channel = LauncherVersion.Channel,
+                BundleRevision = processPlan.RuntimeBundleRevision,
+                BundleLockSha256 = processPlan.RuntimeBundleLockSha256,
+                ModuleSetHash = processPlan.RuntimeModuleSetHash,
+                ActivationAtomic = true,
+                ContractSetVersion = 1,
+                Modules = new List<ActiveModuleBundleEntry>()
+            };
+        }
+
+        private static LauncherLoginResult RuntimeLaunchLogin()
+        {
+            return new LauncherLoginResult
+            {
+                SessionToken = "runtime-session-token-0123456789",
+                DisplayName = "청소기",
+                Account = new Dictionary<string, object>
+                {
+                    { "mainCharacterName", "청소기" },
+                    { "roleLabel", "MASTER" },
+                    { "roleLevel", 5 },
+                    { "meterAdmin", true },
+                    { "diagnosticsAllowed", true }
+                },
+                Characters = new List<Dictionary<string, object>>
+                {
+                    new Dictionary<string, object>
+                    {
+                        { "characterKey", "self" },
+                        { "characterName", "청소기" },
+                        { "isMain", true }
+                    }
+                }
+            };
+        }
+
+        private static Dictionary<string, object> DecodeRuntimeSessionLine(string prefix, string line)
+        {
+            if (String.IsNullOrWhiteSpace(line) || !line.StartsWith(prefix, StringComparison.Ordinal))
+                throw new InvalidOperationException("Runtime Launcher session prefix mismatch.");
+            var raw = Encoding.UTF8.GetString(Convert.FromBase64String(line.Substring(prefix.Length)));
+            var value = new JavaScriptSerializer().DeserializeObject(raw) as Dictionary<string, object>;
+            if (value == null) throw new InvalidOperationException("Runtime Launcher session JSON is invalid.");
+            return value;
+        }
+
         private static PrivateRuntimeReleaseManifest PrivateRuntimeRelease()
         {
             const string version = "0.3.0";
@@ -1938,6 +2111,41 @@ namespace KinojoMeterLauncher
         {
             public UiAssetReleaseManifest Release { get; set; }
             public byte[] PackageBytes { get; set; }
+        }
+
+        private sealed class RuntimeProcessLauncherFixture : IRuntimeProcessLauncher
+        {
+            public List<RuntimeProcessStartSpec> Specs { get; private set; } = new List<RuntimeProcessStartSpec>();
+            public List<RuntimeChildProcessFixture> Children { get; private set; } = new List<RuntimeChildProcessFixture>();
+
+            public IRuntimeChildProcess Start(RuntimeProcessStartSpec spec)
+            {
+                Specs.Add(spec);
+                var child = new RuntimeChildProcessFixture(1000 + Specs.Count);
+                Children.Add(child);
+                return child;
+            }
+        }
+
+        private sealed class RuntimeChildProcessFixture : IRuntimeChildProcess
+        {
+            public RuntimeChildProcessFixture(int id) { Id = id; }
+            public int Id { get; private set; }
+            public bool HasExited { get; set; }
+            public int ExitCode { get; set; }
+            public string SessionLine { get; private set; }
+            public bool Disposed { get; private set; }
+
+            public Task WriteSessionLineAsync(string line)
+            {
+                SessionLine = line;
+                return Task.FromResult(0);
+            }
+
+            public void Dispose()
+            {
+                Disposed = true;
+            }
         }
 
         private sealed class UiAssetFixtureHandler : HttpMessageHandler
