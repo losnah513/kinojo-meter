@@ -1,6 +1,14 @@
 name: Sync individual update boundary
 
 on:
+  workflow_dispatch:
+    inputs:
+      target_channel:
+        description: '검증 대상 채널'
+        required: true
+        default: stable
+        type: choice
+        options: [stable, staging]
   pull_request:
     paths:
       - 'launcher/LauncherPaths.cs'
@@ -40,7 +48,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        channel: [stable, staging]
+        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target_channel == 'staging' && '["staging"]' || '["stable"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
