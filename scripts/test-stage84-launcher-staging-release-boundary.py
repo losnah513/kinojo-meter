@@ -38,11 +38,9 @@ assert version_tuple(staging["version"]) > version_tuple(stable["version"])
 assert version_tuple(staging["version"]) >= version_tuple("1.1.3")  # B000050 minimum Launcher
 
 required_publisher_fragments = (
-    "repos/$repository/immutable-releases",
-    "X-GitHub-Api-Version: 2026-03-10",
-    "if ($immutableSettings.enabled -ne $true)",
     "$artifactPath, $checksumPath",
     "--draft",
+    "isDraft,isPrerelease,isImmutable,assets",
     "Assert-RemoteAssets $repository $tag",
     "gh release edit $tag --repo $repository --draft=false",
     "Assert-ReleaseContract $release $false $true",
