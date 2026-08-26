@@ -59,6 +59,14 @@ namespace KinojoMeterLauncher
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
+                return RunInteractive();
+            }
+        }
+
+        private static int RunInteractive()
+        {
+            while (true)
+            {
                 LauncherLoginResult login;
                 using (var loginForm = new LauncherLoginForm())
                 {
@@ -67,12 +75,14 @@ namespace KinojoMeterLauncher
                 }
 
                 var sessionHandedOff = false;
+                SplitRuntimeLaunchResult runtimeLaunch = null;
                 try
                 {
                     using (var launcherForm = new LauncherForm(login))
                     {
                         Application.Run(launcherForm);
                         sessionHandedOff = launcherForm.SessionHandedOff;
+                        runtimeLaunch = launcherForm.RuntimeLaunchResult;
                     }
                 }
                 finally
@@ -84,6 +94,24 @@ namespace KinojoMeterLauncher
                             api.LogoutAsync(login.SessionToken).GetAwaiter().GetResult();
                         }
                     }
+                }
+
+                if (runtimeLaunch == null) return 0;
+
+                RuntimeReturnDecision decision;
+                using (runtimeLaunch)
+                    decision = runtimeLaunch.WaitForReturn();
+                if (decision.RestartInteractiveLauncher)
+                    continue;
+                if (decision.Intent == RuntimeReturnIntent.UnexpectedExit)
+                {
+                    MessageBox.Show(
+                        decision.Reason + "\r\n\r\nShell: " + decision.ShellExitCode +
+                        "\r\nEngineHost: " + (decision.EngineHostExited ? decision.EngineHostExitCode.ToString() : "실행 중"),
+                        "KINOJO Meter" + LauncherBuildProfile.DisplaySuffix,
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return 1;
                 }
                 return 0;
             }

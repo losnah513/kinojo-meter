@@ -336,6 +336,7 @@ namespace KinojoMeterLauncher
         }
 
         public bool SessionHandedOff { get; private set; }
+        public SplitRuntimeLaunchResult RuntimeLaunchResult { get; private set; }
 
         internal bool SidebarBrandContractForTesting
         {
@@ -933,6 +934,7 @@ namespace KinojoMeterLauncher
                     _runtimeApiEndpoint);
                 if (runtimeLaunch != null)
                 {
+                    RuntimeLaunchResult = runtimeLaunch;
                     _version.Text = "Runtime " + runtimeLaunch.RuntimeBundleRevision;
                     _sidebarCore.Text = "Runtime " + runtimeLaunch.RuntimeBundleRevision;
                     SessionHandedOff = true;

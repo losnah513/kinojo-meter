@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
@@ -20,13 +21,132 @@ namespace KinojoMeterLauncher
         public string EngineHostSessionLine { get; set; }
     }
 
-    internal sealed class SplitRuntimeLaunchResult
+    internal enum RuntimeReturnIntent
     {
+        NormalExit = 0,
+        LauncherUpdateHandoff = 1,
+        CharacterChanged = 2,
+        UnexpectedExit = 3
+    }
+
+    internal sealed class RuntimeReturnDecision
+    {
+        public RuntimeReturnIntent Intent { get; set; }
+        public int ShellExitCode { get; set; }
+        public int EngineHostExitCode { get; set; }
+        public bool EngineHostExited { get; set; }
+        public string Reason { get; set; }
+
+        public bool RestartInteractiveLauncher
+        {
+            get
+            {
+                return Intent == RuntimeReturnIntent.LauncherUpdateHandoff ||
+                    Intent == RuntimeReturnIntent.CharacterChanged;
+            }
+        }
+    }
+
+    internal sealed class SplitRuntimeLaunchResult : IDisposable
+    {
+        private IRuntimeChildProcess _shellProcess;
+        private IRuntimeChildProcess _engineHostProcess;
+
         public string LaunchId { get; set; }
         public int ShellProcessId { get; set; }
         public int EngineHostProcessId { get; set; }
         public string RuntimeBundleRevision { get; set; }
         public string RuntimeBundleLockSha256 { get; set; }
+
+        internal void OwnProcesses(IRuntimeChildProcess shellProcess, IRuntimeChildProcess engineHostProcess)
+        {
+            if (shellProcess == null || engineHostProcess == null)
+                throw new ArgumentNullException("Runtime process ownership requires both Shell and EngineHost.");
+            if (_shellProcess != null || _engineHostProcess != null)
+                throw new InvalidOperationException("Runtime process ownership was already assigned.");
+            _shellProcess = shellProcess;
+            _engineHostProcess = engineHostProcess;
+        }
+
+        internal RuntimeReturnDecision WaitForReturn()
+        {
+            if (_shellProcess == null || _engineHostProcess == null)
+                throw new InvalidOperationException("Launcher does not own the split Runtime process handles.");
+
+            if (!_shellProcess.WaitForExit(Timeout.Infinite))
+                throw new InvalidOperationException("Shell process wait ended without an exit signal.");
+            var shellExitCode = _shellProcess.ExitCode;
+            var hostExited = _engineHostProcess.HasExited || _engineHostProcess.WaitForExit(5000);
+            var hostExitCode = hostExited ? _engineHostProcess.ExitCode : -1;
+            return ClassifyReturn(shellExitCode, hostExited, hostExitCode);
+        }
+
+        internal static RuntimeReturnDecision ClassifyReturnForTest(
+            int shellExitCode,
+            bool engineHostExited,
+            int engineHostExitCode)
+        {
+            return ClassifyReturn(shellExitCode, engineHostExited, engineHostExitCode);
+        }
+
+        private static RuntimeReturnDecision ClassifyReturn(
+            int shellExitCode,
+            bool engineHostExited,
+            int engineHostExitCode)
+        {
+            var decision = new RuntimeReturnDecision
+            {
+                Intent = RuntimeReturnIntent.UnexpectedExit,
+                ShellExitCode = shellExitCode,
+                EngineHostExitCode = engineHostExitCode,
+                EngineHostExited = engineHostExited,
+                Reason = "분리 Runtime이 예상하지 않은 상태로 종료되었습니다."
+            };
+            if (!engineHostExited)
+            {
+                decision.Reason = "Shell 종료 뒤에도 EngineHost가 종료되지 않았습니다.";
+                return decision;
+            }
+            if (engineHostExitCode != 0)
+            {
+                decision.Reason = "EngineHost가 정상 종료 코드 0을 반환하지 않았습니다.";
+                return decision;
+            }
+
+            switch (shellExitCode)
+            {
+                case 0:
+                    decision.Intent = RuntimeReturnIntent.NormalExit;
+                    decision.Reason = "사용자 정상 종료";
+                    break;
+                case RuntimeLaunchCoordinator.UpdateHandoffExitCode:
+                    decision.Intent = RuntimeReturnIntent.LauncherUpdateHandoff;
+                    decision.Reason = "Launcher 업데이트 확인 반환";
+                    break;
+                case RuntimeLaunchCoordinator.CharacterChangedExitCode:
+                    decision.Intent = RuntimeReturnIntent.CharacterChanged;
+                    decision.Reason = "로그인 소유 캐릭터 변경 재연결";
+                    break;
+                default:
+                    decision.Reason = "Shell 종료 코드가 승인된 0, 20, 21 중 하나가 아닙니다.";
+                    break;
+            }
+            return decision;
+        }
+
+        public void Dispose()
+        {
+            if (_engineHostProcess != null)
+            {
+                _engineHostProcess.Dispose();
+                _engineHostProcess = null;
+            }
+            if (_shellProcess != null)
+            {
+                _shellProcess.Dispose();
+                _shellProcess = null;
+            }
+        }
     }
 
     internal sealed class RuntimeProcessStartSpec
@@ -45,6 +165,7 @@ namespace KinojoMeterLauncher
         bool HasExited { get; }
         int ExitCode { get; }
         Task WriteSessionLineAsync(string line);
+        bool WaitForExit(int milliseconds);
     }
 
     internal interface IRuntimeProcessLauncher
@@ -54,14 +175,16 @@ namespace KinojoMeterLauncher
 
     internal static class RuntimeLaunchCoordinator
     {
-        internal const string Status = "PUBLIC_RUNTIME_COORDINATOR_VERIFIED_JOINT_CUTOVER_PENDING";
+        internal const string Status = "PUBLIC_RUNTIME_COORDINATOR_JOINT_CUTOVER_VERIFIED";
         internal const string ShellSessionPrefix = "KINOJO_METER_SHELL_SESSION_V1 ";
         internal const string EngineHostSessionPrefix = "KINOJO_METER_ENGINE_HOST_SESSION_V1 ";
         internal const string SessionTransport = "REDIRECTED_STANDARD_INPUT";
         internal const bool PublicLauncherOperationalFlowChanged = true;
         internal const bool LegacyCoreFallbackWithoutActiveBundle = true;
         internal const bool LegacyCoreFallbackWithActiveBundle = false;
-        internal const bool JointCutoverEvidenceComplete = false;
+        internal const bool JointCutoverEvidenceComplete = true;
+        internal const int UpdateHandoffExitCode = 20;
+        internal const int CharacterChangedExitCode = 21;
 
         private const int SessionContractVersion = 1;
         private const int MaximumDecodedSessionBytes = 1024 * 1024;
@@ -207,6 +330,7 @@ namespace KinojoMeterLauncher
 
             IRuntimeChildProcess shell = null;
             IRuntimeChildProcess host = null;
+            var ownershipTransferred = false;
             try
             {
                 // Shell starts first and waits up to the READY deadline for the Host pipe.
@@ -223,7 +347,7 @@ namespace KinojoMeterLauncher
                 RequireRunning(host, "EngineHost");
                 RequireRunning(shell, "Shell");
 
-                return new SplitRuntimeLaunchResult
+                var result = new SplitRuntimeLaunchResult
                 {
                     LaunchId = session.LaunchId,
                     ShellProcessId = shell.Id,
@@ -231,11 +355,17 @@ namespace KinojoMeterLauncher
                     RuntimeBundleRevision = session.ProcessPlan.RuntimeBundleRevision,
                     RuntimeBundleLockSha256 = session.ProcessPlan.RuntimeBundleLockSha256
                 };
+                result.OwnProcesses(shell, host);
+                ownershipTransferred = true;
+                return result;
             }
             finally
             {
-                if (host != null) host.Dispose();
-                if (shell != null) shell.Dispose();
+                if (!ownershipTransferred)
+                {
+                    if (host != null) host.Dispose();
+                    if (shell != null) shell.Dispose();
+                }
             }
         }
 
@@ -418,6 +548,11 @@ namespace KinojoMeterLauncher
         public int Id { get { return _process.Id; } }
         public bool HasExited { get { return _process.HasExited; } }
         public int ExitCode { get { return _process.HasExited ? _process.ExitCode : -1; } }
+
+        public bool WaitForExit(int milliseconds)
+        {
+            return _process.WaitForExit(milliseconds);
+        }
 
         public async Task WriteSessionLineAsync(string line)
         {
