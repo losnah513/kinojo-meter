@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -84,6 +85,28 @@ namespace KinojoMeterLauncher
             if (release != null) authorization.Release = ParseCoreRelease(release);
             if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
                 authorization.Message = "Core 업데이트 승인을 받지 못했습니다.";
+            return authorization;
+        }
+
+        public async Task<ModuleBundleBootstrapAuthorization> AuthorizeModuleBundleBootstrapAsync(
+            string sessionToken,
+            string installationId,
+            ActiveModuleBundleState currentBundle)
+        {
+            var result = await PostAsync(new Dictionary<string, object>
+            {
+                { "action", "bundleUpdateAuthorization" },
+                { "sessionToken", sessionToken ?? "" },
+                { "installationId", installationId ?? "" },
+                { "launcherVersion", LauncherVersion.Current },
+                { "channel", LauncherVersion.Channel },
+                { "currentBundleRevision", currentBundle == null ? "" : currentBundle.BundleRevision },
+                { "currentBundleLockSha256", currentBundle == null ? "" : currentBundle.BundleLockSha256 }
+            }).ConfigureAwait(false);
+
+            var authorization = ParseModuleBundleBootstrapAuthorization(result);
+            if (!Bool(result, "ok") && String.IsNullOrWhiteSpace(authorization.Message))
+                authorization.Message = "Bundle bootstrap 승인을 받지 못했습니다.";
             return authorization;
         }
 
@@ -416,6 +439,11 @@ namespace KinojoMeterLauncher
         internal static LauncherUpdateCheckResult ParseLauncherUpdateForTest(Dictionary<string, object> value)
         {
             return ParseLauncherUpdate(value);
+        }
+
+        internal static ModuleBundleBootstrapAuthorization ParseModuleBundleBootstrapAuthorizationForTest(Dictionary<string, object> value)
+        {
+            return ParseModuleBundleBootstrapAuthorization(value);
         }
 
         internal static MeterLaunchOperation ParseLaunchOperationForTest(Dictionary<string, object> value)
@@ -934,6 +962,113 @@ namespace KinojoMeterLauncher
             };
         }
 
+        private static ModuleBundleBootstrapAuthorization ParseModuleBundleBootstrapAuthorization(Dictionary<string, object> value)
+        {
+            var manifestValue = Dict(value, "serverBundleManifest");
+            var lockValue = Dict(manifestValue, "bundleLock");
+            var integrityValue = Dict(manifestValue, "integrity");
+            var pointerValue = Dict(value, "bundlePointer");
+            var lockDownloadValue = Dict(value, "bundleLockDownload");
+            var result = new ModuleBundleBootstrapAuthorization
+            {
+                Authorized = Bool(value, "authorized") || (Bool(value, "ok") && manifestValue != null),
+                Code = Text(value, "code", ""),
+                Message = Text(value, "message", ""),
+                ServerManifest = manifestValue == null ? null : new ServerBundleManifest
+                {
+                    SchemaVersion = Int(manifestValue, "schemaVersion", 0),
+                    ManifestType = Text(manifestValue, "manifestType", ""),
+                    Channel = Text(manifestValue, "channel", ""),
+                    ProductVersion = Text(manifestValue, "productVersion", ""),
+                    BundleRevision = Text(manifestValue, "bundleRevision", ""),
+                    ParentBundleRevision = Text(manifestValue, "parentBundleRevision", ""),
+                    MinimumLauncherVersion = Text(manifestValue, "minimumLauncherVersion", ""),
+                    ActivationMode = Text(manifestValue, "activationMode", ""),
+                    BundleLock = lockValue == null ? null : new ServerBundleLockReference
+                    {
+                        SchemaVersion = Int(lockValue, "schemaVersion", 0),
+                        Revision = Text(lockValue, "revision", ""),
+                        Sha256 = Text(lockValue, "sha256", "").ToLowerInvariant(),
+                        Url = Text(lockValue, "url", ""),
+                        Immutable = Bool(lockValue, "immutable"),
+                        OriginChannel = Text(lockValue, "originChannel", "")
+                    },
+                    IssuedAt = Text(manifestValue, "issuedAt", ""),
+                    ExpiresAt = Text(manifestValue, "expiresAt", ""),
+                    ReleaseNote = Text(manifestValue, "releaseNote", ""),
+                    Integrity = integrityValue == null ? null : new ServerBundleManifestIntegrity
+                    {
+                        Mode = Text(integrityValue, "mode", ""),
+                        SigningKeyId = Text(integrityValue, "signingKeyId", ""),
+                        ManifestSignature = Text(integrityValue, "manifestSignature", "")
+                    }
+                },
+                Pointer = ParseBundlePointer(pointerValue),
+                BundleLockDownload = lockDownloadValue == null ? null : new ModuleBundleLockDownloadAuthorization
+                {
+                    DownloadUrl = Text(lockDownloadValue, "downloadUrl", ""),
+                    ExpiresAt = Date(lockDownloadValue, "expiresAt"),
+                    FileSize = Long(lockDownloadValue, "fileSize", 0),
+                    Sha256 = Text(lockDownloadValue, "sha256", "").ToLowerInvariant()
+                },
+                Modules = DictList(value, "modules").Select(module => new ModuleBundlePackageAuthorization
+                {
+                    ModuleId = Text(module, "moduleId", ""),
+                    ModuleVersion = Text(module, "moduleVersion", ""),
+                    PackagePath = Text(module, "packagePath", ""),
+                    FileSize = Long(module, "fileSize", 0),
+                    Sha256 = Text(module, "sha256", "").ToLowerInvariant(),
+                    DownloadUrl = Text(module, "downloadUrl", ""),
+                    ExpiresAt = Date(module, "expiresAt"),
+                    ContractSetVersion = Int(module, "contractSetVersion", 0),
+                    StateSchemaVersion = Int(module, "stateSchemaVersion", -1)
+                }).ToList()
+            };
+            return result;
+        }
+
+        private static ModuleBundlePointerContext ParseBundlePointer(Dictionary<string, object> value)
+        {
+            if (value == null) return null;
+            var promotion = Dict(value, "promotion");
+            var rollback = Dict(value, "rollback");
+            return new ModuleBundlePointerContext
+            {
+                ServingChannel = Text(value, "servingChannel", ""),
+                BundleOriginChannel = Text(value, "bundleOriginChannel", ""),
+                BundleRevision = Text(value, "bundleRevision", ""),
+                BundleLockSha256 = Text(value, "bundleLockSha256", "").ToLowerInvariant(),
+                PointerGeneration = Long(value, "pointerGeneration", 0),
+                Promotion = promotion == null ? null : new ModuleBundlePromotionAuthorization
+                {
+                    SchemaVersion = Int(promotion, "schemaVersion", 0),
+                    PromotionId = Text(promotion, "promotionId", ""),
+                    SourceChannel = Text(promotion, "sourceChannel", ""),
+                    TargetChannel = Text(promotion, "targetChannel", ""),
+                    BundleRevision = Text(promotion, "bundleRevision", ""),
+                    BundleLockSha256 = Text(promotion, "bundleLockSha256", "").ToLowerInvariant(),
+                    StagingVerificationId = Text(promotion, "stagingVerificationId", ""),
+                    PreviousStableBundleRevision = Text(promotion, "previousStableBundleRevision", ""),
+                    PreviousStableBundleLockSha256 = Text(promotion, "previousStableBundleLockSha256", "").ToLowerInvariant(),
+                    StablePointerGeneration = Long(promotion, "stablePointerGeneration", 0),
+                    PromotedAtUtc = Text(promotion, "promotedAtUtc", "")
+                },
+                Rollback = rollback == null ? null : new ModuleBundlePointerRollbackAuthorization
+                {
+                    SchemaVersion = Int(rollback, "schemaVersion", 0),
+                    RollbackId = Text(rollback, "rollbackId", ""),
+                    SourcePromotionId = Text(rollback, "sourcePromotionId", ""),
+                    TargetChannel = Text(rollback, "targetChannel", ""),
+                    BundleRevision = Text(rollback, "bundleRevision", ""),
+                    BundleLockSha256 = Text(rollback, "bundleLockSha256", "").ToLowerInvariant(),
+                    ReplacedBundleRevision = Text(rollback, "replacedBundleRevision", ""),
+                    ReplacedBundleLockSha256 = Text(rollback, "replacedBundleLockSha256", "").ToLowerInvariant(),
+                    StablePointerGeneration = Long(rollback, "stablePointerGeneration", 0),
+                    RolledBackAtUtc = Text(rollback, "rolledBackAtUtc", "")
+                }
+            };
+        }
+
         private static Dictionary<string, object> Dict(Dictionary<string, object> source, string key)
         {
             object value;
@@ -981,6 +1116,12 @@ namespace KinojoMeterLauncher
         {
             long parsed;
             return Int64.TryParse(Text(source, key, ""), out parsed) ? parsed : fallback;
+        }
+
+        private static DateTimeOffset Date(Dictionary<string, object> source, string key)
+        {
+            DateTimeOffset parsed;
+            return DateTimeOffset.TryParse(Text(source, key, ""), out parsed) ? parsed : DateTimeOffset.MinValue;
         }
 
         public void Dispose()

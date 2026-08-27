@@ -116,6 +116,9 @@ namespace KinojoMeterLauncher
                 using (var signingKey = new RSACryptoServiceProvider(3072))
                 {
                     signingKey.PersistKeyInCsp = false;
+                    Run("accept signed Server Bundle Manifest", () => VerifyServerBundleManifest(signingKey));
+                    Run("reject tampered Server Bundle Manifest", () => ExpectFailure(() => VerifyTamperedServerBundleManifest(signingKey)));
+                    Run("parse exact Bundle bootstrap authorization", () => VerifyBundleBootstrapAuthorizationParsing(signingKey));
                     Run("accept RSA-signed hobby release", () => VerifyReleaseContract(signingKey, null));
                     Run("reject tampered package hash", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.Sha256 = new String('b', 64))));
                     Run("reject tampered install manifest hash", () => ExpectFailure(() => VerifyReleaseContract(signingKey, value => value.InstallManifestSha256 = new String('c', 64))));
@@ -363,6 +366,151 @@ namespace KinojoMeterLauncher
             if (pattern == null)
                 throw new InvalidOperationException("Shell approved exit button does not expose InvokePattern.");
             pattern.Invoke();
+        }
+
+        private static void VerifyServerBundleManifest(RSACryptoServiceProvider key)
+        {
+            var manifest = SignedServerBundleManifest(key);
+            ServerBundleManifestVerifier.VerifyForTest(
+                manifest,
+                key.ExportParameters(false),
+                "fixture-key",
+                LauncherVersion.Channel,
+                DateTimeOffset.UtcNow,
+                "1.1.8");
+        }
+
+        private static void VerifyTamperedServerBundleManifest(RSACryptoServiceProvider key)
+        {
+            var manifest = SignedServerBundleManifest(key);
+            manifest.BundleLock.Sha256 = new String('e', 64);
+            ServerBundleManifestVerifier.VerifyForTest(
+                manifest,
+                key.ExportParameters(false),
+                "fixture-key",
+                LauncherVersion.Channel,
+                DateTimeOffset.UtcNow,
+                "1.1.8");
+        }
+
+        private static void VerifyBundleBootstrapAuthorizationParsing(RSACryptoServiceProvider key)
+        {
+            var manifest = SignedServerBundleManifest(key);
+            var modules = new List<object>();
+            var ids = new[] { "contracts", "capture", "protocol", "combat", "encounter", "sync", "shell" };
+            for (var index = 0; index < ids.Length; index++)
+            {
+                var id = ids[index];
+                var sha = Hash(Encoding.UTF8.GetBytes(id));
+                modules.Add(new Dictionary<string, object>
+                {
+                    { "moduleId", id }, { "moduleVersion", "1.0.0" },
+                    { "packagePath", "modules/" + id + "/1.0.0/" + id + ".zip" },
+                    { "fileSize", 100L + index }, { "sha256", sha },
+                    { "downloadUrl", "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/modules/" + id + "/staging/1.0.0/" + id + ".zip?token=fixture" },
+                    { "expiresAt", DateTimeOffset.UtcNow.AddMinutes(10).ToString("o") },
+                    { "contractSetVersion", 1 }, { "stateSchemaVersion", id == "contracts" ? 0 : 1 }
+                });
+            }
+
+            var response = new Dictionary<string, object>
+            {
+                { "ok", true }, { "authorized", true },
+                { "serverBundleManifest", ServerBundleManifestDictionary(manifest) },
+                { "bundlePointer", new Dictionary<string, object>
+                    {
+                        { "servingChannel", LauncherVersion.Channel }, { "bundleOriginChannel", "staging" },
+                        { "bundleRevision", "B000051" }, { "bundleLockSha256", new String('d', 64) },
+                        { "pointerGeneration", 1L }
+                    }
+                },
+                { "bundleLockDownload", new Dictionary<string, object>
+                    {
+                        { "downloadUrl", "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/sign/meter-core-private/bundles/B000051/bundle.lock.json?token=fixture" },
+                        { "expiresAt", DateTimeOffset.UtcNow.AddMinutes(10).ToString("o") },
+                        { "fileSize", 2521L }, { "sha256", new String('d', 64) }
+                    }
+                },
+                { "modules", modules }
+            };
+
+            var parsed = LauncherApiClient.ParseModuleBundleBootstrapAuthorizationForTest(response);
+            if (parsed == null || !parsed.Authorized || parsed.ServerManifest == null ||
+                parsed.Pointer == null || parsed.BundleLockDownload == null || parsed.Modules.Count != 7 ||
+                parsed.Pointer.PointerGeneration != 1 || parsed.Modules[6].ModuleId != "shell")
+                throw new InvalidOperationException("Bundle bootstrap authorization parsing failed.");
+            ServerBundleManifestVerifier.VerifyForTest(
+                parsed.ServerManifest,
+                key.ExportParameters(false),
+                "fixture-key",
+                LauncherVersion.Channel,
+                DateTimeOffset.UtcNow,
+                "1.1.8");
+            ModuleBundleBootstrapCoordinator.ValidateAuthorizationForTest(
+                parsed,
+                "josvoltpktvwysrasffq.supabase.co",
+                DateTimeOffset.UtcNow);
+        }
+
+        private static Dictionary<string, object> ServerBundleManifestDictionary(ServerBundleManifest value)
+        {
+            return new Dictionary<string, object>
+            {
+                { "schemaVersion", value.SchemaVersion }, { "manifestType", value.ManifestType },
+                { "channel", value.Channel }, { "productVersion", value.ProductVersion },
+                { "bundleRevision", value.BundleRevision }, { "parentBundleRevision", value.ParentBundleRevision },
+                { "minimumLauncherVersion", value.MinimumLauncherVersion }, { "activationMode", value.ActivationMode },
+                { "bundleLock", new Dictionary<string, object>
+                    {
+                        { "schemaVersion", value.BundleLock.SchemaVersion }, { "revision", value.BundleLock.Revision },
+                        { "sha256", value.BundleLock.Sha256 }, { "url", value.BundleLock.Url },
+                        { "immutable", value.BundleLock.Immutable }, { "originChannel", value.BundleLock.OriginChannel }
+                    }
+                },
+                { "issuedAt", value.IssuedAt }, { "expiresAt", value.ExpiresAt }, { "releaseNote", value.ReleaseNote },
+                { "integrity", new Dictionary<string, object>
+                    {
+                        { "mode", value.Integrity.Mode }, { "signingKeyId", value.Integrity.SigningKeyId },
+                        { "manifestSignature", value.Integrity.ManifestSignature }
+                    }
+                }
+            };
+        }
+
+        private static ServerBundleManifest SignedServerBundleManifest(RSACryptoServiceProvider key)
+        {
+            var manifest = new ServerBundleManifest
+            {
+                SchemaVersion = 1,
+                ManifestType = ServerBundleManifestVerifier.ManifestType,
+                Channel = LauncherVersion.Channel,
+                ProductVersion = "0.3.1",
+                BundleRevision = "B000051",
+                ParentBundleRevision = "B000047",
+                MinimumLauncherVersion = "1.1.7",
+                ActivationMode = ServerBundleManifestVerifier.ActivationMode,
+                BundleLock = new ServerBundleLockReference
+                {
+                    SchemaVersion = 1,
+                    Revision = "B000051",
+                    Sha256 = new String('d', 64),
+                    Url = "https://josvoltpktvwysrasffq.supabase.co/storage/v1/object/meter-core-private/bundles/B000051/bundle.lock.json",
+                    Immutable = true,
+                    OriginChannel = "staging"
+                },
+                IssuedAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                ExpiresAt = DateTimeOffset.UtcNow.AddDays(1).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                ReleaseNote = "Stage 8-5 fixture",
+                Integrity = new ServerBundleManifestIntegrity
+                {
+                    Mode = ServerBundleManifestVerifier.IntegrityMode,
+                    SigningKeyId = "fixture-key"
+                }
+            };
+            manifest.Integrity.ManifestSignature = Convert.ToBase64String(key.SignData(
+                Encoding.UTF8.GetBytes(ServerBundleManifestVerifier.CanonicalizeForTest(manifest)),
+                CryptoConfig.MapNameToOID("SHA256")));
+            return manifest;
         }
 
         private static void VerifyCatalogPackAuthorizationParsing()

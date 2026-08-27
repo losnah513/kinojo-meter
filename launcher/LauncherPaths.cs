@@ -23,6 +23,7 @@ namespace KinojoMeterLauncher
         public static readonly string CatalogPackLockFile = Path.Combine(CatalogPackRoot, ".update.lock");
         public static readonly string ModuleRoot = Path.Combine(Root, "modules");
         public static readonly string ModulePackageCache = Path.Combine(ModuleRoot, "cache");
+        public static readonly string ModuleBundleLocks = Path.Combine(ModuleRoot, "bundle-locks");
         public static readonly string ModuleStaging = Path.Combine(ModuleRoot, "staging");
         public static readonly string ModuleSelfTests = Path.Combine(ModuleRoot, "self-tests");
         public static readonly string ModuleActiveBundleFile = Path.Combine(ModuleRoot, "active-bundle.json");
@@ -60,6 +61,7 @@ namespace KinojoMeterLauncher
             Directory.CreateDirectory(UiAssetStaging);
             Directory.CreateDirectory(CatalogPackRoot);
             Directory.CreateDirectory(ModulePackageCache);
+            Directory.CreateDirectory(ModuleBundleLocks);
             Directory.CreateDirectory(ModuleStaging);
             Directory.CreateDirectory(ModuleSelfTests);
             Directory.CreateDirectory(ModuleRoot);
