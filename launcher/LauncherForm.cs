@@ -1053,6 +1053,18 @@ namespace KinojoMeterLauncher
                         prepareProgressActive = false;
                     }
 
+                    SetOperationState("Bundle 확인 중", "서명된 Server Bundle과 7개 모듈을 검증하고 원자적으로 활성화하고 있습니다.", false, 94);
+                    var activeBundle = ModuleBundleActivator.ReadVerifiedActiveBundle();
+                    var bundleAuthorization = await api.AuthorizeModuleBundleBootstrapAsync(
+                        _login.SessionToken,
+                        _installationId,
+                        activeBundle);
+                    var bundleResult = await ModuleBundleBootstrapCoordinator.ApplyAsync(
+                        bundleAuthorization,
+                        api.ProjectHost,
+                        null,
+                        _cancellation.Token);
+
                     SetOperationState("Catalog Pack 확인 중", "분리된 Catalog Pack의 승인 버전과 무결성을 확인하고 있습니다.", false, 95);
                     var catalogAuthorization = await api.AuthorizeCatalogPackUpdatesAsync(
                         _login.SessionToken,

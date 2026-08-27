@@ -46,6 +46,8 @@
     <Compile Include="ModulePackageVerifier.cs" />
     <Compile Include="ModuleStagingInstaller.cs" />
     <Compile Include="ModuleStagingSelfTest.cs" />
+    <Compile Include="ServerBundleManifestVerifier.cs" />
+    <Compile Include="ModuleBundleBootstrapCoordinator.cs" />
     <Compile Include="ModuleBundleServerPointer.cs" />
     <Compile Include="ModuleBundleActivator.cs" />
     <Compile Include="ModuleBundleRollback.cs" />

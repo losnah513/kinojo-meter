@@ -142,6 +142,11 @@ namespace KinojoMeterLauncher
             return ComputeModuleSetHash(modules == null ? null : modules.ToList());
         }
 
+        internal static ModuleBundleLock ReadAndValidateBundleLockForCoordinator(string path, string expectedChannel)
+        {
+            return ReadAndValidateBundleLock(path, expectedChannel);
+        }
+
         private static ModuleBundleActivationResult ActivateInternal(
             ModuleBundleActivationRequest request,
             string stagingRoot,
