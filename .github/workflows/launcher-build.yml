@@ -17,6 +17,12 @@ concurrency:
         description: 'PUBLISH_STAGING_LAUNCHER_<version> 또는 PUBLISH_LAUNCHER_<version>'
         required: false
         type: string
+      execution_pool:
+        description: '실행 Runner (무료 시간 부족 시 승인된 임시 자체 호스팅 Runner 사용)'
+        required: true
+        default: hosted
+        type: choice
+        options: [hosted, self-hosted]
   pull_request:
     paths:
       - 'launcher/**'
@@ -52,7 +58,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target_channel == 'staging' && inputs.execution_pool == 'self-hosted' && '["self-hosted","Windows","X64","kinojo-public-launcher-release"]' || '["windows-latest"]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +141,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target_channel == 'staging' && inputs.execution_pool == 'self-hosted' && '["self-hosted","Windows","X64","kinojo-public-launcher-release"]' || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     outputs:
@@ -189,7 +195,7 @@ jobs:
   publish:
     if: needs.cutover-gate.outputs.publish == 'true'
     needs: [build, cutover-gate]
-    runs-on: windows-2025
+    runs-on: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target_channel == 'staging' && inputs.execution_pool == 'self-hosted' && '["self-hosted","Windows","X64","kinojo-public-launcher-release"]' || '["windows-2025"]') }}
     environment: ${{ needs.cutover-gate.outputs.environment }}
     permissions:
       contents: write
