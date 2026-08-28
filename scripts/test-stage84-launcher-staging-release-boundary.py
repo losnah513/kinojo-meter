@@ -32,9 +32,9 @@ assert stable["channel"] == "stable"
 assert stable["cutoverState"] == "ACTIVE"
 assert stable["publicDistribution"] is True
 
-assert staging["version"] == "1.1.7"
-assert staging["fileVersion"] == "1.1.7.0"
-assert staging["artifactName"] == "KINOJO_Meter_Launcher_Staging_1.1.7.exe"
+assert staging["version"] == "1.1.8"
+assert staging["fileVersion"] == "1.1.8.0"
+assert staging["artifactName"] == "KINOJO_Meter_Launcher_Staging_1.1.8.exe"
 assert staging["channel"] == "staging"
 assert staging["cutoverState"] == "STAGING_E2E"
 assert staging["publicDistribution"] is False
@@ -76,8 +76,10 @@ assert publisher.rindex("Assert-RemoteAssets $repository $tag") > publisher.inde
 assert "PUBLISH_STAGING_LAUNCHER_${version}" in workflow
 assert "environment='meter-launcher-staging'" in workflow
 assert "id-token: write" in workflow
+assert "inputs.execution_pool == 'self-hosted'" in workflow
+assert '["self-hosted","Windows","X64","kinojo-public-launcher-release"]' in workflow
 assert "./scripts/verify-distribution-boundary.ps1" in workflow
 assert "./scripts/test-stage84-launcher-staging-release-boundary.py" in workflow
 assert "./scripts/sync-launcher-release.ps1" in workflow
 
-print("Stage 8-5 fresh-runtime STAGING Launcher 1.1.7 publication boundary verified.")
+print("Stage 8-5 fresh-runtime STAGING Launcher 1.1.8 publication boundary verified.")
