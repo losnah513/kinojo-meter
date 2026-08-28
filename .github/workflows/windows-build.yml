@@ -7,14 +7,32 @@ concurrency:
 'on':
   workflow_dispatch:
   pull_request:
-  push:
     paths:
       - 'src/**'
       - 'setup/**'
       - 'assets/**'
-      - 'release/**'
-      - 'tests/**'
-      - 'scripts/**'
+      - 'release/version.json'
+      - 'tests/KINOJO.Meter.DecoderTests/**'
+      - 'scripts/build-windows.ps1'
+      - 'scripts/prepare-github-release.ps1'
+      - 'scripts/publish-github-release.ps1'
+      - 'scripts/sync-server-release.ps1'
+      - 'BUILD_WINDOWS_RELEASE.cmd'
+      - 'KINOJO.Meter.sln'
+      - 'README.md'
+      - '.github/workflows/windows-build.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'setup/**'
+      - 'assets/**'
+      - 'release/version.json'
+      - 'tests/KINOJO.Meter.DecoderTests/**'
+      - 'scripts/build-windows.ps1'
+      - 'scripts/prepare-github-release.ps1'
+      - 'scripts/publish-github-release.ps1'
+      - 'scripts/sync-server-release.ps1'
       - 'BUILD_WINDOWS_RELEASE.cmd'
       - 'KINOJO.Meter.sln'
       - 'README.md'
