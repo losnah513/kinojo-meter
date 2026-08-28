@@ -42,6 +42,7 @@ concurrency:
       - '.github/workflows/launcher-build.yml'
       - 'KINOJO.Meter.sln'
   push:
+    branches: [main]
     paths:
       - 'launcher/**'
       - 'launcher-setup/**'
