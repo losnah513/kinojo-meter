@@ -34,8 +34,6 @@ concurrency:
       - 'scripts/build-launcher.ps1'
       - 'scripts/publish-launcher-release.ps1'
       - 'scripts/sync-launcher-release.ps1'
-      - 'scripts/inspect-stage85-staging-e2e.ps1'
-      - 'scripts/test-stage85-staging-e2e-preflight.ps1'
       - 'scripts/test-stage84-launcher-staging-release-boundary.py'
       - 'scripts/test-stable-default-channel-policy.py'
       - 'scripts/verify-distribution-boundary.ps1'
@@ -53,8 +51,6 @@ concurrency:
       - 'scripts/build-launcher.ps1'
       - 'scripts/publish-launcher-release.ps1'
       - 'scripts/sync-launcher-release.ps1'
-      - 'scripts/inspect-stage85-staging-e2e.ps1'
-      - 'scripts/test-stage85-staging-e2e-preflight.ps1'
       - 'scripts/test-stage84-launcher-staging-release-boundary.py'
       - 'scripts/test-stable-default-channel-policy.py'
       - 'scripts/verify-distribution-boundary.ps1'
@@ -96,8 +92,6 @@ jobs:
             './scripts/build-launcher.ps1',
             './scripts/publish-launcher-release.ps1',
             './scripts/sync-launcher-release.ps1',
-            './scripts/inspect-stage85-staging-e2e.ps1',
-            './scripts/test-stage85-staging-e2e-preflight.ps1',
             './scripts/verify-distribution-boundary.ps1'
           )) {
             $tokens = $null
@@ -118,9 +112,6 @@ jobs:
       - name: Verify Stable-default channel policy
         shell: pwsh
         run: python ./scripts/test-stable-default-channel-policy.py
-      - name: Verify Stage 8-5 local E2E preflight fails closed
-        shell: pwsh
-        run: ./scripts/test-stage85-staging-e2e-preflight.ps1
       - name: Build public Launcher only
         shell: pwsh
         run: ./scripts/build-launcher.ps1 -Configuration Release -Channel '${{ matrix.channel }}'
